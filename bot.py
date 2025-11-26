@@ -341,7 +341,7 @@ async def send_timer_app_button(update, context):
 
     # 2. Проверка: если данных нет — отправляем ТОЛЬКО кнопку
     if not user_timers:
-        webapp_url = "https://anem-wurw.onrender.com/timer-app/"
+        webapp_url = "https://anemonne.onrender.com/timer-app/"
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("Открыть таймер ⏱", web_app=WebAppInfo(url=webapp_url))]
         ])
@@ -369,7 +369,7 @@ async def send_timer_app_button(update, context):
         )
 
     # 6. И отправляем кнопку WebApp
-    webapp_url = "https://anem-wurw.onrender.com/timer-app/"
+    webapp_url = "https://anemonne.onrender.com/timer-app/"
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("Открыть таймер ⏱", web_app=WebAppInfo(url=webapp_url))]
     ])
