@@ -3997,336 +3997,130 @@ async def inpaint_image(update: Update, context: CallbackContext, image_path: st
 
 
 
-# Модели и их настройки
 MODELS = {
-    "🌠stable": {
-        "stabilityai/stable-diffusion-3.5-large-turbo": {
-            "add_prompt": "",
-            "negative": True
-        },
-        "ByteDance/Hyper-SD": {
-            "add_prompt": "",
-            "negative": True
-        },    
-        "ByteDance/SDXL-Lightning": {
-            "add_prompt": "",
-            "negative": True
-        },              
-        "stabilityai/stable-diffusion-3.5-large": {
-            "add_prompt": "",
-            "negative": True
-        },
-        "alvdansen/phantasma-anime": {
-            "add_prompt": "",
-            "negative": True
-        },  
-        "alvdansen/frosting_lane_redux": {
-            "add_prompt": "",
-            "negative": True
-        },      
-        "alvdansen/digital-manga-cuties": {
-            "add_prompt": "",
-            "negative": True
-        },                
-        "alvdansen/littletinies": {
-            "add_prompt": "",
-            "negative": True
-        },
-        "alvdansen/soft-and-squishy-linework": {
-            "add_prompt": "",
-            "negative": True
-        },        
-         
-        "alvdansen/BandW-Manga": {
-            "add_prompt": "",
-            "negative": True
-        },
-
-        "alvdansen/soft-ones": {
-            "add_prompt": "",
-            "negative": True
-        },
-        "artificialguybr/PixelArtRedmond": {
-            "add_prompt": "pixel art ",
-            "negative": True
-        },
-        "alvdansen/soft-focus-3d": {
-            "add_prompt": "3d model ",
-            "negative": True
-        },
-        "artificialguybr/analogredmond-v2": {
-            "add_prompt": "photo ",
-            "negative": True
-        },
-        "prithivMLmods/SD3.5-Large-Photorealistic-LoRA": {
-            "add_prompt": "photo ",
-            "negative": True
-        },
+    # FLUX Models (Negative prompt обычно не нужен)
+    "black-forest-labs/FLUX.1-dev": {
+        "add_prompt": "",
+        "negative": False
     },
-    "🌃flux": {
-        "black-forest-labs/FLUX.1-dev": {
-            "add_prompt": "",
-            "negative": False
-        },
-        "Shakker-Labs/FLUX.1-dev-LoRA-add-details": {
-            "add_prompt": "",
-            "negative": False
-        },
-        "HiDream-ai/HiDream-I1-Full": {
-            "add_prompt": "",
-            "negative": False
-        },        
-        "XLabs-AI/flux-RealismLora": {
-            "add_prompt": "",
-            "negative": False
-        },
-        "dennis-sleepytales/frosting_lane_flux": {
-            "add_prompt": "",
-            "negative": False
-        },          
-        "openfree/flux-chatgpt-ghibli-lora": {
-            "add_prompt": "Ghibli style ",
-            "negative": False
-        },             
-        "glif-loradex-trainer/araminta": {
-            "add_prompt": "",
-            "negative": False
-        },
-        "dennis-sleepytales/softserve_anime": {
-            "add_prompt": "",
-            "negative": False
-        },
-        "bingbangboom/flux_dreamscape": {
-            "add_prompt": "",
-            "negative": False
-        },
-        "prithivMLmods/Canopus-LoRA-Flux-Anime": {
-            "add_prompt": "",
-            "negative": False
-        },                                      
-        "dennis-sleepytales/flux_ghibsky": {
-            "add_prompt": "",
-            "negative": False
-        },  
-        "strangerzonehf/Flux-Ghibli-Art-LoRA": {
-            "add_prompt": "Anime ",
-            "negative": False
-        },                    
-        "dataautogpt3/FLUX-AestheticAnime": {
-            "add_prompt": "",
-            "negative": False
-        },
-        "glif/90s-anime-art": {
-            "add_prompt": " anime ",
-            "negative": False
-        },
-        "prithivMLmods/Flux-Dev-Real-Anime-LoRA": {
-            "add_prompt": "",
-            "negative": False
-        },
-        "alvdansen/plushy-world-flux": {
-            "add_prompt": "",
-            "negative": False
-        },
-
-
-
-        "bingbangboom/oneImageLoraTest": {
-            "add_prompt": "",
-            "negative": False
-        },
-        "bingbangboom/flux_oilscape": {
-            "add_prompt": "oil paint ",
-            "negative": False
-        },
-        "openfree/winslow-homer": {
-            "add_prompt": "watercolor ",
-            "negative": False
-        },        
-
-        "prithivMLmods/Canopus-Pixar-3D-Flux-LoRA": {
-            "add_prompt": "Pixar 3D ",
-            "negative": False
-        },  
-        "UmeAiRT/FLUX.1-dev-LoRA-Modern_Pixel_art": {
-            "add_prompt": "Pixel art ",
-            "negative": False
-        },         
-        "alvdansen/flux-koda": {
-            "add_prompt": "",
-            "negative": False
-        },
-        "alvdansen/flux_film_foto": {
-            "add_prompt": "",
-            "negative": False
-        },
-   
-                               
+    "black-forest-labs/FLUX.1-schnell": {
+        "add_prompt": "",
+        "negative": False
     },
-    "💡others": { 
-        "fofr/flux-80s-cyberpunk": {
-            "add_prompt": "80s cyberpunk ",
-            "negative": False
-        },     
-        "nerijs/pixel-art-xl": {
-            "add_prompt": "pixel art ",
-            "negative": True
-        },
-        "sWizad/pokemon-trainer-sprite-pixelart": {
-            "add_prompt": "pixel art ",
-            "negative": True
-        },
-        "artificialguybr/LogoRedmond-LogoLoraForSDXL-V2": {
-            "add_prompt": "logo design ",
-            "negative": True
-        },
-        "artificialguybr/StickersRedmond": {
-            "add_prompt": "sticker design ",
-            "negative": True
-        },
-        "Shakker-Labs/FLUX.1-dev-LoRA-Logo-Design": {
-            "add_prompt": "logo design ",
-            "negative": False
-        },
-        "gokaygokay/Flux-Game-Assets-LoRA-v2": {
-            "add_prompt": "game assets ",
-            "negative": False
-        },
-        "xey/sldr_flux_nsfw_v2-studio": {
-            "add_prompt": "nsfw ",
-            "negative": False
-        },
-        "Keltezaa/Dynamic_Pose_Uncensored": {
-            "add_prompt": "",
-            "negative": False
-        }                         
+    # SD Models (Negative prompt нужен)
+    "stabilityai/stable-diffusion-xl-base-1.0": {
+        "add_prompt": "",
+        "negative": True
     },
-    "imagen3": { 
-        "imagen3": {
-            "add_prompt": "Generate ",
-            "negative": False
-        }    
-    }    
+    "stabilityai/stable-diffusion-3-medium-diffusers": {
+        "add_prompt": "",
+        "negative": True
+    },
+    # Google (Твой Imagen 3)
+    "imagen3": {
+        "add_prompt": "Generate ",
+        "negative": False
+    }
 }
 
 MODEL_SHORTNAMES = {
-    # Stable Diffusion
-    "stabilityai/stable-diffusion-3.5-large-turbo": "⏳ SD Turbo ⏳",
-    "ByteDance/Hyper-SD": "⏳ Hyper-SD ⏳", 
-    "ByteDance/SDXL-Lightning": "⏳ SDXL-Lightning ⏳",       
-   
-    "stabilityai/stable-diffusion-3.5-large": "SD Large",
-    "alvdansen/phantasma-anime": "Phantasma Anime",
-    "alvdansen/frosting_lane_redux": "Frosting Lane SD", 
-    "alvdansen/digital-manga-cuties": "Manga Cuties",           
-    "alvdansen/littletinies": "Little Tinies",
-    "alvdansen/soft-and-squishy-linework": "Soft Linework",    
-    "alvdansen/BandW-Manga": "Simple Draw",
-    "alvdansen/soft-ones": "Soft Ones",
-    "artificialguybr/PixelArtRedmond": "PixelArt",
-    "alvdansen/soft-focus-3d": "Soft Focus 3D",
-    "artificialguybr/analogredmond-v2": "Старые фотографии",
-    "prithivMLmods/SD3.5-Large-Photorealistic-LoRA": "Фотографии", #вроде нет
-   
-    
-    # FLUX
-    "black-forest-labs/FLUX.1-dev": "FLUX (оригинальный)",
-    "Shakker-Labs/FLUX.1-dev-LoRA-add-details": "FLUX more details",
-    "XLabs-AI/flux-RealismLora": "Realism Lora",
-    "dennis-sleepytales/frosting_lane_flux": "Frosting lane Flux",
-    "openfree/flux-chatgpt-ghibli-lora": "Ghibli ChatGpt",
-    "HiDream-ai/HiDream-I1-Full": "HiDream-ai",    
-
-
-    #alvdansen/frosting_lane_flux     
-    "glif-loradex-trainer/araminta": "Araminta Illust Art",
-    "dennis-sleepytales/softserve_anime": "Softserve Anime",
-    #alvdansen/softserve_anime    
-    "bingbangboom/flux_dreamscape": "Dreamscape",
-    "prithivMLmods/Canopus-LoRA-Flux-Anime": "Canopus Anime",          
-    "dennis-sleepytales/flux_ghibsky": "Ghibsky", 
-    #aleksa-codes/flux-ghibsky-illustration
-    "strangerzonehf/Flux-Ghibli-Art-LoRA": "Flux Details Anime",
-    "dataautogpt3/FLUX-AestheticAnime": "Aesthetic Anime",
-    "glif/90s-anime-art": "90s Anime",
-    "prithivMLmods/Flux-Dev-Real-Anime-LoRA": "Real Anime",
-
-    "alvdansen/plushy-world-flux": "Plushy World",    
-    "bingbangboom/oneImageLoraTest": "Pastel",
-    "bingbangboom/flux_oilscape": "OilPaint",
-
-    "prithivMLmods/Canopus-Pixar-3D-Flux-LoRA": "Pixar",
-
-    "alvdansen/flux-koda": "Flux Koda",
-    "alvdansen/flux_film_foto": "Film Foto",
-    "UmeAiRT/FLUX.1-dev-LoRA-Modern_Pixel_art": "Modern pixel art ",
-    "openfree/winslow-homer": "Watercolor",    
-    
-    
-    # OTHERS
-    "nerijs/pixel-art-xl": "PixelArt V2",
-    "sWizad/pokemon-trainer-sprite-pixelart": "Pixel(персонажи)",
-    "artificialguybr/LogoRedmond-LogoLoraForSDXL-V2": "Logo V2",
-    "artificialguybr/StickersRedmond": "Stickers",
-
-    "xey/sldr_flux_nsfw_v2-studio": "NSFW",
-    "Shakker-Labs/FLUX.1-dev-LoRA-Logo-Design": "Flux Logo Design",
-    "gokaygokay/Flux-Game-Assets-LoRA-v2": "3D Game Assets",
-    "fofr/flux-80s-cyberpunk": "Flux 80s Cyberpunk",     
-    "Keltezaa/Dynamic_Pose_Uncensored": "Pose_Uncensored ",
-
-
-
-    "google_imagen3": "Google Imagen(временно не работает)",             
+    "black-forest-labs/FLUX.1-dev": "🌃 FLUX.1 Dev",
+    "black-forest-labs/FLUX.1-schnell": "🚀 FLUX.1 Schnell",
+    "stabilityai/stable-diffusion-xl-base-1.0": "💠 SDXL Base 1.0",
+    "stabilityai/stable-diffusion-3-medium-diffusers": "🎨 SD3 Medium",
+    "imagen3": "🧠 Google Imagen 3"
 }
 
+# --- ФУНКЦИИ ---
 
-
-
-
-
-
-
-
-
-
-# Обработчик команды выбора стиля
+# 1. Единое меню выбора модели
 async def choose_style(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    user_model = get_user_model(user_id)  # Получаем текущую модель пользователя
+    # Получаем текущую модель (функция get_user_model должна быть у тебя в коде базы данных)
+    user_model = get_user_model(user_id) 
+    
+    # Если модель не найдена в списке (например, старая удаленная), ставим дефолтную
+    if user_model not in MODELS:
+        user_model = "black-forest-labs/FLUX.1-dev"
 
-    # Проверяем, выбрана ли уже Imagen 3
-    imagen_selected = " ✅" if user_model == "imagen3" else ""
+    keyboard = []
+    
+    # Генерируем кнопки для всех моделей из списка
+    for model_key, params in MODELS.items():
+        name = MODEL_SHORTNAMES.get(model_key, model_key)
+        # Ставим галочку, если модель выбрана
+        if model_key == user_model:
+            name = f"{name} ✅"
+        
+        # callback_data теперь просто 'set_model|<ключ_модели>'
+        keyboard.append([InlineKeyboardButton(name, callback_data=f"set_model|{model_key}")])
 
-    keyboard = [
-        [InlineKeyboardButton("🌠 Stable Diffusion", callback_data='category_🌠stable')],
-        [InlineKeyboardButton("🌃 FLUX", callback_data='category_🌃flux')],
-        [InlineKeyboardButton("💡 others", callback_data='category_💡others')],
-        [InlineKeyboardButton(f"🎨 Google Imagen 3(Временно недоступно){imagen_selected}", callback_data='select_imagen3')],        
-        [InlineKeyboardButton("Таблица моделей и примеры", callback_data='examples_table')],
-        [InlineKeyboardButton("❌ Отмена", callback_data="cancelmodel")]               
-    ]
+    # Добавляем служебные кнопки
+    keyboard.append([InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data="none")])
+    keyboard.append([InlineKeyboardButton("🎨 Выбрать стиль (Preset)", callback_data='choose_preset')])
+    keyboard.append([InlineKeyboardButton("🖼 Таблица примеров", callback_data='examples_table')])
+    keyboard.append([InlineKeyboardButton("❌ Закрыть меню", callback_data="cancelmodel")])
+
     reply_markup = InlineKeyboardMarkup(keyboard)
-
-    message_text = (
-        "Выберите категорию модели\n\n"
-        "🌠 Генерация моделей из категории Stable diffusion занимает в среднем 8-30 сек.\n"
-        "🌃 Из Flux 30-300 сек в зависимости от запроса и нагрузки на сервера.\n\n"
-        "⏳ SD turbo - самая быстрая модель, генерация одного изображения занимает всего 3-5 секунд в среднем\n\n"
-        "🎨 Google Imagen 3 - тоже очень быстрая и интересная модель. Она работает отдельно от всех прочих и потому будет работать даже если другие модели перестали. Кроме того она умеет генерировать сопутствующий текст (например сказка + иллюстрация) и изменять ваши изображения. \n\n"        
-        "В таблице примеров можно посмотреть, как приблизительно выглядят генерации каждой из моделей. Так же она умеет генерировать по несколько изображений за раз\n\n"
-        f"📌 Текущая выбранная модель: {user_model}"
+    
+    text = (
+        "⚙️ <b>Настройки генерации</b>\n\n"
+        "В связи с изменениями на HuggingFace, список бесплатных моделей обновлен.\n\n"
+        "🌃 <b>FLUX</b> — Отличное качество, следует промпту. <i>(Dev — качественнее, Schnell — быстрее)</i>\n"
+        "💠 <b>SDXL / SD3</b> — Классические модели Stable Diffusion.\n"
+        "🧠 <b>Google Imagen</b> — Работает отдельно, понимает сложные запросы, умеет дорисовывать.\n\n"
+        f"📌 Текущая модель: <b>{MODEL_SHORTNAMES.get(user_model, user_model)}</b>"
     )
 
     if update.callback_query:
-        message = update.callback_query.message
-        if message and message.text:  # Проверяем, есть ли текст
-            await message.edit_text(message_text, reply_markup=reply_markup)
-        else:
-            await update.callback_query.message.reply_text(message_text, reply_markup=reply_markup)
-        await update.callback_query.answer()
-    elif update.message:
-        await update.message.reply_text(message_text, reply_markup=reply_markup)
+        # Если это клик по кнопке — редактируем сообщение
+        await update.callback_query.message.edit_text(text, reply_markup=reply_markup, parse_mode="HTML")
+    else:
+        # Если это новая команда — отправляем новое сообщение
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="HTML")
+
+
+# 2. Обработчик нажатия на модель
+async def model_selection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    # Парсим callback_data "set_model|model_name"
+    _, selected_model = query.data.split('|', 1)
+    user_id = query.from_user.id
+    
+    # Сохраняем в БД (твоя функция)
+    set_user_model(user_id, selected_model)
+    
+    # Обновляем user_data для текущей сессии
+    context.user_data['selected_model'] = {
+        'name': selected_model,
+        'params': MODELS[selected_model]
+    }
+
+    # Если выбрали Imagen, можно отправить доп. инструкцию (как у тебя было)
+    if selected_model == "imagen3":
+         await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="✅ Выбрана модель: <b>Google Imagen 3</b>\n\nИспользуйте <code>Нарисуй</code> для генерации или <code>Дорисуй</code> для редактирования фото.",
+            parse_mode="HTML"
+        )
+    
+    # Просто обновляем меню, чтобы переставить галочку
+    await choose_style(update, context)
+
+
+# 3. Поиск параметров (упрощенная версия)
+def find_model_params(model_name: str) -> dict:
+    """Ищет параметры модели в плоском словаре MODELS."""
+    return MODELS.get(model_name, MODELS["black-forest-labs/FLUX.1-dev"])
+
+
+
+
+
+
+
 
 # Обработчик выбора Imagen 3
 async def select_imagen3(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4357,80 +4151,6 @@ async def select_style(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await choose_style(update, context)
 
 
-async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    category = query.data.split('_')[1]
-    user_id = query.from_user.id
-    user_model = get_user_model(user_id)  # Получаем текущую модель пользователя    
-    # Список всех категорий
-    categories = ["🌠stable", "🌃flux", "💡others", "imagen3"]
-    other_categories = [c for c in categories if c != category]  # Выбираем две другие категории
-
-
-
-
-    logger.info(f"user_model {user_model}")   
-    # Верхние кнопки с другими категориями
-    buttons = [
-        [
-            InlineKeyboardButton(other_categories[0].capitalize(), callback_data=f"category_{other_categories[0]}"),
-            InlineKeyboardButton(other_categories[1].capitalize(), callback_data=f"category_{other_categories[1]}")
-        ]
-    ]
-    
-    # Разделитель
-    buttons.append([InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data="none")])
-
-    # Карта приоритетных моделей для разных категорий
-    priority_models = {
-        "🌠stable": ("stabilityai/stable-diffusion-3.5-large-turbo", "SD Turbo"),
-        "🌃flux": ("black-forest-labs/FLUX.1-dev", "FLUX (оригинальный)"),
-        "imagen3": ("google_imagen3", "Imagen 3")
-    }
-
-    # Если в текущей категории есть приоритетная модель, добавляем её первой
-    if category in priority_models:
-        model_id, model_name = priority_models[category]
-        if model_id in MODELS[category]:      
-            logger.info(f"model_id {model_id}")   
-            logger.info(f"model_name {model_name}")             
-            selected = " ✅" if model_id == user_model else ""           
-            buttons.append([InlineKeyboardButton(model_name + selected, callback_data=f"model_{category}_{model_id}")])
- 
-
-
-    # Добавляем кнопки с остальными моделями
-    row = []
-    for model in MODELS[category]:
-        if category in priority_models and model == priority_models[category][0]:  # Пропускаем приоритетную модель
-            continue
-        
-        short_name = MODEL_SHORTNAMES.get(model, model)  # Используем укороченное имя или оригинальное
-        selected = " ✅" if model == user_model else ""        
-        btn = InlineKeyboardButton(short_name + selected, callback_data=f"model_{category}_{model}")
-        row.append(btn)
-
-        if len(row) == 2:  # Два в ряд
-            buttons.append(row)
-            row = []
-
-    if row:  # Добавляем последний ряд, если осталась одна кнопка
-        buttons.append(row)
-    
-    # Нижний разделитель
-    buttons.append([InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data="none")])
-
-    buttons.append([InlineKeyboardButton("🎨 Выбрать стиль", callback_data='choose_preset')])    
-    # Кнопка "Отмена"
-    buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="cancelmodel")])
-
-    reply_markup = InlineKeyboardMarkup(buttons)
-    await query.edit_message_text(
-        text=f"Доступные модели {category}. \n\n  🌠 Генерация моделей из категории Stable diffusion занимает в среднем 8-30сек.\n 🌃 Из Flux 30-250сек в зависимости от запроса и нагрузки на сервера. \n\n ⏳ SD turbo - самая быстрая модель, генерация одного изображения занимает всего 3-5 секунд в среднем",
-        reply_markup=reply_markup
-    )
 
 async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -4441,46 +4161,7 @@ async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await run_gpt(update, context)
 
 
-# Обработчик выбора модели
-async def model_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    _, category, model_name = query.data.split('_', 2)
-    user_id = update.effective_user.id
-    
-    # Получаем предыдущую модель пользователя
-    previous_model = get_user_model(user_id)
 
-    # Сохраняем новую модель в базе данных
-    set_user_model(user_id, model_name)
-
-    # Обновляем данные в user_data
-    context.user_data['selected_model'] = {
-        'name': model_name,
-        'params': MODELS[category][model_name]
-    }
-
-    # Формируем текст сообщения
-    message_text = (f"✅ Вы выбрали модель: {MODEL_SHORTNAMES.get(model_name, model_name)}\n\n"
-                    f"Теперь введите промпт(запрос) для генерации. Запрос должен начинаться со слова \"нарисуй\" чтобы затриггерить генерацию")
-
-    # Отправляем новое сообщение (без попыток редактирования старого)
-    sent_message = await query.message.reply_text(message_text)
-    context.user_data['model_message_id'] = sent_message.message_id
-
-    # Обновляем клавиатуру с новой галочкой
-    await category_handler(update, context)
-
-
-
-def find_model_params(model_name: str) -> dict:
-    """Ищет параметры модели в MODELS по имени."""
-    for category in MODELS.values():
-        if model_name in category:
-            return category[model_name]
-    # Возвращаем параметры по умолчанию, если модель не найдена
-    return MODELS['🌠stable']["stabilityai/stable-diffusion-3.5-large-turbo"]
 
 
 async def token_set(update: Update, context: CallbackContext):
@@ -18123,8 +17804,7 @@ def main() -> None:
 
     application.add_handler(CallbackQueryHandler(select_style, pattern="choose_modele"))
     application.add_handler(CallbackQueryHandler(choose_preset, pattern="choose_preset"))    
-    application.add_handler(CallbackQueryHandler(category_handler, pattern="^category_"))
-    application.add_handler(CallbackQueryHandler(model_handler, pattern="^model_"))
+    application.add_handler(CallbackQueryHandler(model_selection_handler, pattern="^set_model\|")) 
     application.add_handler(CallbackQueryHandler(cancel_handler, pattern="^cancelmodel"))
 
     
