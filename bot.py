@@ -144,6 +144,27 @@ MAX_MESSAGE_LENGTH = 4096
 # Загружаем данные при запуске бота
 media_group_storage = load_publications_from_firebase()
 
+
+async def cat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    url = "https://meowfacts.herokuapp.com/?lang=rus"
+
+    try:
+        # Делаем HTTP запрос
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                data = await resp.json()
+
+        # Достаём факт из JSON
+        fact = data.get("data", ["Не удалось получить факт о кошках."])[0]
+
+        # Отправляем сообщение
+        await update.message.reply_text(fact)
+
+    except Exception as e:
+        await update.message.reply_text("Ошибка при получении факта о кошках 😿")
+        print("Ошибка в /cat:", e)
+
+
 # Функция для сохранения данных в JSON файл
 def save_media_group_data(media_group_storage, user_id):
     """Сохраняет данные публикаций для указанного пользователя в Firebase."""
@@ -17958,7 +17979,8 @@ def main() -> None:
     application.add_handler(CommandHandler('preview', preview_article))  # Добавляем обработчик для /preview
     application.add_handler(CommandHandler('delete', delete_last))
     application.add_handler(CommandHandler('timer', send_timer_app_button))
-    
+    application.add_handler(CommandHandler("cat", cat_command))
+
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, duplicate_message))  # Обработчик дублирования сообщений
 
 
