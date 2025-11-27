@@ -17870,6 +17870,42 @@ import pytz
 
 
 
+async def fullhelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Отправляет список команд бота в HTML-формате.
+    Каждая команда заключена в тег <code> для удобного копирования.
+    """
+    # Текст помощи — HTML
+    help_text = (
+        "<b>✨ Команды бота — список</b>\n\n"
+        "<code>/vpn</code>     - бесплатные ключи и подписки на впн серверы, в том числе для обхода белых списков.\n"
+        "<code>/timer</code>   - интерактивное веб-приложение для пометок с привязкой ко времени таймера (удобно при просмотре фильмов и сериалов если нужно быстро пометить для себя какой-то фрагмент чтобы не забыть где он был).\n"
+        "<code>/cat</code>     - случайный факт о котах.\n"
+        "<code>/map</code>     - интерактивная карта растений и грибов.\n"
+        "<code>/ozon</code>    - отслеживание динамики цен на товар с Ozon с графиком динамики по дням.\n"
+        "<code>/search</code>  - режим поиска источника изображения.\n"
+        "<code>/ocr</code>     - режим распознавания (растения, текст, грибы, состав продуктов и тд).\n"
+        "<code>/gpt</code>     - режим диалога с нейросетью.\n"
+        "<code>/scheduledmark</code> - папки с вашими сохранёнными постами.\n"
+        "<code>/restart</code> - перезапустить бота (вернуться в основное меню).\n"
+        "<code>/send</code>    - отправить сообщение администрации Анемона.\n"
+        "<code>/fin</code>     - завершить режим отправки сообщений.\n"
+    )
+
+    # Опциональная inline-кнопка (возврат в главное меню)
+    keyboard = [
+        [InlineKeyboardButton("🌌 В главное меню 🌌", callback_data='restart')],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Отправляем сообщение (HTML)
+    # Используем update.effective_message, чтобы работать и с callback_query (если потребуется)
+    await update.effective_message.reply_text(
+        help_text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=reply_markup,
+        disable_web_page_preview=True
+    )
 
 
 
@@ -18156,7 +18192,7 @@ def main() -> None:
     application.add_handler(CommandHandler('fin', fin_mode))
     application.add_handler(CommandHandler('restart', restart))
     application.add_handler(CommandHandler('rerestart', rerestart))    
-    application.add_handler(CommandHandler('help', help_command))
+    application.add_handler(CommandHandler('help', fullhelp_command))
     application.add_handler(CommandHandler('publish', publish))
     application.add_handler(CommandHandler('preview', preview_article))  # Добавляем обработчик для /preview
     application.add_handler(CommandHandler('delete', delete_last))
