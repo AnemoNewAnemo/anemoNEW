@@ -4058,7 +4058,7 @@ async def choose_style(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Добавляем служебные кнопки
     keyboard.append([InlineKeyboardButton("━━━━━━━━━━ ✦ ━━━━━━━━━━", callback_data="none")])
     keyboard.append([InlineKeyboardButton("🎨 Выбрать стиль (Preset)", callback_data='choose_preset')])
-    keyboard.append([InlineKeyboardButton("🖼 Таблица примеров", callback_data='examples_table')])
+    keyboard.append([InlineKeyboardButton("📗 Помощь", callback_data='short_help_gpt')])    
     keyboard.append([InlineKeyboardButton("❌ Закрыть меню", callback_data="cancelmodel")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -4069,6 +4069,7 @@ async def choose_style(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🌃 <b>FLUX</b> — Отличное качество, следует промпту. <i>(Dev — качественнее, Schnell — быстрее)</i>\n"
         "💠 <b>SDXL / SD3</b> — Классические модели Stable Diffusion.\n"
         "🧠 <b>Google Imagen</b> — Работает отдельно, понимает сложные запросы, умеет дорисовывать.\n\n"
+        "Вы можете менять соотношение сторон генерации и немного настравиать её, в частности указывать seed чтобы зафиксировать одну генерацию и изменять её, подробнее читайте по кнопке помощь"        
         f"📌 Текущая модель: <b>{MODEL_SHORTNAMES.get(user_model, user_model)}</b>"
     )
 
