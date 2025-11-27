@@ -37,11 +37,11 @@ from telegram import Update
 from tempfile import NamedTemporaryFile
 # Google API Key и модель Gemini
 API_KEYS = [
-    "AIzaSyBZDMPOywkU7DSgPTtkyPgMWAi3QpXBD38",  # Ваш старый ключ
-    "AIzaSyDu7kezH_85wkXH-TBqOze_RgfH0-35nLM",
-    "AIzaSyAoJrpgWke3Xu9GjF8lmKRpzst4lHqT5y4",
-    "AIzaSyBHx1ek4z6M19Kcbtx43C907ioyQH0Dj_4",
-    "AIzaSyBEKdWfJ03_yeOCTrPSvCZ2-PhldjR1Amk"
+    "AIzaSyBp98NSyefEFeUrwFKnzPCG501iHHlu86E",  # Ваш старый ключ
+    "AIzaSyDYXZOeNQTh2AYPiuYXIbr3hKAGeckb_Yk",
+    "AIzaSyDDiBJ1seHaI1fiFrlLZuvo4F0lJMJ6hoo",
+    "AIzaSyDZi2ZDVnMQ2ZNQBA257yuf0jed-w9G5W8",
+    "AIzaSyC7dzoAfxkHqyJaM0ha3SqJM0ijSlaAZ_c"
 ]
 
 # 2. Укажите основную и запасные модели
