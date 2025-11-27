@@ -1977,64 +1977,81 @@ async def find_image_source(update: Update, context: CallbackContext):
     await query.answer()
 
     user_id = query.from_user.id
+
     image_path = context.user_data.get("img_path")
     image_bytes = context.user_data.get("image_bytes")
+    img_url = context.user_data.get("img_url")   # URL уже должен быть загружен catbox ранее
 
     if not image_path and image_bytes:
-        # если файла нет, но есть байты — создаём временный
         image_path = "temp_image.jpg"
         with open(image_path, "wb") as f:
             f.write(image_bytes)
 
     if not image_path or not os.path.exists(image_path):
-        await query.edit_message_text("Изображение не найдено. Пожалуйста, отправьте его заново.")
+        await query.edit_message_text("❗ Изображение не найдено — отправьте его заново.")
         return
 
-    loading_message = await query.edit_message_text("Обработка запроса...")
+    # === Создаём сообщение о загрузке ===
+    loading_message = await query.edit_message_text("🔄 Анализ изображения...")
 
-    img_url = context.user_data.get("img_url")  # ✅ Берём уже сохранённый URL
-    image_path = context.user_data.get("img_path")
-    image_bytes = context.user_data.get("image_bytes")
-    logger.info(f"img_url: {img_url}")
-    await loading_message.edit_text("Файл успешно загружен! Поиск источников через SauceNAO...")
-
+    # --- Генерируем кнопки заранее (как в start) ---
     search_url = f"https://saucenao.com/search.php?db=999&url={img_url}"
     yandex_search_url = f"https://yandex.ru/images/search?source=collections&rpt=imageview&url={img_url}"
     google_search_url = f"https://lens.google.com/uploadbyurl?url={img_url}"
     bing_search_url = f"https://www.bing.com/images/search?view=detailv2&iss=sbi&form=SBIVSP&sbisrc=UrlPaste&q=imgurl:{img_url}"
 
     keyboard = [
-        [InlineKeyboardButton("АИ или нет?", callback_data='ai_or_not')],
+        [InlineKeyboardButton("🤖 АИ или нет?", callback_data='ai_or_not')],
         [
-            InlineKeyboardButton("Найти в Yandex Images", url=yandex_search_url),
-            InlineKeyboardButton("🔍 Yandex WebApp", web_app=WebAppInfo(url=yandex_search_url))
+            InlineKeyboardButton("🔍 Yandex", url=yandex_search_url),
+            InlineKeyboardButton("WebApp", web_app=WebAppInfo(url=yandex_search_url))
         ],
         [
-            InlineKeyboardButton("Найти в Google Images", url=google_search_url),
-            InlineKeyboardButton("🔍 Google WebApp", web_app=WebAppInfo(url=google_search_url))
+            InlineKeyboardButton("🔍 Google", url=google_search_url),
+            InlineKeyboardButton("WebApp", web_app=WebAppInfo(url=google_search_url))
         ],
         [
-            InlineKeyboardButton("Найти в Bing Images", url=bing_search_url),
-            InlineKeyboardButton("🔍 Bing WebApp", web_app=WebAppInfo(url=bing_search_url))
+            InlineKeyboardButton("🔍 Bing", url=bing_search_url),
+            InlineKeyboardButton("WebApp", web_app=WebAppInfo(url=bing_search_url))
         ],
         [
-            InlineKeyboardButton("Найти на SauceNAO", url=search_url),
-            InlineKeyboardButton("🔍 SauceNAO WebApp", web_app=WebAppInfo(url=search_url))
+            InlineKeyboardButton("SauceNAO", url=search_url),
+            InlineKeyboardButton("WebApp", web_app=WebAppInfo(url=search_url))
         ],
-        [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
+        [InlineKeyboardButton("🏠 В меню", callback_data='restart')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
+    # ==========================================================
+    # 1) ПРОБУЕМ НАЙТИ АНИМЕ ЧЕРЕЗ trace.moe  (как start)
+    # ==========================================================
+    try:
+        await loading_message.edit_text("🕒 Поиск совпадений в trace.moe...")
+        anime_found = await find_anime_source(update, context, image_path, reply_markup)
+
+        if anime_found:  # если аниме найдено ≥86% — завершение
+            await loading_message.delete()
+            if os.path.exists(image_path):
+                os.remove(image_path)
+            return
+    except Exception as e:
+        logger.error(f"trace.moe error: {e}")
+        # но НЕ прерываем — продолжаем SauceNAO!
+
+    # ==========================================================
+    # 2) ЕСЛИ anime не найден -> SauceNAO (как start)
+    # ==========================================================
+    await loading_message.edit_text("🛰 Поиск источника через SauceNAO...")
+
     try:
         authors_text, external_links, jp_name, details_text, ep_name, ep_time, dA_id, full_author_text, pixiv_id, twitter_id = await search_image_saucenao(image_path)
+
     except Exception as e:
         if str(e) == "Лимит превышен":
-            await loading_message.edit_text(
-                "Лимит запросов к SauceNAO исчерпан. Попробуйте через пару часов.",
-                reply_markup=reply_markup
-            )
+            await loading_message.edit_text("⚠ Лимит SauceNAO исчерпан — попробуйте позже.", reply_markup=reply_markup)
         else:
-            await loading_message.edit_text(f"Ошибка при обращении к SauceNAO: {str(e)}", reply_markup=reply_markup)
+            await loading_message.edit_text(f"Ошибка SauceNAO: {str(e)}", reply_markup=reply_markup)
+
         if os.path.exists(image_path):
             os.remove(image_path)
         return
@@ -2042,36 +2059,23 @@ async def find_image_source(update: Update, context: CallbackContext):
     if os.path.exists(image_path):
         os.remove(image_path)
 
-    links_text = "\n".join(f"{i + 1}. {link}" for i, link in enumerate(external_links)) if isinstance(external_links, list) else None
+    # === Формируем текст как в версии start ===
+    links_text = "\n".join(f"{i+1}. {l}" for i,l in enumerate(external_links)) if external_links else None
+    reply_text = "🔎 Результаты SauceNAO:\n\n"
 
-    reply_text = "Результаты поиска:\n"
-    if authors_text:
-        reply_text += f"Название: {authors_text}\n"
-    if details_text:
-        reply_text += f"Детали: {details_text}\n\n"
-    if jp_name:
-        reply_text += f"JP Название: {jp_name}\n"
-    if ep_name:
-        reply_text += f"{ep_name}\n"
-    if dA_id:
-        reply_text += f"dA ID: {dA_id}\n"
-    if twitter_id:
-        reply_text += f"Твиттер:\n{twitter_id}\n"
-    if pixiv_id:
-        reply_text += f"Pixiv: {pixiv_id}\n"
-    if full_author_text:
-        reply_text += f"Автор: {full_author_text}\n"
-    if ep_time:
-        reply_text += f"{ep_time}\n\n"
-    if links_text:
-        reply_text += f"Ссылки:\n{links_text}"
+    if authors_text: reply_text += f"📌 Название: {authors_text}\n"
+    if details_text: reply_text += f"📄 Детали: {details_text}\n\n"
+    if jp_name: reply_text += f"🇯🇵 JP: {jp_name}\n"
+    if ep_name: reply_text += f"{ep_name}\n"
+    if dA_id: reply_text += f"DeviantArt: {dA_id}\n"
+    if twitter_id: reply_text += f"Twitter: {twitter_id}\n"
+    if pixiv_id: reply_text += f"Pixiv: {pixiv_id}\n"
+    if full_author_text: reply_text += f"Автор: {full_author_text}\n"
+    if ep_time: reply_text += f"{ep_time}\n\n"
+    if links_text: reply_text += f"🔗 Ссылки:\n{links_text}"
 
     if not authors_text and not links_text:
-        reply_text = (
-            "К сожалению, ничего не найдено. "
-            "Возможно, изображение сгенерировано (это можно проверить по кнопке ниже), "
-            "возможно автор малоизвестен или изображение слишком свежее."
-        )
+        reply_text = "❔ Источник не найден.\nВозможно работа новая, редкая или сгенерирована ИИ."
 
     await loading_message.edit_text(reply_text.strip(), reply_markup=reply_markup)
 
