@@ -36,14 +36,8 @@ from telegram.ext import CallbackContext, ContextTypes
 from telegram import Update
 from tempfile import NamedTemporaryFile
 # Google API Key и модель Gemini
-API_KEYS = [
-    "AIzaSyBp98NSyefEFeUrwFKnzPCG501iHHlu86E",  # Ваш старый ключ
-    "AIzaSyDYXZOeNQTh2AYPiuYXIbr3hKAGeckb_Yk",
-    "AIzaSyDDiBJ1seHaI1fiFrlLZuvo4F0lJMJ6hoo",
-    "AIzaSyDZi2ZDVnMQ2ZNQBA257yuf0jed-w9G5W8",
-    "AIzaSyC7dzoAfxkHqyJaM0ha3SqJM0ijSlaAZ_c"
-]
 
+API_KEYS = os.getenv("API_KEYS", "").split(",")
 # 2. Укажите основную и запасные модели
 PRIMARY_MODEL = 'gemini-2.5-flash' # Модель, которую пробуем в первую очередь
 FALLBACK_MODELS = ['gemini-2.5-flash-preview-05-20', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-exp'] # Модели на случай, если с основной ничего не вышло
