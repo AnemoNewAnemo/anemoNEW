@@ -145,24 +145,50 @@ MAX_MESSAGE_LENGTH = 4096
 media_group_storage = load_publications_from_firebase()
 
 
+# Имя файла базы данных (должен лежать рядом с bot.py)
+DB_FILENAME = "cat_facts.json"
+
 async def cat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    url = "https://meowfacts.herokuapp.com/?lang=rus"
+    fact = None
+    
+    # Генерируем случайное число от 0.0 до 1.0
+    # Если меньше 0.75 (75%), пытаемся взять из локальной базы
+    use_local_db = random.random() < 0.75
 
-    try:
-        # Делаем HTTP запрос
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                data = await resp.json()
+    if use_local_db:
+        if os.path.exists(DB_FILENAME):
+            try:
+                with open(DB_FILENAME, "r", encoding="utf-8") as f:
+                    local_facts = json.load(f)
+                    if local_facts:
+                        fact = random.choice(local_facts)
+            except Exception as e:
+                print(f"Ошибка чтения локальной БД: {e}")
+                # Если ошибка, fact останется None, и мы пойдем в API
+        else:
+            print(f"Файл {DB_FILENAME} не найден. Использую API.")
 
-        # Достаём факт из JSON
-        fact = data.get("data", ["Не удалось получить факт о кошках."])[0]
+    # Если факт не был получен (выпали 25% ИЛИ ошибка локальной БД ИЛИ файл пуст)
+    if not fact:
+        url = "https://meowfacts.herokuapp.com/?lang=rus"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        # API возвращает список в поле "data"
+                        fact = data.get("data", [None])[0]
+                    else:
+                        print(f"Ошибка API статус: {resp.status}")
+        except Exception as e:
+            print("Ошибка при запросе к API:", e)
 
-        # Отправляем сообщение
+    # Финальная отправка
+    if fact:
         await update.message.reply_text(fact)
-
-    except Exception as e:
-        await update.message.reply_text("Ошибка при получении факта о кошках 😿")
-        print("Ошибка в /cat:", e)
+    else:
+        # Если сломалось вообще всё (и файл, и API)
+        await update.message.reply_text("Котики сегодня стесняются и не хотят делиться фактами 😿")
 
 
 # Функция для сохранения данных в JSON файл
@@ -1181,24 +1207,30 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 import urllib.parse
 
 
-async def find_anime_source(update: Update, context: CallbackContext, photo_file, reply_markup: InlineKeyboardMarkup) -> bool:
+async def find_anime_source(update: Update, context: CallbackContext, image_path: str, reply_markup: InlineKeyboardMarkup) -> bool:
     """
-    Анализирует изображение через trace.moe.
-    Возвращает True  — если найдено (similarity >= 86%)
-    Возвращает False — если результат слабый или отсутствует.
+    Анализирует изображение через trace.moe по ЛОКАЛЬНОМУ ПУТИ.
+    Возвращает True — если найдено (similarity >= 86%), False — иначе.
     """
+    # Если вызывается из find_image_source (через query)
+    if update.callback_query:
+        # Для query нужно использовать edit_message_text, а не reply_text
+        temp_msg = await update.callback_query.message.edit_text("Ищу источник... 🔍")
+        
+        # NOTE: В вашем коде temp_msg не удаляется в случае нахождения аниме, 
+        # но это можно сделать в find_image_source. Здесь оставляем как есть.
+        delete_temp_msg = lambda: temp_msg.delete()
 
-    temp_msg = await update.message.reply_text("Ищу источник... 🔍")
-    image_path = None
+    # Если вызывается из start (через message)
+    elif update.message:
+        temp_msg = await update.message.reply_text("Ищу источник... 🔍")
+        delete_temp_msg = lambda: temp_msg.delete()
+        
+    else:
+        return False # Некорректный вызов
 
     try:
-        # === СКАЧИВАЕМ ИЗОБРАЖЕНИЕ ===
-        file = await context.bot.get_file(photo_file.file_id)
-        fd, image_path = tempfile.mkstemp(suffix=".jpg")
-        os.close(fd)
-        await file.download_to_drive(image_path)
-
-        # === trace.moe поиск ===
+        # === trace.moe поиск — используем image_path, который нам передали ===
         with open(image_path, "rb") as f:
             resp = requests.post(
                 "https://api.trace.moe/search?anilistInfo&cutBorders",
@@ -1305,14 +1337,20 @@ async def find_anime_source(update: Update, context: CallbackContext, photo_file
         # === Отправка результата ===
         if video_url:
             await context.bot.send_video(
-                chat_id=update.message.chat_id,
+                chat_id=temp_msg.chat_id, # Используем chat_id из temp_msg
                 video=video_url,
                 caption=caption,
                 parse_mode="HTML",
                 reply_markup=reply_markup
             )
         else:
-            await update.message.reply_text(caption, parse_mode="HTML", reply_markup=reply_markup)
+            await context.bot.send_message( # Используем send_message вместо reply_text, т.к. temp_msg уже удален
+                chat_id=temp_msg.chat_id,
+                text=caption, 
+                parse_mode="HTML", 
+                reply_markup=reply_markup
+            )
+
 
         return True
 
@@ -1320,10 +1358,8 @@ async def find_anime_source(update: Update, context: CallbackContext, photo_file
         logger.error(f"trace.moe error: {e}")
         await temp_msg.edit_text("❗ Ошибка анализа. Попробуйте ещё раз позже.")
         return False
-
-    finally:
-        if image_path and os.path.exists(image_path):
-            os.remove(image_path)
+        
+    # NOTE: Логику удаления файла image_path переносим в вызывающие функции
 
 
 
@@ -1424,7 +1460,7 @@ async def start(update: Update, context: CallbackContext) -> int:
         # --- ЭТАП 1: Поиск аниме через trace.moe ---
         try:
             # Передаем URL и подготовленные кнопки
-            anime_found = await find_anime_source(update, context, update.message.photo[-1], reply_markup_search)
+            anime_found = await find_anime_source(update, context, image_path, reply_markup_search) # <--- ИЗМЕНЕНИЕ
             
             if anime_found:
                 # Если аниме найдено с высокой точностью, удаляем временные сообщения и файлы и выходим
