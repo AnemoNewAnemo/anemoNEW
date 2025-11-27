@@ -1178,11 +1178,162 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 
+import urllib.parse
+
+
+async def find_anime_source(update: Update, context: CallbackContext, photo_file, reply_markup: InlineKeyboardMarkup) -> bool:
+    """
+    Анализирует изображение через trace.moe.
+    Возвращает True  — если найдено (similarity >= 86%)
+    Возвращает False — если результат слабый или отсутствует.
+    """
+
+    temp_msg = await update.message.reply_text("Ищу источник... 🔍")
+    image_path = None
+
+    try:
+        # === СКАЧИВАЕМ ИЗОБРАЖЕНИЕ ===
+        file = await context.bot.get_file(photo_file.file_id)
+        fd, image_path = tempfile.mkstemp(suffix=".jpg")
+        os.close(fd)
+        await file.download_to_drive(image_path)
+
+        # === trace.moe поиск ===
+        with open(image_path, "rb") as f:
+            resp = requests.post(
+                "https://api.trace.moe/search?anilistInfo&cutBorders",
+                data=f,
+                headers={"Content-Type": "image/jpeg"}
+            )
+        data = resp.json()
+
+        if "result" not in data or not data["result"]:
+            await temp_msg.edit_text("⚠ Источник не найден. Попробуйте другой кадр.")
+            return False
+
+        result = data["result"][0]
+        similarity = result.get("similarity", 0) * 100
+
+        # Если точность низкая
+        if similarity < 86:
+            await temp_msg.edit_text(
+                f"🤔 Найдено, но точность низкая: {similarity:.2f}%\n"
+                f"Попробуйте кадр получше!"
+            )
+            return False
+
+        # Удаляем "ищу..."
+        await temp_msg.delete()
+
+        # === Доп. запрос как во втором боте — quota ===
+        try:
+            me = requests.get("https://api.trace.moe/me").json()
+            quota = int(me.get("quota", 0))
+            used = int(me.get("quotaUsed", 0))
+            left_requests = quota - used
+        except:
+            left_requests = None
+
+        # ==== Данные AniList ====
+        anilist = result.get("anilist", {})
+        title = (
+            anilist.get("title", {}).get("english")
+            or anilist.get("title", {}).get("romaji")
+            or anilist.get("title", {}).get("native")
+        )
+
+        genres = anilist.get("genres")
+        genres_str = ", ".join(genres) if genres else None
+        fmt = anilist.get("format")
+
+        studios = anilist.get("studios", {}).get("edges", [])
+        main_studios = [s["node"]["name"] for s in studios if s.get("isMain")]
+        studio_str = ", ".join(main_studios) if main_studios else None
+
+        # Годы выхода
+        start_date = anilist.get("startDate")
+        end_date   = anilist.get("endDate")
+        if start_date and start_date.get("year"):
+            years_str = (
+                f"{start_date['year']}–{end_date['year']}"
+                if end_date and end_date.get("year") != start_date['year']
+                else str(start_date['year'])
+            )
+        else:
+            years_str = None
+
+        synonyms = anilist.get("synonyms", [])
+        synonyms_str = ", ".join(synonyms[:3]) if synonyms else None
+
+        # Эпизод и время фрагмента
+        episode         = result.get("episode")
+        total_episodes  = anilist.get("episodes")
+        t_from, t_to    = result.get("from"), result.get("to")
+
+        def fmt_time(t): return f"{int(t//60):02d}:{int(t%60):02d}"
+        time_str = f"{fmt_time(t_from)} — {fmt_time(t_to)}" if t_from and t_to else None
+
+        # Видео
+        video_url = result.get("video")
+        if video_url: video_url += "?size=l"
+
+        def c(x): return f"<code>{html.escape(str(x))}</code>" if x else None
+
+        # === Формирование сообщения ===
+        lines = ["<b>Найден источник (Аниме):</b>"]
+        if title:        lines.append(f"Название: {c(title)}")
+        if genres_str:   lines.append(f"Жанр: {c(genres_str)}")
+        if fmt:          lines.append(f"Формат: {c(fmt)}")
+        if studio_str:   lines.append(f"Студия: {c(studio_str)}")
+        if years_str:    lines.append(f"Годы: {c(years_str)}")
+        if synonyms_str: lines.append(f"Варианты: {c(synonyms_str)}")
+
+        if episode:
+            ep = f"Эпизод: {c(episode)}"
+            if total_episodes: ep += f" из {c(total_episodes)}"
+            lines.append(ep)
+
+        if time_str:     lines.append(f"Фрагмент: {c(time_str)}")
+        lines.append(f"Точность: <b>{similarity:.2f}%</b>")
+
+        # === Новое — как во втором боте ===
+        if left_requests is not None:
+            lines.append(f"\nОсталось запросов в этом месяце: {c(left_requests)}")
+
+        caption = "\n".join(lines)
+
+        # === Отправка результата ===
+        if video_url:
+            await context.bot.send_video(
+                chat_id=update.message.chat_id,
+                video=video_url,
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+        else:
+            await update.message.reply_text(caption, parse_mode="HTML", reply_markup=reply_markup)
+
+        return True
+
+    except Exception as e:
+        logger.error(f"trace.moe error: {e}")
+        await temp_msg.edit_text("❗ Ошибка анализа. Попробуйте ещё раз позже.")
+        return False
+
+    finally:
+        if image_path and os.path.exists(image_path):
+            os.remove(image_path)
+
+
+
+
+
+
 async def start(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
-    # Логируем полное состояние пользователя
     log_user_state(user_id)
-    # Проверяем, есть ли пользователь в данных
+
     if update.message:
         message_to_reply = update.message
         user_id = update.message.from_user.id
@@ -1190,41 +1341,37 @@ async def start(update: Update, context: CallbackContext) -> int:
         message_to_reply = update.callback_query.message
         user_id = update.callback_query.from_user.id
     else:
-        return ConversationHandler.END  # На случай, если ни одно условие не выполнится
+        return ConversationHandler.END
+    
     logger.info(f"user_data {user_data}.")
 
-    # Проверяем, есть ли пользователь в данных
+    # === Блок обычного старта (если нет в user_data) ===
     if user_id not in user_data:
         logger.info(f"User {user_id} started the process.")
         
-        # Создаем кнопку "Начать поиск"
-        # Создаем кнопку "Начать поиск"
         keyboard = [
             [InlineKeyboardButton("🗂 Папки с сохранёнными записями 🗂", callback_data="scheduled_by_tag")],
             [InlineKeyboardButton("🎨 Найти автора или проверить на ИИ 🎨", callback_data='start_search')],
-            [InlineKeyboardButton("🌱 Растения, грибы, текст, поиск 🌱", callback_data='start_ocr')],             
+            [InlineKeyboardButton("🌱 Растения, грибы, текст, поиск 🌱", callback_data='start_ocr')],              
             [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
             [InlineKeyboardButton("📖 Посмотреть помощь", callback_data="osnhelp")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-
-        # Выбираем случайный каомодзи
         random_kaomoji = random.choice(KAOMOJI_LIST)
 
         await message_to_reply.reply_text(
             f'🌠Привет <code>{random_kaomoji}</code>\n\n'
-            f'<b>Если вам нужно что-то распознать или найти отзывы по фото то просто пришлите мне его.</b>\n\n'           
-            'Если вы хотите отправить предложку или сделать пост для соцсети, то для начала, пожалуйста, отправьте мне текст, который будет служить подписью к вашей будущей записи в телеграм посте. Текст перенесётся в пост в том форматировании в котором вы его отправите \n\nЕсли текста нет, то напишите "нет".\n\nЛибо воспользуйтесь одной из кнопок ниже для перехода в иные режимы работы:\n\n',                       
-
+            f'Если вам нужно что-то распознать или найти отзывы по фото то просто пришлите мне его.\n\n'            
+            'Если вы хотите сделать пост для телеграм канала, вк группы или X, то для начала, пожалуйста, отправьте мне текст...\n\n'                        
+            'Либо воспользуйтесь одной из кнопок ниже:',                        
             reply_markup=reply_markup,
             parse_mode='HTML'
         )
 
         user_data[user_id] = {'status': 'awaiting_artist_link'}
         return ASKING_FOR_ARTIST_LINK
-    # Проверяем, если бот в режиме поиска
 
-    # Проверяем, если бот в режиме поиска
+    # === Блок режима поиска ===
     if is_search_mode.get(user_id, False):
         if update.message.photo:
             file = await update.message.photo[-1].get_file()
@@ -1238,31 +1385,21 @@ async def start(update: Update, context: CallbackContext) -> int:
 
         await file.download_to_drive(image_path)
 
-        # Отправляем первоначальное сообщение о загрузке файла
-        loading_message = await update.message.reply_text("Загрузка файла на хостинг...")
+        # Сообщение о загрузке
+        loading_message = await update.message.reply_text("Загрузка файла на хостинг и анализ...")
 
-        # Загружаем изображение на Catbox
+        # Загружаем изображение на Catbox (получаем URL)
         img_url = await upload_catbox(image_path)
-        # Сохраняем в user_data
-        bio = BytesIO()
-        await file.download_to_memory(out=bio)
-        bio.seek(0)
-    
-    
-        # Сохраняем в context.user_data
-        context.user_data['image_bytes'] = bio.getvalue()    
         context.user_data['img_url'] = img_url 
 
-        # Обновляем сообщение о статусе загрузки
-        await loading_message.edit_text("Файл успешно загружен! Ожидание ответа от SauceNAO... обычно это занимает до 5 секунд")
-
-        # Создаем URL для поиска
+        # --- ПОДГОТОВКА КНОПОК ЗАРАНЕЕ ---
+        # Нам нужны эти кнопки и для trace.moe (если найдет), и для SauceNAO (если нет)
         search_url = f"https://saucenao.com/search.php?db=999&url={img_url}"
         yandex_search_url = f"https://yandex.ru/images/search?source=collections&rpt=imageview&url={img_url}"
         google_search_url = f"https://lens.google.com/uploadbyurl?url={img_url}"
         bing_search_url = f"https://www.bing.com/images/search?view=detailv2&iss=sbi&form=SBIVSP&sbisrc=UrlPaste&q=imgurl:{img_url}"
 
-        keyboard = [
+        keyboard_search = [
             [InlineKeyboardButton("АИ или нет?", callback_data='ai_or_not')],           
             [
                 InlineKeyboardButton("Найти в Yandex Images", url=yandex_search_url),
@@ -1282,59 +1419,64 @@ async def start(update: Update, context: CallbackContext) -> int:
             ],
             [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')]
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)        
+        reply_markup_search = InlineKeyboardMarkup(keyboard_search)
 
+        # --- ЭТАП 1: Поиск аниме через trace.moe ---
+        try:
+            # Передаем URL и подготовленные кнопки
+            anime_found = await find_anime_source(update, context, update.message.photo[-1], reply_markup_search)
+            
+            if anime_found:
+                # Если аниме найдено с высокой точностью, удаляем временные сообщения и файлы и выходим
+                await loading_message.delete()
+                if os.path.exists(image_path):
+                    os.remove(image_path)
+                return ASKING_FOR_FILE
+        except Exception as e:
+            logger.error(f"Error in anime search block: {e}")
+            # Не прерываем выполнение, идем к SauceNAO
+
+        # --- ЭТАП 2: Поиск через SauceNAO (если аниме не найдено) ---
+        await loading_message.edit_text("Аниме не найдено или низкая точность. Опрашиваю SauceNAO...")
+        
         try:
             # Получаем авторов и ссылки через SauceNAO
             authors_text, external_links, jp_name, details_text, ep_name, ep_time, dA_id, full_author_text, pixiv_id, twitter_id = await search_image_saucenao(image_path)
         except Exception as e:
-            # Обработка ошибок, например, превышение лимита запросов
             if str(e) == "Лимит превышен":
-                await loading_message.edit_text("Лимит запросов к SauceNAO у бота на сегодня исчерпан. Всего их 100 запросов на всех пользователей бота в сутки. Попробуйте через пару часов, либо воспользуйтесь одной из кнопок ниже чтобы поискать источники самостоятельно.", reply_markup=reply_markup)
+                await loading_message.edit_text("Лимит запросов к SauceNAO исчерпан...", reply_markup=reply_markup_search)
             else:
-                await loading_message.edit_text(f"Произошла ошибка при обращении к SauceNAO: {str(e)}", reply_markup=reply_markup)
-            os.remove(image_path)
+                await loading_message.edit_text(f"Произошла ошибка при обращении к SauceNAO: {str(e)}", reply_markup=reply_markup_search)
+            
+            if os.path.exists(image_path):
+                os.remove(image_path)
             return ASKING_FOR_FILE
 
-        os.remove(image_path)
+        if os.path.exists(image_path):
+            os.remove(image_path)
 
-        # Подготовка ссылок в удобном для чтения формате
+        # Формирование ответа SauceNAO
         links_text = "\n".join(f"{i + 1}. {link}" for i, link in enumerate(external_links)) if isinstance(external_links, list) else None
         
-        # Формируем сообщение
         reply_text = "Результаты поиска:\n"
-        if authors_text:
-            reply_text += f"Название: {authors_text}\n"
-        if details_text:
-            reply_text += f"Детали: {details_text}\n\n"
-        if jp_name:
-            reply_text += f"JP Название: {jp_name}\n"
-        if ep_name:
-            reply_text += f"{ep_name}\n"
-        if dA_id:
-            reply_text += f"dA ID: {dA_id}\n"
-        if twitter_id:
-            reply_text += f"Твиттер:\n{twitter_id}\n"               
-        if pixiv_id:
-            reply_text += f"Pixiv: {pixiv_id}\n"
-        if full_author_text:
-            reply_text += f"Автор: {full_author_text}\n"
-        if ep_time:
-            reply_text += f"{ep_time}\n\n"
-        if links_text:
-            reply_text += f"Ссылки:\n{links_text}"
+        if authors_text:    reply_text += f"Название: {authors_text}\n"
+        if details_text:    reply_text += f"Детали: {details_text}\n\n"
+        if jp_name:         reply_text += f"JP Название: {jp_name}\n"
+        if ep_name:         reply_text += f"{ep_name}\n"
+        if dA_id:           reply_text += f"dA ID: {dA_id}\n"
+        if twitter_id:      reply_text += f"Твиттер:\n{twitter_id}\n"                
+        if pixiv_id:        reply_text += f"Pixiv: {pixiv_id}\n"
+        if full_author_text: reply_text += f"Автор: {full_author_text}\n"
+        if ep_time:         reply_text += f"{ep_time}\n\n"
+        if links_text:      reply_text += f"Ссылки:\n{links_text}"
 
-
-
-        # Если нет данных, отправляем сообщение о том, что ничего не найдено
         if not authors_text and not links_text:
             reply_text = (
                 "К сожалению, ничего не найдено. "
-                "Возможно, изображение сгенерировано(это можно проверить по кнопке ниже), возможно автор малоизвестен или изображение слишком свежее. Отправьте другое изображение или завершите поиск"
+                "Возможно, изображение сгенерировано (проверьте кнопкой ниже), автор малоизвестен или изображение слишком свежее."
             )
 
-        # Обновляем сообщение результатами поиска с кнопками
-        await loading_message.edit_text(reply_text.strip(), reply_markup=reply_markup)
+        await loading_message.edit_text(reply_text.strip(), reply_markup=reply_markup_search)
 
         return ASKING_FOR_FILE
 
