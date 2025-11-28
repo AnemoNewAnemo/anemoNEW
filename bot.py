@@ -17599,6 +17599,10 @@ async def fullhelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 
+async def rand(update, context):
+    number = random.randint(0, 5674)  # генерируем число
+    url = f"https://t.me/anemonn/{number}"
+    await update.message.reply_text(url)
 
 
 async def ignore_pinned_message(update: Update, context: CallbackContext):
@@ -17769,7 +17773,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(plants_and_mushrooms_backmenu, pattern='plants_and_mushrooms_backmenu$'))
     application.add_handler(CallbackQueryHandler(add_new_plant, pattern='addnewplant$'))
     application.add_handler(CommandHandler("map", show_map))
-
+    application.add_handler(CommandHandler("rand", rand))
 
     application.add_handler(CallbackQueryHandler(more_keys, pattern=r"^more_keys_\d+$"))  
     application.add_handler(CallbackQueryHandler(download_file, pattern="^download_file$"))
