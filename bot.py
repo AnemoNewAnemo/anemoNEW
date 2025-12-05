@@ -5637,14 +5637,14 @@ async def upload_image_to_catbox_in_background(image_bytes: bytes):
     finally:
         # Гарантированно удаляем временный файл с повторными попытками
         if os.path.exists(file_path):
-            for _ in range(5):  # Пытаемся 5 раз
+            for _ in range(7):  # Пытаемся 5 раз
                 try:
                     os.remove(file_path)
                     logging.info(f"Временный файл {file_path} удалён.")
                     break  # Успешно удалили, выходим из цикла
                 except Exception as e:
                     logging.warning(f"Ошибка удаления {file_path}, повторная попытка через 1 секунду...: {e}")
-                    time.sleep(1)  # Ждём 1 секунду перед повторной попыткой
+                    time.sleep(2)  # Ждём 1 секунду перед повторной попыткой
             else:
                 logging.error(f"Не удалось удалить временный файл {file_path} после 5 попыток.")
 
