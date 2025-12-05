@@ -541,9 +541,44 @@ VPNINSTRUCTION_TEXT = """
 """
 
 
+
+async def fileid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Проверьте, что команда — в reply на сообщение
+    replied = update.message.reply_to_message
+    if not replied:
+        await update.message.reply_text("⛔️ Пожалуйста, используйте /fileid в ответ на сообщение с файлом.")
+        return
+
+    # Попробуем извлечь file_id из разных типов media
+    file_id = None
+    if replied.document:
+        file_id = replied.document.file_id
+    elif replied.photo:
+        # photo — список размеров, обычно берем последний (самое большое/качественное)
+        file_id = replied.photo[-1].file_id
+    elif replied.video:
+        file_id = replied.video.file_id
+    elif replied.audio:
+        file_id = replied.audio.file_id
+    elif replied.voice:
+        file_id = replied.voice.file_id
+    elif replied.video_note:
+        file_id = replied.video_note.file_id
+    else:
+        await update.message.reply_text("⚠️ Не найден файл в replied-сообщении. Это должно быть фото, документ, видео, аудио и т.п.")
+        return
+
+    await update.message.reply_text(f"✅ file_id: `{file_id}`", parse_mode="Markdown")
+
+
+
+
+
 # ============================== #
 #   /vpn — главное меню
 # ============================== #
+
+
 
 async def vpn_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -17893,7 +17928,7 @@ def main() -> None:
     application.add_handler(CommandHandler("cat", cat_command))
 
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, duplicate_message))  # Обработчик дублирования сообщений
-
+    application.add_handler(CommandHandler("fileid", fileid_command))
 
     # Добавляем обработчики для команд /search и /fin_search
     application.add_handler(search_handler)
