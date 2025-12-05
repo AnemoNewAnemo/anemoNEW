@@ -568,7 +568,7 @@ async def fileid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Не найден файл в replied-сообщении. Это должно быть фото, документ, видео, аудио и т.п.")
         return
 
-    await update.message.reply_text(f"✅ file_id: `{file_id}`", parse_mode="Markdown")
+    await update.message.reply_text(f"✅ file_id: `{file_id}`")
 
 
 
