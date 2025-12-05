@@ -527,9 +527,12 @@ VPNINSTRUCTION_TEXT = """
 <b>3)</b> Скачайте и установите программу для использования ключей. Популярные клиенты:
 • NekoBox, v2rayNG, Streisand, V2Box и многие другие.
 
-Примеры загрузки NekoBox:
+Ниже бот пришлёт вам установщики для андроид и windows, либо можете скачать их сами:
 • <a href="https://github.com/MatsuriDayo/NekoBoxForAndroid/releases">Версия для Android</a>
 • <a href="https://github.com/Matsuridayo/nekoray/releases">Версия для PC</a>
+Так же по ссылкам есть версия на Линукс
+
+На мак и ios можете поискать что-то сами, напрмиер V2Box, sing-box, Hiddify и др
 
 <b>4)</b> Добавьте в программу подписку по QR-коду или по скопированной ссылке. Можно создать несколько групп/плейлистов и в каждую добавить отдельный набор подписок (например — белые/чёрные списки).
 
@@ -539,6 +542,7 @@ VPNINSTRUCTION_TEXT = """
 
 Для подробной инструкции со скринами читайте на <a href="https://telegra.ph/Vpn-Instrukciya-11-26">telegra.ph — VPN инструкция</a>.
 """
+
 
 
 
@@ -644,12 +648,27 @@ async def vpn_show_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def vpn_instruction(update, context):
     q = update.callback_query
     await q.answer()
+
+    # Отправляем текст инструкции
     await q.message.reply_text(
         VPNINSTRUCTION_TEXT,
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Закрыть", callback_data="close")]])
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Закрыть", callback_data="close")]
+        ])
     )
 
+    # Первый файл
+    await context.bot.send_document(
+        chat_id=q.message.chat_id,
+        document="BQACAgIAAxkBAAEBar9pMwdm1ubsbQdF3lVzKCJrihRDIgACoIsAAnZ0mElZiYuMXkseXDYE"
+    )
+
+    # Второй файл
+    await context.bot.send_document(
+        chat_id=q.message.chat_id,
+        document="BQACAgIAAxkBAAEBas9pMwtP87XA5Hr9DfH34cO9AAEINfcAAumLAAJ2dJhJkFj8sDNIn942BA"
+    )
 # ============================== #
 #   Вызов твоей функции с ключами
 # ============================== #
