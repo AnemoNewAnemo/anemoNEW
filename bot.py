@@ -1420,6 +1420,8 @@ async def find_anime_source(update: Update, context: CallbackContext, image_path
 
 
 
+
+
 async def start(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
     log_user_state(user_id)
@@ -1433,33 +1435,9 @@ async def start(update: Update, context: CallbackContext) -> int:
     else:
         return ConversationHandler.END
     
-    logger.info(f"user_data {user_data}.")
 
-    # === Блок обычного старта (если нет в user_data) ===
-    if user_id not in user_data:
-        logger.info(f"User {user_id} started the process.")
-        
-        keyboard = [
-            [InlineKeyboardButton("🗂 Папки с сохранёнными записями 🗂", callback_data="scheduled_by_tag")],
-            [InlineKeyboardButton("🎨 Найти источник или проверить на ИИ 🎨", callback_data='start_search')],
-            [InlineKeyboardButton("🌱 Растения, грибы, текст, поиск 🌱", callback_data='start_ocr')],              
-            [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
-            [InlineKeyboardButton("📖 Посмотреть помощь", callback_data="osnhelp")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        random_kaomoji = random.choice(KAOMOJI_LIST)
 
-        await message_to_reply.reply_text(
-            f'🌠Привет <code>{random_kaomoji}</code>\n\n'
-            f'Если вам нужно что-то распознать или найти отзывы по фото то просто пришлите мне его.\n\n'            
-            'Если вы хотите сделать пост для телеграм канала, вк группы или X, то для начала, пожалуйста, отправьте мне текст...\n\n'                        
-            'Либо воспользуйтесь одной из кнопок ниже:',                        
-            reply_markup=reply_markup,
-            parse_mode='HTML'
-        )
 
-        user_data[user_id] = {'status': 'awaiting_artist_link'}
-        return ASKING_FOR_ARTIST_LINK
 
     # === Блок режима поиска ===
     if is_search_mode.get(user_id, False):
@@ -1640,7 +1618,34 @@ async def start(update: Update, context: CallbackContext) -> int:
         )
 
         return ASKING_FOR_OCR
+    # === Блок обычного старта (если нет в user_data) ===
+    if user_id not in user_data:
+        logger.info(f"User {user_id} started the process.")
+        
+        keyboard = [
+            [InlineKeyboardButton("🗂 Папки с сохранёнными записями 🗂", callback_data="scheduled_by_tag")],
+            [InlineKeyboardButton("🎨 Найти источник или проверить на ИИ 🎨", callback_data='start_search')],
+            [InlineKeyboardButton("🌱 Растения, грибы, текст, поиск 🌱", callback_data='start_ocr')],              
+            [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
+            [InlineKeyboardButton("📖 Посмотреть помощь", callback_data="osnhelp")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        random_kaomoji = random.choice(KAOMOJI_LIST)
 
+        await message_to_reply.reply_text(
+            f'🌠Привет <code>{random_kaomoji}</code>\n\n'
+            f'Если вам нужно что-то распознать или найти отзывы по фото то просто пришлите мне его.\n\n'            
+            'Если вы хотите сделать пост для телеграм канала, вк группы или X, то для начала, пожалуйста, отправьте мне текст...\n\n'                        
+            'Либо воспользуйтесь одной из кнопок ниже:',                        
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+
+        user_data[user_id] = {'status': 'awaiting_artist_link'}
+        return ASKING_FOR_ARTIST_LINK
+
+    logger.info(f"user_data {user_data}.")
+        
     status = user_data[user_id].get('status')
     logger.info(f"status {status}")
     # Проверяем, если бот в режиме поиска
@@ -1973,8 +1978,6 @@ async def start(update: Update, context: CallbackContext) -> int:
         await message_to_reply.reply_text('🚫Ошибка: некорректное состояние.')
 
         return ConversationHandler.END
-
-
 
 
 
@@ -6344,9 +6347,11 @@ async def restart(update: Update, context: CallbackContext) -> int:
     )
 
     # === 5. Начальное состояние после рестарта ===
-    context.user_data["status"] = "awaiting_artist_link"
+    user_data[user_id] = {'status': 'awaiting_artist_link'}
 
     return ASKING_FOR_ARTIST_LINK
+
+
 
 async def rerestart(update: Update, context: CallbackContext) -> int:
     # Проверка типа события
