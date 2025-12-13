@@ -1474,7 +1474,8 @@ async def start(update: Update, context: CallbackContext) -> int:
             return ASKING_FOR_FILE
 
         await file.download_to_drive(image_path)
-
+        with open(image_path, 'rb') as f:
+            context.user_data['image_bytes'] = f.read()
         # Сообщение о загрузке
         loading_message = await update.message.reply_text("Загрузка файла на хостинг и анализ...")
 
