@@ -6273,50 +6273,45 @@ async def unknown_search_message(update: Update, context: CallbackContext) -> in
     return ASKING_FOR_FILE
 
 async def restart(update: Update, context: CallbackContext) -> int:
-    # Проверка типа события
+    # === Определяем пользователя и сообщение для ответа ===
+    user = update.effective_user
+    if not user:
+        return ConversationHandler.END
+
+    user_id = user.id
+
     if update.message:
-        user_id = update.message.from_user.id
         message_to_reply = update.message
     elif update.callback_query:
-        user_id = update.callback_query.from_user.id
+        await update.callback_query.answer()
         message_to_reply = update.callback_query.message
     else:
         return ConversationHandler.END
 
-    # Удаляем все данные пользователя
-    if user_id in user_data:
-        del user_data[user_id]  # Удаляем старые данные пользователя  
+    # === 1. Очищаем PTB user_data (ПЕРСОНАЛЬНО) ===
+    context.user_data.clear()
 
-    if user_id in is_search_mode:
-        del is_search_mode[user_id]  # Выключаем режим поиска, если он включен
+    # === 2. Очищаем все кастомные хранилища по user_id ===
+    storages = (
+        user_data,
+        is_search_mode,
+        is_ocr_mode,
+        is_gpt_mode,
+        is_asking_mode,
+        is_role_mode,
+        waiting_for_forward,
+        waiting_for_caption,
+        waiting_for_vk,
+        waiting_for_twitter,
+        waiting_for_coordinates,
+    )
 
-    if user_id in is_ocr_mode:
-        del is_ocr_mode[user_id]
+    for storage in storages:
+        storage.pop(user_id, None)
 
-    if user_id in is_gpt_mode:
-        del is_gpt_mode[user_id]
+    logger.info(f"User {user_id} restarted the process.")
 
-    if user_id in is_asking_mode:
-        del is_asking_mode[user_id]
-
-    if user_id in is_role_mode:
-        del is_role_mode[user_id] 
-
-    if user_id in waiting_for_forward:
-        del waiting_for_forward[user_id] 
-
-    if user_id in waiting_for_caption:
-        del waiting_for_caption[user_id] 
-
-    if user_id in waiting_for_vk:
-        del waiting_for_vk[user_id] 
-    if user_id in waiting_for_twitter:
-        del waiting_for_twitter[user_id]  
-
-    if user_id in waiting_for_coordinates:
-        del waiting_for_coordinates[user_id]                 
-    logger.info(f"User {user_id} restarted the process.") 
-    # Очищаем папку twitter_media
+    # === 3. Очищаем папку twitter_media ===
     twitter_media_path = os.path.join(os.getcwd(), "twitter_media")
     if os.path.exists(twitter_media_path):
         try:
@@ -6324,13 +6319,14 @@ async def restart(update: Update, context: CallbackContext) -> int:
             logger.info("Директория twitter_media успешно очищена.")
         except Exception as e:
             logger.error(f"Ошибка при удалении twitter_media: {e}")
-    # Отправляем сообщение с кнопками
+
+    # === 4. Кнопки стартового меню ===
     keyboard = [
         [InlineKeyboardButton("🗂 Папки с сохранёнными постами 🗂", callback_data="scheduled_by_tag")],
         [InlineKeyboardButton("🎨 Найти источник или проверить на ИИ 🎨", callback_data='start_search')],
-        [InlineKeyboardButton("🌱 Растения, грибы, текст, поиск 🌱", callback_data='start_ocr')],            
+        [InlineKeyboardButton("🌱 Растения, грибы, текст, поиск 🌱", callback_data='start_ocr')],
         [InlineKeyboardButton("🦊 Поговорить с ботом 🦊", callback_data='run_gpt')],
-        [InlineKeyboardButton("📖 Посмотреть помощь", callback_data="osnhelp")]
+        [InlineKeyboardButton("📖 Посмотреть помощь", callback_data="osnhelp")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -6338,15 +6334,17 @@ async def restart(update: Update, context: CallbackContext) -> int:
 
     await message_to_reply.reply_text(
         f'🌠Привет <code>{random_kaomoji}</code>\n\n'
-        f'<b>Если вам нужно что-то распознать или найти отзывы по фото то просто пришлите мне его.</b>\n\n'           
-        'Если вы хотите прислать предложку или сделать пост для соцсети, то для начала, пожалуйста, отправьте мне текст, который будет служить подписью к вашей будущей записи в телеграм посте. Текст перенесётся в пост в том форматировании в котором вы его отправите \n\nЕсли текста нет, то напишите "нет".\n\nЛибо воспользуйтесь одной из кнопок ниже для перехода в иные режимы работы:\n\n',                       
+        f'<b>Если вам нужно что-то распознать или найти отзывы по фото — просто пришлите его.</b>\n\n'
+        'Если вы хотите прислать предложку или сделать пост для соцсети, '
+        'сначала отправьте текст подписи. Если текста нет — напишите "нет".\n\n'
+        'Либо выберите режим работы ниже:\n\n',
         reply_markup=reply_markup,
         parse_mode='HTML'
     )
 
-    # Устанавливаем новое состояние после перезапуска
-    user_data[user_id] = {'status': 'awaiting_artist_link'}
-    
+    # === 5. Начальное состояние после рестарта ===
+    context.user_data["status"] = "awaiting_artist_link"
+
     return ASKING_FOR_ARTIST_LINK
 
 async def rerestart(update: Update, context: CallbackContext) -> int:
