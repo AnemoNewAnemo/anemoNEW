@@ -14219,11 +14219,9 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
 
     if media_group_data:
         try:
-            # Если данные - это строка, преобразуем в словарь
             if isinstance(media_group_data, str):
                 media_group_data = json.loads(media_group_data)
 
-            # Извлекаем список медиа
             media_items = media_group_data.get('media')
             if not media_items or not isinstance(media_items, list):
                 await temp_message.edit_text("🚫 Ошибка: Некорректный формат данных.")
@@ -14234,14 +14232,34 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
             music_reply_markup = None
             
             if is_music_post:
-                # Формируем URL для WebApp
                 web_app_url = f"https://anemonne.onrender.com/musicplayer/{user_id}/{key}"
-                # Создаем кнопку
+
+                music_name = "Музыка"
+                musicmedia = media_group_data.get('musicmedia', [])
+
+                if musicmedia and isinstance(musicmedia, list):
+                    raw_name = musicmedia[0].get('music_name')
+                    if raw_name:
+                        # убираем расширение файла
+                        music_name = raw_name.rsplit('.', 1)[0]
+
+                        # обрезаем до 20 символов
+                        if len(music_name) > 20:
+                            cut = music_name[:20].rsplit(' ', 1)[0]
+                            music_name = cut + "..."
+
+
+
+        
+                button_text = f"▶︎ {music_name} ━━●──────"
+
                 music_reply_markup = InlineKeyboardMarkup([
-                    [InlineKeyboardButton(
-                        text="🎧 Открыть плеер", 
-                        url=web_app_url
-                    )]
+                    [
+                        InlineKeyboardButton(
+                            text=button_text,
+                            url=web_app_url
+                        )
+                    ]
                 ])
             # --------------------------------------------------
 
