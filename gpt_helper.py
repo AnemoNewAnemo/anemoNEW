@@ -39,11 +39,11 @@ from tempfile import NamedTemporaryFile
 
 API_KEYS = os.getenv("API_KEYS", "").split(",")
 # 2. Укажите основную и запасные модели
-PRIMARY_MODEL = 'gemini-2.5-flash' # Модель, которую пробуем в первую очередь
-FALLBACK_MODELS = ['gemini-2.5-flash-preview-05-20', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-exp'] # Модели на случай, если с основной ничего не вышло
+PRIMARY_MODEL = 'gemini-3-flash-preview' # Модель, которую пробуем в первую очередь
+FALLBACK_MODELS = ['gemini-2.5-flash, gemini-2.5-flash-preview-05-20', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-exp'] # Модели на случай, если с основной ничего не вышло
 PRIMARY_MODEL_FLESHLIGHT = 'gemini-2.5-flash-lite' # Модель, которую пробуем в первую очередь 
 FALLBACK_MODELS_FLESHLIGHT = ['gemini-live-2.5-flash-preview', 'gemini-2.0-flash-lite', 'gemini-2.0-flash-lite-001'] # Модели на случай, если с основной ничего не вышло
-
+GEMMA_MODELS = ['gemma-3-27b-it', 'gemma-3-12b-it', 'gemma-3-4b-it', 'gemma-3n-10b-it']
 # Инициализация Firebase
 cred = credentials.Certificate('/etc/secrets/firebase-key.json')  # Путь к вашему JSON файлу
 firebase_admin.initialize_app(cred, {
@@ -1186,7 +1186,7 @@ async def generate_image_description(user_id, image_path, query=None, use_contex
                     types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
                 ]
 
-                for model_name in FALLBACK_MODELS:
+                for model_name in FALLBACK_MODELS + GEMMA_MODELS:
                     logger.info(f"Попытка генерации с fallback-моделью {model_name} и ключом ...{last_key[-4:]}")
                     try:
                         response = await client.aio.models.generate_content(
@@ -1305,7 +1305,7 @@ async def generate_gemini_inline_response(query: str) -> str:
             client = genai.Client(api_key=api_key)
 
             # Сначала пробуем основную модель
-            models_to_try = [PRIMARY_MODEL_FLESHLIGHT] + FALLBACK_MODELS_FLESHLIGHT
+            models_to_try = [PRIMARY_MODEL_FLESHLIGHT] + FALLBACK_MODELS_FLESHLIGHT + GEMMA_MODELS:
 
             for model_name in models_to_try:
                 try:
@@ -1470,7 +1470,7 @@ async def generate_animation_response(video_file_path, user_id, query=None):
                 await asyncio.sleep(10)
                 video_file = client.files.get(name=video_file.name)
             if video_file.state != "FAILED":
-                for model_name in FALLBACK_MODELS:
+                for model_name in FALLBACK_MODELS + GEMMA_MODELS:
                     try:
                         response = await client.aio.models.generate_content(
                             model=model_name,
@@ -1651,7 +1651,7 @@ async def generate_video_response(video_file_path, user_id, query=None):
                     video_file = client.files.get(name=video_file.name)
 
                 if video_file.state != "FAILED":
-                    for model_name in [PRIMARY_MODEL] + FALLBACK_MODELS:
+                    for model_name in [PRIMARY_MODEL] + FALLBACK_MODELS + GEMMA_MODELS:
                         try:
                             response = await client.aio.models.generate_content(
                                 model=model_name,
@@ -1830,7 +1830,7 @@ async def generate_document_response(document_path, user_id, query=None):
             logging.warning("❌ Все ключи упали на основной модели. Пробуем fallback-модели.")
             client = genai.Client(api_key=last_key)
 
-            for model_name in FALLBACK_MODELS:
+            for model_name in FALLBACK_MODELS + GEMMA_MODELS:
                 logging.info(f"→ Пробуем fallback-модель {model_name} с ключом ...{last_key[-4:]}")
 
                 try:
@@ -2022,7 +2022,7 @@ async def generate_audio_response(audio_file_path, user_id, query=None):
                     audio_file = client.files.get(name=audio_file.name)
 
                 if audio_file.state != "FAILED":
-                    models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
+                    models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS + GEMMA_MODELS
                     for model_name in models_to_try:
                         try:
                             google_search_tool = Tool(google_search=GoogleSearch())
@@ -2341,7 +2341,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
     google_search_tool = Tool(google_search=GoogleSearch())
 
     # Сначала основная модель, потом запасные
-    models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
+    models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS + GEMMA_MODELS
 
 
     # Сначала пробуем основную модель на всех ключах
@@ -2387,7 +2387,7 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
 
     # Если все ключи сломаны → перебираем модели на одном ключе (последнем)
     last_key = key_manager.get_keys_to_try()[-1]
-    for model_name in [PRIMARY_MODEL] + FALLBACK_MODELS:
+    for model_name in [PRIMARY_MODEL] + FALLBACK_MODELS + GEMMA_MODELS:
         try:
             client = genai.Client(api_key=last_key)
             response = await client.aio.models.generate_content(
@@ -2517,7 +2517,7 @@ async def generate_composition_comparison_response(user_id, images, query):
     if last_key:
         try:
             client = genai.Client(api_key=last_key)
-            for model_name in FALLBACK_MODELS:
+            for model_name in FALLBACK_MODELS + GEMMA_MODELS:
                 try:
                     uploaded_parts = []
                     for path in image_parts:
@@ -2636,7 +2636,7 @@ async def generate_mushrooms_multi_response(user_id, images, query):
     # --- 2. Если ВСЕ ключи с основной моделью сломались ---
     # Берём один ключ (например, последний) и пробуем запасные модели
     fallback_key = keys_to_try[-1]
-    for model in FALLBACK_MODELS:
+    for model in FALLBACK_MODELS + GEMMA_MODELS:
         try:
             client = genai.Client(api_key=fallback_key)
             response = await client.aio.models.generate_content(
@@ -2761,7 +2761,7 @@ async def generate_products_response(user_id, images, query):
     # 2. Если ВСЕ ключи с основной моделью не сработали —
     #    пробуем fallback модели только на последнем ключе
     if last_key:
-        for model in FALLBACK_MODELS:
+        for model in FALLBACK_MODELS + GEMMA_MODELS:
             try:
                 response_text = await try_generate(last_key, model)
                 if response_text:
@@ -2862,7 +2862,7 @@ async def generate_calories_response(user_id, images, query):
     last_key = key_manager.get_keys_to_try()[-1]
 
     # --- 3. Перебираем модели только для одного ключа (последнего) ---
-    for fallback_model in FALLBACK_MODELS:
+    for fallback_model in FALLBACK_MODELS + GEMMA_MODELS:
         result = await try_request(last_key, fallback_model)
         if result:
             for path in image_parts:
@@ -2960,7 +2960,7 @@ async def generate_mapplants_response(user_id, image):
         # ---------- ЭТАП 2. Если все ключи провалились – перебор моделей на последнем ключе ----------
         logging.warning("Все ключи на основной модели не сработали. Пробуем fallback-модели.")
         if last_key:
-            for model in FALLBACK_MODELS:
+            for model in FALLBACK_MODELS + GEMMA_MODELS:
                 logging.info(f"Пробуем fallback-модель: {model} с ключом {last_key}")
                 try:
                     client = genai.Client(api_key=last_key)
@@ -3065,7 +3065,7 @@ async def generate_text_rec_response(user_id, image=None, query=None):
 
         # 2. Если все ключи не сработали — берем последний ключ и пробуем запасные модели
         last_key = key_manager.get_keys_to_try()[-1]
-        for model in FALLBACK_MODELS:
+        for model in FALLBACK_MODELS + GEMMA_MODELS:
             text = await try_request(last_key, model, context, config)
             if text:
                 return text
@@ -3135,7 +3135,7 @@ async def generate_text_rec_response(user_id, image=None, query=None):
                 logging.warning(f"Ошибка загрузки изображения (ключ {last_key}): {e}")
                 return "Ошибка при загрузке изображения."
 
-            for model in FALLBACK_MODELS:
+            for model in FALLBACK_MODELS + GEMMA_MODELS:
                 contents = [
                     types.Content(
                         role="user",
@@ -3261,7 +3261,7 @@ async def generate_plant_issue_response(user_id, image, caption=None):
             types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE'),
         ]
 
-        for model in FALLBACK_MODELS:
+        for model in FALLBACK_MODELS + GEMMA_MODELS:
             try:
                 response = await client.aio.models.generate_content(
                     model=model,
@@ -3391,7 +3391,7 @@ async def response_animal(user_id, image, caption=None):
 
         # 2. Если все ключи дали ошибку → перебираем fallback-модели только с последним ключом
         last_key = key_manager.get_keys_to_try()[-1]
-        for model in FALLBACK_MODELS:
+        for model in FALLBACK_MODELS + GEMMA_MODELS:
             try:
                 client = genai.Client(api_key=last_key)
                 response = await client.aio.models.generate_content(
@@ -3529,7 +3529,7 @@ async def response_ingredients(user_id, image):
         last_key = key_manager.get_keys_to_try()[-1]
         logging.info(f"Все ключи упали на основной модели, пробуем fallback модели на ключе {last_key[:10]}...")
 
-        for model in FALLBACK_MODELS:
+        for model in FALLBACK_MODELS + GEMMA_MODELS:
             try:
                 client = genai.Client(api_key=last_key)
                 google_search_tool = Tool(google_search=GoogleSearch())
@@ -3681,7 +3681,7 @@ async def generate_barcode_response(user_id, image=None, query=None):
 
                 image_file = client.files.upload(file=pathlib.Path(image_path))
 
-                for model in FALLBACK_MODELS:
+                for model in FALLBACK_MODELS + GEMMA_MODELS:
                     try:
                         response = await client.aio.models.generate_content(
                             model=model,
@@ -3815,7 +3815,7 @@ async def generate_barcode_analysis(user_id, query=None):
             client = genai.Client(api_key=last_key)
             google_search_tool = Tool(google_search=GoogleSearch())
 
-            for model_name in FALLBACK_MODELS:
+            for model_name in FALLBACK_MODELS + GEMMA_MODELS:
                 try:
                     response = await client.aio.models.generate_content(
                         model=model_name,
@@ -3905,7 +3905,7 @@ async def generate_barcode_otzyvy(user_id, query=None):
 
     # --- 2. Если все ключи не подошли, пробуем модели на последнем ключе ---
     last_key = key_manager.get_keys_to_try()[-1]
-    for model in FALLBACK_MODELS:
+    for model in FALLBACK_MODELS + GEMMA_MODELS:
         try:
             client = genai.Client(api_key=last_key)
             response = await client.aio.models.generate_content(
@@ -3959,7 +3959,7 @@ async def generate_plant_help_response(user_id, query=None):
     logging.info(f"context: {context}")
 
     # Модели для перебора: сначала основная, потом запасные
-    models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS
+    models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS + GEMMA_MODELS
 
     # Инструменты
     google_search_tool = Tool(google_search=GoogleSearch())
@@ -4008,7 +4008,7 @@ async def generate_plant_help_response(user_id, query=None):
 
     # 2. Если все ключи не сработали → берём последний ключ и пробуем запасные модели
     last_key = key_manager.get_keys_to_try()[-1]
-    for model in FALLBACK_MODELS:
+    for model in FALLBACK_MODELS + GEMMA_MODELS:
         try:
             logging.info(f"Пробуем fallback модель {model} с последним ключом {last_key}")
             client = genai.Client(api_key=last_key)
@@ -4061,7 +4061,7 @@ async def translate_promt_with_gemini(user_id, query=None):
         retry_delay = 3  # Задержка между повторами
 
         # Сначала пробуем основную модель с перебором ключей
-        for model in [PRIMARY_MODEL_FLESHLIGHT] + FALLBACK_MODELS_FLESHLIGHT:
+        for model in [PRIMARY_MODEL_FLESHLIGHT] + FALLBACK_MODELS_FLESHLIGHT + GEMMA_MODELS
             keys_to_try = key_manager.get_keys_to_try()
 
             for key in keys_to_try:
@@ -4135,7 +4135,7 @@ async def generate_word(chat_id):
     )
 
     # Сначала пробуем основную модель
-    models_to_try = [PRIMARY_MODEL_FLESHLIGHT] + FALLBACK_MODELS_FLESHLIGHT
+    models_to_try = [PRIMARY_MODEL_FLESHLIGHT] + FALLBACK_MODELS_FLESHLIGHT + GEMMA_MODELS
 
     # Перебор моделей только если ключи все не подходят
     for model in models_to_try:
