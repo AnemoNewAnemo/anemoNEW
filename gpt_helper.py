@@ -4062,7 +4062,7 @@ async def translate_promt_with_gemini(user_id, query=None):
         retry_delay = 3  # Задержка между повторами
 
         # Сначала пробуем основную модель с перебором ключей
-        for model in [PRIMARY_MODEL_FLESHLIGHT] + FALLBACK_MODELS_FLESHLIGHT + GEMMA_MODELS
+        for model in [PRIMARY_MODEL_FLESHLIGHT] + FALLBACK_MODELS_FLESHLIGHT + GEMMA_MODELS:
             keys_to_try = key_manager.get_keys_to_try()
 
             for key in keys_to_try:
