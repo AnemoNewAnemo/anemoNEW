@@ -5,151 +5,621 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Music Player</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <!-- Подключаем тот же CSS для единого стиля, плюс добавим свои стили ниже -->
-    <link rel="stylesheet" href="/timer-app/style.css"> 
     <style>
+        :root {
+            --primary-color: #fff;
+            --accent-color: #3b82f6; /* Приятный синий */
+            --bg-color: #0f0f0f;
+            --card-bg: #1c1c1e;
+            --text-secondary: #8e8e93;
+            --slider-bg: #3a3a3c;
+        }
+
         body {
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             min-height: 100vh;
-            background-color: #121212; /* Темный фон */
-            color: white;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--primary-color);
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             margin: 0;
+            overflow: hidden;
+            -webkit-font-smoothing: antialiased;
         }
 
         .player-container {
-            width: 90%;
-            max-width: 400px;
-            text-align: center;
-            padding: 20px;
-            background: #1e1e1e;
-            border-radius: 20px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            width: 100%;
+            max-width: 380px;
+            padding: 25px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
         }
 
+        /* 1) ОБЛОЖКА: Пропорции оригинала + аккуратная тень */
+        .cover-wrapper {
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            margin-bottom: 25px;
+        }
+        
         .cover-art {
             width: 100%;
             height: auto;
-            aspect-ratio: 1/1;
-            background-color: #333;
-            border-radius: 15px;
-            object-fit: cover;
-            margin-bottom: 20px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            max-height: 40vh; 
+            background-color: transparent;
+            border-radius: 12px;
+            object-fit: contain; 
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+            transition: transform 0.3s ease;
         }
 
+        /* ИНФО О ТРЕКЕ */
         .track-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             margin-bottom: 20px;
+            width: 100%;
         }
+        
+        .track-text-group {
+            overflow: hidden;
+            text-align: left;
+            flex: 1;
+            padding-right: 15px;
+        }
+
         .track-title {
-            font-size: 1.2em;
-            font-weight: bold;
-            margin-bottom: 5px;
+            font-size: 1.3em;
+            font-weight: 700;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            margin: 0;
         }
 
+        /* Кнопка скачивания - SVG */
+        .btn-download {
+            background: none;
+            border: none;
+            color: var(--primary-color);
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        }
+        .btn-download:active { opacity: 1; background: rgba(255,255,255,0.1); }
+        .btn-download svg { width: 20px; height: 20px; fill: currentColor; }
+
+        /* 2) ПРОГРЕСС БАР */
+        .progress-container {
+            width: 100%;
+            height: 20px; /* Область клика */
+            cursor: pointer;
+            position: relative;
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+            touch-action: none;
+        }
+        .progress-bar-bg {
+            width: 100%;
+            height: 4px;
+            background: var(--slider-bg);
+            border-radius: 2px;
+            position: relative;
+            overflow: hidden; /* Чтобы fill не вылезал за скругления */
+        }
+        .progress-fill {
+            height: 100%;
+            background: var(--primary-color); /* Белый прогресс, как в Spotify */
+            border-radius: 2px;
+            width: 0%;
+            pointer-events: none;
+        }
+        .progress-knob {
+            width: 12px;
+            height: 12px;
+            background: var(--primary-color);
+            border-radius: 50%;
+            position: absolute;
+            top: 50%;
+            left: 0%;
+            transform: translate(-50%, -50%) scale(0); /* Скрыт по умолчанию */
+            box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+            z-index: 2;
+            cursor: grab;
+            transition: transform 0.1s;
+        }
+        /* Показываем кружок при наведении или перетаскивании */
+        .progress-container:hover .progress-knob,
+        .progress-container:active .progress-knob, 
+        .progress-knob.dragging {
+            transform: translate(-50%, -50%) scale(1);
+        }
+
+        .time-labels {
+            display: flex; 
+            justify-content: space-between; 
+            font-size: 11px; 
+            color: var(--text-secondary); 
+            font-weight: 500;
+            margin-bottom: 25px;
+        }
+
+        /* УПРАВЛЕНИЕ */
         .controls {
             display: flex;
             justify-content: center;
             align-items: center;
-            gap: 20px;
-            margin-bottom: 20px;
+            gap: 30px;
+            margin-bottom: 30px;
         }
 
         .btn-control {
             background: none;
             border: none;
-            color: white;
-            font-size: 24px;
+            color: var(--primary-color);
             cursor: pointer;
-            padding: 10px;
-            border-radius: 50%;
-            transition: background 0.2s;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.1s, opacity 0.2s;
         }
-        .btn-control:active { background: rgba(255,255,255,0.1); }
-        .btn-play { font-size: 40px; }
+        .btn-control:active { transform: scale(0.9); opacity: 0.8; }
+        
+        .btn-skip svg { width: 32px; height: 32px; fill: currentColor; }
+        .btn-play svg { width: 64px; height: 64px; fill: currentColor; }
 
-        .progress-container {
+        /* 3) ПОЛЗУНОК ГРОМКОСТИ - Custom Style */
+        .volume-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 25px;
             width: 100%;
-            margin-bottom: 10px;
-            cursor: pointer;
-        }
-        .progress-bar {
-            width: 100%;
-            height: 5px;
-            background: #444;
-            border-radius: 5px;
-            position: relative;
-        }
-        .progress-fill {
-            height: 100%;
-            background: #0088cc; /* Telegram blue */
-            border-radius: 5px;
-            width: 0%;
-        }
-
-        .playlist {
-            text-align: left;
-            margin-top: 20px;
-            max-height: 200px;
-            overflow-y: auto;
-        }
-        .playlist-item {
-            padding: 10px;
-            border-bottom: 1px solid #333;
-            cursor: pointer;
-            font-size: 14px;
-            color: #aaa;
-        }
-        .playlist-item.active {
-            color: #0088cc;
-            font-weight: bold;
         }
         
-        .loading { color: #aaa; }
-        .error { color: #ff5555; }
+        .volume-icon svg { width: 16px; height: 16px; fill: var(--text-secondary); }
+
+        /* Кастомный Range Input для громкости */
+        .volume-slider {
+            -webkit-appearance: none; /* Убираем дефолтный стиль */
+            width: 100%;
+            height: 4px;
+            background: var(--slider-bg);
+            border-radius: 2px;
+            outline: none;
+            position: relative;
+            cursor: pointer;
+        }
+        
+        /* Дорожка (Track) с градиентом для отображения заполнения */
+        /* Мы будем менять background-size через JS */
+        .volume-slider {
+            background-image: linear-gradient(var(--primary-color), var(--primary-color));
+            background-size: 100% 100%; /* По умолчанию 100% */
+            background-repeat: no-repeat;
+        }
+
+        /* Ползунок (Thumb) */
+        .volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #fff;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            margin-top: 0; /* Webkit quirk */
+            /* Делаем ползунок невидимым, пока не наведем, для чистоты */
+            transform: scale(0);
+            transition: transform 0.1s;
+        }
+        
+        .volume-container:hover .volume-slider::-webkit-slider-thumb,
+        .volume-slider:active::-webkit-slider-thumb {
+            transform: scale(1);
+        }
+
+        .volume-slider::-moz-range-thumb {
+            height: 16px;
+            width: 16px;
+            border: none;
+            border-radius: 50%;
+            background: #fff;
+            transform: scale(0);
+            transition: transform 0.1s;
+        }
+        .volume-container:hover .volume-slider::-moz-range-thumb,
+        .volume-slider:active::-moz-range-thumb {
+            transform: scale(1);
+        }
+
+        /* ПЛЕЙЛИСТ */
+        .playlist {
+            text-align: left;
+            margin-top: 0;
+            max-height: 150px;
+            overflow-y: auto;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            padding-top: 10px;
+            width: 100%;
+        }
+        /* Кастомный скроллбар */
+        .playlist::-webkit-scrollbar { width: 4px; }
+        .playlist::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+        .playlist-item {
+            padding: 12px 10px;
+            cursor: pointer;
+            font-size: 14px;
+            color: var(--text-secondary);
+            border-radius: 8px;
+            transition: background 0.2s, color 0.2s;
+            display: flex;
+            align-items: center;
+        }
+        .playlist-item:hover {
+            background: rgba(255,255,255,0.05);
+        }
+        .playlist-item.active {
+            color: var(--primary-color);
+            background: rgba(255,255,255,0.1);
+            font-weight: 600;
+        }
+        
+        .loading { color: var(--text-secondary); margin-top: 20%; }
+        .error { color: #ff453a; margin-top: 20%; }
     </style>
 </head>
 <body>
 
-    <div class="player-container" id="player-ui" style="display:none;">
+<div class="player-container" id="player-ui" style="display:none;">
+    
+    <!-- Обложка -->
+    <div class="cover-wrapper">
         <img id="cover-img" class="cover-art" src="" alt="Cover">
-        
-        <div class="track-info">
+    </div>
+    
+    <!-- Инфо и кнопка скачивания -->
+    <div class="track-info">
+        <div class="track-text-group">
             <div class="track-title" id="track-title">Loading...</div>
         </div>
+        <a id="download-btn" class="btn-download" href="#" target="_blank" download>
+            <!-- SVG Download Icon -->
+            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        </a>
+    </div>
 
-        <div class="progress-container" id="progress-container">
-            <div class="progress-bar">
-                <div class="progress-fill" id="progress-fill"></div>
-            </div>
-            <div style="display:flex; justify-content:space-between; font-size:12px; color:#777; margin-top:5px;">
-                <span id="curr-time">0:00</span>
-                <span id="dur-time">0:00</span>
-            </div>
+    <!-- Прогресс бар -->
+    <div class="progress-container" id="progress-container">
+        <div class="progress-bar-bg">
+            <div class="progress-fill" id="progress-fill"></div>
         </div>
+        <div class="progress-knob" id="progress-knob"></div>
+    </div>
+    
+    <div class="time-labels">
+        <span id="curr-time">0:00</span>
+        <span id="dur-time">0:00</span>
+    </div>
 
-        <div class="controls">
-            <button class="btn-control" onclick="musicApp.prevTrack()">⏮</button>
-            <button class="btn-control btn-play" onclick="musicApp.togglePlay()" id="play-btn">▶</button>
-            <button class="btn-control" onclick="musicApp.nextTrack()">⏭</button>
+    <!-- Управление (SVG иконки) -->
+    <div class="controls">
+        <button class="btn-control btn-skip" onclick="musicApp.prevTrack()">
+            <svg viewBox="0 0 24 24"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5"></line></svg>
+        </button>
+        
+        <button class="btn-control btn-play" onclick="musicApp.togglePlay()" id="play-btn">
+            <!-- Play icon по умолчанию -->
+            <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+        </button>
+        
+        <button class="btn-control btn-skip" onclick="musicApp.nextTrack()">
+            <svg viewBox="0 0 24 24"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
+        </button>
+    </div>
+
+    <!-- Громкость -->
+    <div class="volume-container">
+        <div class="volume-icon">
+            <svg viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon></svg>
         </div>
-
-        <div class="playlist" id="playlist-container">
-            <!-- Список треков -->
+        <!-- input range стилизован в CSS, JS обновляет фон -->
+        <input type="range" min="0" max="1" step="0.01" value="1" class="volume-slider" id="volume-slider">
+        <div class="volume-icon">
+            <svg viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
         </div>
     </div>
 
-    <div id="loading-msg" class="loading">Загрузка музыки...</div>
-    <div id="error-msg" class="error" style="display:none;"></div>
+    <div class="playlist" id="playlist-container">
+        <!-- Список треков -->
+    </div>
+</div>
 
-    <audio id="audio-element"></audio>
+<div id="loading-msg" class="loading">Загрузка музыки...</div>
+<div id="error-msg" class="error" style="display:none;"></div>
 
-    <script src="/static/music_player.js"></script>
+<audio id="audio-element"></audio>
+
+<script>
+    const musicApp = {
+        tracks: [],
+        currentindex: 0,
+        audio: null,
+        isPlaying: false,
+        isDragging: false,
+
+        init: function() {
+            this.audio = document.getElementById('audio-element');
+            
+            const parts = window.location.pathname.split('/');
+            const userId = parts[2];
+            const messageId = parts[3];
+
+            // Если ссылок нет, для теста (удалите в продакшене или раскомментируйте showError)
+            if (!userId || !messageId) {
+                 // this.showError("Неверная ссылка"); 
+                 // return;
+                 // MOCK DATA FOR PREVIEW:
+                 this.tracks = [{title: "Demo Track", url: "#", cover: "https://via.placeholder.com/600x400"}];
+                 this.renderPlaylist();
+                 this.loadTrack(0, false);
+                 document.getElementById('loading-msg').style.display = 'none';
+                 document.getElementById('player-ui').style.display = 'block';
+                 // END MOCK
+            } else {
+                 this.loadData(userId, messageId);
+            }
+
+            this.setupEvents();
+            this.updateVolumeVisuals(1); // Инициализация цвета громкости
+        },
+
+        loadData: async function(userId, messageId) {
+            try {
+                const response = await fetch(`/api/music/get_playlist?user_id=${userId}&message_id=${messageId}`);
+                const data = await response.json();
+
+                if (!response.ok || !data.tracks || data.tracks.length === 0) {
+                    this.showError(data.error || "Музыка не найдена");
+                    return;
+                }
+
+                this.tracks = data.tracks;
+                this.setCover(data.cover);
+                this.renderPlaylist();
+                this.loadTrack(0, false);
+                
+                document.getElementById('loading-msg').style.display = 'none';
+                document.getElementById('player-ui').style.display = 'block';
+
+            } catch (e) {
+                console.error(e);
+                this.showError("Ошибка соединения");
+            }
+        },
+        
+        setCover: function(url) {
+            const coverImg = document.getElementById('cover-img');
+            if (url) coverImg.src = url;
+            else coverImg.src = "https://via.placeholder.com/400x400/1c1c1e/333?text=Music";
+        },
+
+        loadTrack: function(index, autoPlay = true) {
+            if (index < 0 || index >= this.tracks.length) return;
+            
+            this.currentindex = index;
+            const track = this.tracks[index];
+            
+            document.getElementById('track-title').textContent = track.title;
+            this.audio.src = track.url;
+            
+            const downloadBtn = document.getElementById('download-btn');
+            downloadBtn.href = track.url;
+            
+            if(track.cover) this.setCover(track.cover);
+            
+            this.highlightPlaylist();
+            this.updateProgressBar(0);
+
+            if (autoPlay) {
+                this.play();
+            } else {
+                this.isPlaying = false;
+                this.updatePlayBtn();
+            }
+        },
+
+        play: function() {
+            this.audio.play()
+                .then(() => {
+                    this.isPlaying = true;
+                    this.updatePlayBtn();
+                })
+                .catch(err => console.error("Play error:", err));
+        },
+
+        pause: function() {
+            this.audio.pause();
+            this.isPlaying = false;
+            this.updatePlayBtn();
+        },
+
+        togglePlay: function() {
+            if (this.isPlaying) this.pause();
+            else this.play();
+        },
+
+        nextTrack: function() {
+            let next = this.currentindex + 1;
+            if (next >= this.tracks.length) next = 0; 
+            this.loadTrack(next);
+        },
+
+        prevTrack: function() {
+            let prev = this.currentindex - 1;
+            if (prev < 0) prev = this.tracks.length - 1;
+            this.loadTrack(prev);
+        },
+
+        updatePlayBtn: function() {
+            const btn = document.getElementById('play-btn');
+            // SVG для паузы и воспроизведения
+            const playIcon = `<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
+            const pauseIcon = `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>`;
+            
+            btn.innerHTML = this.isPlaying ? pauseIcon : playIcon;
+        },
+
+        renderPlaylist: function() {
+            const container = document.getElementById('playlist-container');
+            container.innerHTML = '';
+            this.tracks.forEach((track, idx) => {
+                const div = document.createElement('div');
+                div.className = 'playlist-item';
+                div.innerHTML = `<span style="margin-right:10px; opacity:0.5; font-size:12px;">${idx + 1}</span> ${track.title}`;
+                div.onclick = () => musicApp.loadTrack(idx);
+                container.appendChild(div);
+            });
+        },
+
+        highlightPlaylist: function() {
+            const items = document.querySelectorAll('.playlist-item');
+            items.forEach((item, idx) => {
+                if (idx === this.currentindex) {
+                    item.classList.add('active');
+                    item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                } else {
+                    item.classList.remove('active');
+                }
+            });
+        },
+
+        updateProgressBar: function(percent) {
+            document.getElementById('progress-fill').style.width = `${percent}%`;
+            document.getElementById('progress-knob').style.left = `${percent}%`;
+        },
+
+        // Визуальное обновление полоски громкости (закрашивание)
+        updateVolumeVisuals: function(val) {
+            const percentage = val * 100;
+            const slider = document.getElementById('volume-slider');
+            // Меняем размер фона (градиента), чтобы он выглядел как прогресс бар
+            slider.style.backgroundSize = `${percentage}% 100%`;
+        },
+
+        setupEvents: function() {
+            this.audio.addEventListener('timeupdate', () => {
+                if (!this.isDragging) {
+                    const { currentTime, duration } = this.audio;
+                    const percent = duration ? (currentTime / duration) * 100 : 0;
+                    this.updateProgressBar(percent);
+                    document.getElementById('curr-time').textContent = this.formatTime(currentTime);
+                    document.getElementById('dur-time').textContent = this.formatTime(duration || 0);
+                }
+            });
+            
+            this.audio.addEventListener('loadedmetadata', () => {
+                document.getElementById('dur-time').textContent = this.formatTime(this.audio.duration);
+            });
+
+            this.audio.addEventListener('ended', () => {
+                this.nextTrack();
+            });
+
+            // SEEKER
+            const progressContainer = document.getElementById('progress-container');
+            const knob = document.getElementById('progress-knob');
+
+            const handleDrag = (e) => {
+                const rect = progressContainer.getBoundingClientRect();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                let percent = (clientX - rect.left) / rect.width;
+                if (percent < 0) percent = 0;
+                if (percent > 1) percent = 1;
+
+                this.updateProgressBar(percent * 100);
+                const duration = this.audio.duration || 0;
+                document.getElementById('curr-time').textContent = this.formatTime(percent * duration);
+                return percent;
+            };
+
+            const startDrag = (e) => {
+                this.isDragging = true;
+                knob.classList.add('dragging');
+                handleDrag(e);
+            };
+
+            const moveDrag = (e) => {
+                if (this.isDragging) handleDrag(e);
+            };
+
+            const endDrag = (e) => {
+                if (this.isDragging) {
+                    this.isDragging = false;
+                    knob.classList.remove('dragging');
+                    const percent = handleDrag(e.changedTouches ? { touches: [e.changedTouches[0]], clientX: e.changedTouches[0].clientX } : e);
+                    if (this.audio.duration) {
+                        this.audio.currentTime = percent * this.audio.duration;
+                    }
+                }
+            };
+
+            progressContainer.addEventListener('mousedown', startDrag);
+            document.addEventListener('mousemove', moveDrag);
+            document.addEventListener('mouseup', endDrag);
+
+            progressContainer.addEventListener('touchstart', startDrag, {passive: false});
+            document.addEventListener('touchmove', moveDrag, {passive: false});
+            document.addEventListener('touchend', endDrag);
+
+            // VOLUME
+            const volSlider = document.getElementById('volume-slider');
+            volSlider.addEventListener('input', (e) => {
+                const val = e.target.value;
+                this.audio.volume = val;
+                this.updateVolumeVisuals(val);
+            });
+
+            if (window.Telegram && window.Telegram.WebApp) {
+                window.Telegram.WebApp.ready();
+                window.Telegram.WebApp.expand();
+                window.Telegram.WebApp.setHeaderColor('#0f0f0f');
+                window.Telegram.WebApp.setBackgroundColor('#0f0f0f');
+            }
+        },
+
+        formatTime: function(seconds) {
+            if (isNaN(seconds)) return "0:00";
+            const min = Math.floor(seconds / 60);
+            const sec = Math.floor(seconds % 60);
+            return `${min}:${sec < 10 ? '0' : ''}${sec}`;
+        },
+
+        showError: function(msg) {
+            document.getElementById('loading-msg').style.display = 'none';
+            const errDiv = document.getElementById('error-msg');
+            errDiv.textContent = msg;
+            errDiv.style.display = 'block';
+        }
+    };
+
+    document.addEventListener('DOMContentLoaded', () => {
+        musicApp.init();
+    });
+</script>
 </body>
 </html>
