@@ -43,6 +43,7 @@ PRIMARY_MODEL = 'gemini-3-flash-preview' # Модель, которую проб
 FALLBACK_MODELS = ['gemini-2.5-flash, gemini-2.5-flash-preview-05-20', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-exp'] # Модели на случай, если с основной ничего не вышло
 PRIMARY_MODEL_FLESHLIGHT = 'gemini-2.5-flash-lite' # Модель, которую пробуем в первую очередь 
 FALLBACK_MODELS_FLESHLIGHT = ['gemini-live-2.5-flash-preview', 'gemini-2.0-flash-lite', 'gemini-2.0-flash-lite-001'] # Модели на случай, если с основной ничего не вышло
+
 GEMMA_MODELS = ['gemma-3-27b-it', 'gemma-3-12b-it', 'gemma-3-4b-it', 'gemma-3n-10b-it']
 # Инициализация Firebase
 cred = credentials.Certificate('/etc/secrets/firebase-key.json')  # Путь к вашему JSON файлу
