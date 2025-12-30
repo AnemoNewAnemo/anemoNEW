@@ -10486,6 +10486,60 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
 
     # Если не в состоянии редактирования, продолжаем обычную обработку изображений
     if user_id in user_data and user_data[user_id]['status'] == 'awaiting_image':
+
+        # === НОВЫЙ БЛОК ДЛЯ АУДИО ===
+        if update.message.audio:
+            audio = update.message.audio
+            audio_file_id = audio.file_id
+            
+            # Инициализируем список музыки, если его нет
+            if 'music' not in user_data[user_id]:
+                user_data[user_id]['music'] = []
+            
+            # --- ЛОГИКА ОПРЕДЕЛЕНИЯ ИМЕНИ (music_name) ---
+            # 1. Приоритет: Подпись к файлу (caption)
+            if update.message.caption:
+                music_name = update.message.caption
+            # 2. Приоритет: Имя файла (file_name)
+            elif audio.file_name:
+                music_name = audio.file_name
+            # 3. Приоритет: music1, music2... (если нет ни подписи, ни имени файла)
+            else:
+                # Считаем текущее количество + 1 для номера
+                next_index = len(user_data[user_id]['music']) + 1
+                music_name = f"music{next_index}"
+            
+            # Сохраняем в структуру не просто ID, а словарь с ID и именем
+            music_data = {
+                'file_id': audio_file_id,
+                'music_name': music_name
+            }
+            
+            user_data[user_id]['music'].append(music_data)
+            # ---------------------------------------------
+            
+            music_count = len(user_data[user_id]['music'])
+            
+            # Формируем клавиатуру (такую же, как при отправке фото)
+            keyboard = [
+                [InlineKeyboardButton("🌌В главное меню🌌", callback_data='restart')],
+                [InlineKeyboardButton("Ссылка на статью", callback_data='preview_article')],
+                [InlineKeyboardButton("Редактировать", callback_data='edit_article')],
+                [InlineKeyboardButton("📗 Помощь и разметка Telegraph📗", callback_data='help_command')],
+                [InlineKeyboardButton("🌠 К Завершению Публикации 🌠", callback_data='create_article')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await context.bot.send_message(
+                chat_id=update.message.chat_id,
+                text=f'🎵 Аудиозапись "{music_name}" добавлена (всего: {music_count} шт.).\nВы можете прислать еще аудио, изображения или завершить создание поста.',
+                reply_to_message_id=message_id,
+                reply_markup=reply_markup
+            )
+            return ASKING_FOR_IMAGE
+        # ============================
+
+        
         if update.message.photo:
             await context.bot.send_message(
                 chat_id=update.message.chat_id,
@@ -11498,7 +11552,10 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 else:
                     author_line = f"{author_name_final}"
             logger.info(f"author_line: {author_line}")
-
+            # === ПОДГОТОВКА ДАННЫХ О МУЗЫКЕ ===
+            music_list = user_data[user_id].get('music', [])
+            music_post_flag = True if music_list else False
+            music_media_data = music_list if music_list else None
             
             moscow_tz = pytz.timezone('Europe/Moscow')
             now = datetime.now(moscow_tz)
@@ -11676,6 +11733,10 @@ async def publish(update: Update, context: CallbackContext) -> None:
                             "media": media_group_data,
                             "scheduled": 'Отсутствует',
                             "time": time,
+                            # === ДОБАВЛЯЕМ МУЗЫКУ В БАЗУ ===
+                            "music_post": music_post_flag,
+                            "musicmedia": music_media_data
+                            # ===============================
                         }
                         await update.effective_chat.pin_message(message_id)                        
                         save_media_group_data(media_group_storage, user_id)  # Сохраняем в файл
@@ -11700,7 +11761,11 @@ async def publish(update: Update, context: CallbackContext) -> None:
                                 }
                             ],
                             "scheduled": 'Отсутствует',
-                            "time": time,  # Добавляем scheduled со значением None
+                            "time": time,
+                            # === ДОБАВЛЯЕМ МУЗЫКУ В БАЗУ ===
+                            "music_post": music_post_flag,
+                            "musicmedia": music_media_data
+                            # ===============================
                         }
                         
                         # Отправляем изображение
@@ -11736,13 +11801,17 @@ async def publish(update: Update, context: CallbackContext) -> None:
                     media_group_storage[user_id][temp_key] = {
                         "media": [
                             {
-                                "file_id": None,  # Так как изображений нет
+                                "file_id": None,
                                 "caption": message_with_link,
                                 "parse_mode": 'HTML'
                             }
                         ],
                         "scheduled": 'Отсутствует',
-                        "time": time,  # Добавляем scheduled со значением None
+                        "time": time,
+                        # === ДОБАВЛЯЕМ МУЗЫКУ В БАЗУ ===
+                        "music_post": music_post_flag,
+                        "musicmedia": music_media_data
+                        # ===============================
                     }
                     
                     # Отправляем сообщение
@@ -14159,6 +14228,23 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
             if not media_items or not isinstance(media_items, list):
                 await temp_message.edit_text("🚫 Ошибка: Некорректный формат данных.")
                 return
+            
+            # --- НОВАЯ ЛОГИКА: Проверка на музыкальный пост ---
+            is_music_post = media_group_data.get('music_post', False)
+            music_reply_markup = None
+            
+            if is_music_post:
+                # Формируем URL для WebApp
+                web_app_url = f"https://anemonne.onrender.com/musicplayer/{user_id}/{key}"
+                # Создаем кнопку
+                music_reply_markup = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        text="🎧 Открыть плеер", 
+                        web_app=WebAppInfo(url=web_app_url)
+                    )]
+                ])
+            # --------------------------------------------------
+
         except json.JSONDecodeError as e:
             await temp_message.edit_text(f"🚫 Ошибка преобразования данных: {e}")
             return
@@ -14167,14 +14253,12 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
         channel_ref = db.reference('users_publications/channels')
         channels_data = channel_ref.get() or {}
 
-        # Ищем каналы, где текущий пользователь указан как администратор
         user_channels = [
             chat_id for chat_id, info in channels_data.items()
             if user_id in info.get('user_ids', [])
         ]
 
         if not user_channels:
-            # Создаем кнопку и клавиатуру
             keyboard = InlineKeyboardMarkup(
                 [[InlineKeyboardButton("‼️Перезапуск бота‼️", callback_data='restart')]]
             )
@@ -14231,11 +14315,47 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
 
         # Публикуем медиагруппу в канале
         try:
-            await context.bot.send_media_group(
-                chat_id=chat_id,  # Канал, в который нужно публиковать
-                media=media_group
-            )
+            # Сценарий 1: Музыкальный пост и ВСЕГО ОДИН файл.
+            # Отправляем через send_photo/send_animation, чтобы прикрепить кнопку к посту.
+            if is_music_post and len(media_group) == 1:
+                item = media_group[0]
+                
+                # Если это фото
+                if isinstance(item, InputMediaPhoto):
+                    await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=item.media,
+                        caption=item.caption,
+                        parse_mode=item.parse_mode,
+                        reply_markup=music_reply_markup # Цепляем кнопку сюда
+                    )
+                # Если это GIF (InputMediaDocument)
+                else:
+                    await context.bot.send_animation( # Используем send_animation для GIF
+                        chat_id=chat_id,
+                        animation=item.media,
+                        caption=item.caption,
+                        parse_mode=item.parse_mode,
+                        reply_markup=music_reply_markup # Цепляем кнопку сюда
+                    )
+            
+            # Сценарий 2: Обычный пост или Музыкальный пост с НЕСКОЛЬКИМИ файлами
+            else:
+                await context.bot.send_media_group(
+                    chat_id=chat_id,
+                    media=media_group
+                )
+                
+                # Если это был музыкальный альбом (много фото), кнопку отправляем следом отдельным сообщением
+                if is_music_post:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text="🎧 Нажмите кнопку ниже, чтобы слушать музыку:",
+                        reply_markup=music_reply_markup
+                    )
+
             await temp_message.edit_text(f"✅ Пост успешно опубликован в канале {chat_id}!")
+            
         except Forbidden as e:
             if "bot is not a member of the channel chat" in str(e):
                 await temp_message.edit_text(
