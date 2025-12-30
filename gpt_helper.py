@@ -493,6 +493,53 @@ def save_publications_to_firebase(user_id, message_id, new_data):
         logging.error(f"Ошибка при сохранении публикации {user_id}_{message_id} в Firebase: {e}")
 
 
+
+def get_specific_music_post(user_id, message_id):
+    """
+    Загружает конкретный пост пользователя по ID.
+    Проверяет, является ли он музыкальным постом.
+    """
+    try:
+        # Точечный запрос к Firebase: users_publications/user_id/userid_messageid
+        path = f"users_publications/{user_id}/{message_id}"
+        ref = db.reference(path)
+        post_data = ref.get()
+
+        if not post_data:
+            return None
+        
+        # Проверяем флаг music_post
+        if post_data.get("music_post") is True:
+            return post_data
+        
+        return None
+    except Exception as e:
+        logging.error(f"Ошибка при получении музыкального поста {path}: {e}")
+        return None
+
+def get_telegram_file_url(file_id):
+    """
+    Получает прямую ссылку на файл через Telegram API.
+    """
+    try:
+        # 1. Получаем путь к файлу (file_path)
+        url_info = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}"
+        response = requests.get(url_info)
+        result = response.json()
+
+        if result.get("ok"):
+            file_path = result["result"]["file_path"]
+            # 2. Формируем ссылку для скачивания/стриминга
+            download_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+            return download_url
+        else:
+            logging.error(f"Telegram API Error: {result}")
+            return None
+    except Exception as e:
+        logging.error(f"Error getting file url: {e}")
+        return None
+
+
 def save_inline_query_to_firebase(user_id: int, query: str, response: str):
     """Сохраняет последний запрос и ответ пользователя (до 10 штук)"""
     try:
