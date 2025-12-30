@@ -1306,7 +1306,7 @@ async def generate_gemini_inline_response(query: str) -> str:
             client = genai.Client(api_key=api_key)
 
             # Сначала пробуем основную модель
-            models_to_try = [PRIMARY_MODEL_FLESHLIGHT] + FALLBACK_MODELS_FLESHLIGHT + GEMMA_MODELS:
+            models_to_try = [PRIMARY_MODEL_FLESHLIGHT] + FALLBACK_MODELS_FLESHLIGHT + GEMMA_MODELS
 
             for model_name in models_to_try:
                 try:
