@@ -14240,7 +14240,7 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
                 music_reply_markup = InlineKeyboardMarkup([
                     [InlineKeyboardButton(
                         text="🎧 Открыть плеер", 
-                        web_app=WebAppInfo(url=web_app_url)
+                        url=web_app_url
                     )]
                 ])
             # --------------------------------------------------
