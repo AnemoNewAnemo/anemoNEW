@@ -2,11 +2,12 @@ from flask import Flask, request, jsonify, send_from_directory, make_response
 from threading import Thread
 import os
 import logging
-
+from flask import render_template_string
 app = Flask(__name__, static_folder='static')  # Указываем папку для статики
 
 
 # --- API ENDPOINTS (Точки для работы с данными) ---
+
 
 @app.route('/api/timer/get_one', methods=['GET'])
 def api_get_one_timer():
@@ -25,6 +26,8 @@ def api_get_one_timer():
         return jsonify(data)
     else:
         return jsonify({"error": "Not found"}), 404
+
+
 
 @app.route('/api/timer/get_all', methods=['GET'])
 def api_get_timers():
@@ -196,8 +199,76 @@ def api_delete_entry():
         return jsonify({"status": "success"})
     return jsonify({"status": "error"}), 500
 
+@app.route('/musicplayer/<user_id>/<message_id>')
+def serve_music_player(user_id, message_id):
+    """
+    Отдает HTML страницу плеера.
+    """
+    # Проверка: если message_id заканчивается на .js или .css, значит 
+    # браузер ошибся путем и просит статику. Игнорируем или отдаем 404, 
+    # но лучше просто отдать HTML, а пути в HTML мы исправим ниже.
+    return send_from_directory(app.static_folder, 'music_player.html')
 
+@app.route('/api/music/get_playlist', methods=['GET'])
+def api_get_playlist():
+    """
+    API, которое возвращает список треков с прямыми ссылками.
+    """
+    from gpt_helper import get_specific_music_post, get_telegram_file_url # Импорт функций из шага 1
+    
+    user_id = request.args.get('user_id')
+    message_id = request.args.get('message_id')
+    
+    if not user_id or not message_id:
+        return jsonify({"error": "Missing params"}), 400
 
+    # 1. Получаем пост из базы
+    post = get_specific_music_post(user_id, message_id)
+    if not post:
+        return jsonify({"error": "Post not found or not a music post"}), 404
+
+    # 2. Формируем список треков
+    tracks = []
+    
+    # Берем массив musicmedia
+    music_media = post.get('musicmedia', [])
+    
+    for item in music_media:
+        f_id = item.get('file_id')
+        name = item.get('music_name', 'Unknown Track')
+        
+        if f_id:
+            # Превращаем file_id в URL
+            url = get_telegram_file_url(f_id)
+            if url:
+                tracks.append({
+                    "title": name,
+                    "url": url
+                })
+    
+    # 3. (Опционально) Достаем обложку из media, если есть
+    cover_url = None
+    if 'media' in post and len(post['media']) > 0:
+        # Предполагаем, что первая картинка - обложка
+        media_file_id = post['media'][0].get('file_id')
+        # Если это URL (как в примере imagekit), используем его, если file_id - резолвим
+        if media_file_id.startswith('http'):
+            cover_url = media_file_id
+        else:
+            cover_url = get_telegram_file_url(media_file_id)
+
+    return jsonify({
+        "status": "success",
+        "tracks": tracks,
+        "cover": cover_url
+    })
+@app.route('/musicplayer/')
+def music_player_root():
+    """
+    Если открыли просто /musicplayer/ без ID — покажем ошибку, 
+    чтобы не было пустой 404 страницы.
+    """
+    return "Ошибка: Не указан ID пользователя и сообщения. Ссылка должна быть вида /musicplayer/user_id/message_id"
 
 @app.route('/other-app/', defaults={'path': ''})
 @app.route('/other-app/<path:path>')
