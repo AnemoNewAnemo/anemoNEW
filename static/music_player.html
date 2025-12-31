@@ -8,6 +8,9 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <!-- Подключаем SortableJS для перетаскивания -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+    <!-- Подключаем стили Swiper (Слайдер) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css" />
+
     <style>
         :root {
             --primary-color: #fff;
@@ -30,7 +33,6 @@
             margin: 0;
             overflow: hidden;
             -webkit-font-smoothing: antialiased;
-            /* Предотвращаем обновление страницы свайпом вниз на мобилках */
             overscroll-behavior-y: none;
         }
 
@@ -43,23 +45,47 @@
             flex-direction: column;
         }
 
-        /* ОБЛОЖКА */
+        /* --- СЛАЙДЕР ОБЛОЖЕК (SWIPER) --- */
         .cover-wrapper {
             width: 100%;
+            height: 40vh;      /* Высота подстраивается под экран */
+            max-height: 350px; /* Но не больше 350px */
+            min-height: 250px;
+            margin-bottom: 25px;
             display: flex;
             justify-content: center;
-            margin-bottom: 25px;
+            position: relative;
         }
-        
-        .cover-art {
+
+        .swiper {
             width: 100%;
-            height: auto;
-            max-height: 40vh; 
-            background-color: transparent;
+            height: 100%;
             border-radius: 12px;
-            object-fit: contain; 
             box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-            transition: transform 0.3s ease;
+            background-color: transparent;
+        }
+
+        .swiper-slide {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+        }
+
+        .swiper-slide img {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* Картинка сохраняет пропорции и влезает целиком */
+            border-radius: 12px;
+        }
+
+        /* Стили точек пагинации слайдера */
+        .swiper-pagination-bullet {
+            background: rgba(255,255,255,0.5);
+        }
+        .swiper-pagination-bullet-active {
+            background: #fff;
         }
 
         /* ИНФО О ТРЕКЕ */
@@ -101,7 +127,14 @@
             transition: opacity 0.2s;
         }
         .btn-download:active { opacity: 1; background: rgba(255,255,255,0.1); }
-        .btn-download svg { width: 20px; height: 20px; fill: currentColor; }
+        .btn-download svg { 
+            width: 20px; height: 20px; 
+            fill: none; 
+            stroke: currentColor; 
+            stroke-width: 2; 
+            stroke-linecap: round; 
+            stroke-linejoin: round; 
+        }
 
         /* ПРОГРЕСС БАР */
         .progress-container {
@@ -178,7 +211,14 @@
             transition: transform 0.1s, opacity 0.2s;
         }
         .btn-control:active { transform: scale(0.9); opacity: 0.8; }
-        .btn-skip svg { width: 32px; height: 32px; fill: currentColor; }
+        
+        .btn-skip svg { 
+            width: 32px; height: 32px; 
+            fill: currentColor; 
+        }
+        /* Для кнопок next/prev добавим stroke для линий, если они не залиты */
+        .btn-skip svg line { stroke: currentColor; stroke-width: 3; }
+
         .btn-play svg { width: 64px; height: 64px; fill: currentColor; }
 
         /* ГРОМКОСТЬ */
@@ -217,23 +257,12 @@
         }
         .volume-container:hover .volume-slider::-webkit-slider-thumb,
         .volume-slider:active::-webkit-slider-thumb { transform: scale(1); }
-        .volume-slider::-moz-range-thumb {
-            height: 16px;
-            width: 16px;
-            border: none;
-            border-radius: 50%;
-            background: #fff;
-            transform: scale(0);
-            transition: transform 0.1s;
-        }
-        .volume-container:hover .volume-slider::-moz-range-thumb,
-        .volume-slider:active::-moz-range-thumb { transform: scale(1); }
-
-        /* --- НОВЫЙ ПЛЕЙЛИСТ --- */
+        
+        /* ПЛЕЙЛИСТ */
         .playlist {
             text-align: left;
             margin-top: 0;
-            max-height: 180px; /* Чуть увеличил для удобства */
+            max-height: 180px; 
             overflow-y: auto;
             border-top: 1px solid rgba(255,255,255,0.1);
             padding-top: 10px;
@@ -242,12 +271,11 @@
         .playlist::-webkit-scrollbar { width: 4px; }
         .playlist::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
 
-        /* Обновленный стиль элемента плейлиста */
         .playlist-item {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 8px 5px; /* Уменьшил паддинги, т.к. элементы теперь крупные */
+            padding: 8px 5px; 
             margin-bottom: 2px;
             border-radius: 8px;
             transition: background 0.2s;
@@ -267,7 +295,7 @@
             font-weight: 600;
         }
 
-        /* Зона перетаскивания (Левая часть) */
+        /* --- ИСПРАВЛЕНИЕ: Зона перетаскивания (Гамбургер) --- */
         .drag-handle {
             width: 36px;
             height: 36px;
@@ -279,9 +307,16 @@
             touch-action: none; /* Важно для мобилок */
         }
         .drag-handle:active { cursor: grabbing; color: var(--primary-color); }
-        .drag-handle svg { width: 18px; height: 18px; fill: currentColor; }
+        
+        /* Ключевое исправление: добавляем обводку (stroke) для SVG иконки */
+        .drag-handle svg { 
+            width: 20px; 
+            height: 20px; 
+            stroke: currentColor; 
+            stroke-width: 2px; 
+            fill: none; 
+        }
 
-        /* Название трека (Центр) */
         .track-name {
             flex: 1;
             margin: 0 10px;
@@ -294,7 +329,6 @@
             padding: 8px 0;
         }
 
-        /* Кнопка копирования (Правая часть) */
         .copy-btn {
             width: 36px;
             height: 36px;
@@ -309,9 +343,8 @@
             transition: opacity 0.2s;
         }
         .copy-btn:hover { opacity: 1; color: var(--primary-color); }
-        .copy-btn svg { width: 16px; height: 16px; fill: currentColor; }
+        .copy-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2px; }
 
-        /* Стиль "призрака" при перетаскивании (SortableJS) */
         .sortable-ghost {
             opacity: 0.4;
             background: rgba(59, 130, 246, 0.2);
@@ -323,7 +356,6 @@
         .loading { color: var(--text-secondary); margin-top: 20%; }
         .error { color: #ff453a; margin-top: 20%; }
 
-        /* Уведомление о копировании */
         .toast {
             position: absolute;
             bottom: 20px;
@@ -347,9 +379,18 @@
 
 <div class="player-container" id="player-ui" style="display:none;">
     
-    <!-- Обложка -->
+    <!-- Слайдер обложек -->
     <div class="cover-wrapper">
-        <img id="cover-img" class="cover-art" src="" alt="Cover">
+        <div class="swiper mySwiper">
+            <div class="swiper-wrapper" id="cover-swiper-wrapper">
+                <!-- Слайды будут добавлены через JS -->
+                <div class="swiper-slide">
+                    <img src="" alt="Cover" id="default-cover-img">
+                </div>
+            </div>
+            <!-- Точки пагинации -->
+            <div class="swiper-pagination"></div>
+        </div>
     </div>
     
     <!-- Инфо и кнопка скачивания -->
@@ -397,7 +438,7 @@
         </div>
         <input type="range" min="0" max="1" step="0.01" value="1" class="volume-slider" id="volume-slider">
         <div class="volume-icon">
-            <svg viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+            <svg viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" fill="none" stroke="currentColor" stroke-width="2"></path></svg>
         </div>
     </div>
 
@@ -415,14 +456,19 @@
 
 <audio id="audio-element"></audio>
 
+<!-- Подключаем JS Swiper -->
+<script src="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js"></script>
+
 <script>
     const musicApp = {
         tracks: [],
+        covers: [], // Хранилище для картинок
         currentindex: 0,
         audio: null,
         isPlaying: false,
         isDragging: false,
         sortableInstance: null,
+        swiperInstance: null, // Ссылка на слайдер
 
         init: function() {
             this.audio = document.getElementById('audio-element');
@@ -431,20 +477,21 @@
             const userId = parts[2];
             const messageId = parts[3];
 
-            // MOCK DATA для проверки (удалить, если есть реальный API)
-            if (!userId || !messageId) {
+            // Проверка на наличие ID (реальный запуск)
+            if (userId && messageId) {
+                 this.loadData(userId, messageId);
+            } else {
+                // Если запустили без ID (тест), показываем заглушку
                  this.tracks = [
-                     {title: "Song One - Artist A", url: "#", cover: ""},
-                     {title: "Song Two - Artist B", url: "#", cover: ""},
-                     {title: "Song Three - Artist C", url: "#", cover: ""},
-                     {title: "Song Four - Artist D", url: "#", cover: ""}
+                     {title: "Demo Track 1", url: "#", cover: ""},
+                     {title: "Demo Track 2", url: "#", cover: ""}
                  ];
+                 this.covers = ["https://via.placeholder.com/400x400/1c1c1e/333?text=Demo"];
+                 this.initCoverSlider();
                  this.renderPlaylist();
                  this.loadTrack(0, false);
                  document.getElementById('loading-msg').style.display = 'none';
                  document.getElementById('player-ui').style.display = 'block';
-            } else {
-                 this.loadData(userId, messageId);
             }
 
             this.setupEvents();
@@ -462,7 +509,20 @@
                 }
 
                 this.tracks = data.tracks;
-                this.setCover(data.cover);
+                
+                // Логика получения обложек:
+                // 1. Если сервер вернул массив covers, берем его.
+                // 2. Если сервер вернул старое поле cover (одна строка), превращаем в массив.
+                // 3. Иначе пустой массив.
+                if (data.covers && Array.isArray(data.covers)) {
+                    this.covers = data.covers;
+                } else if (data.cover) {
+                    this.covers = [data.cover];
+                } else {
+                    this.covers = [];
+                }
+
+                this.initCoverSlider();
                 this.renderPlaylist();
                 this.loadTrack(0, false);
                 
@@ -475,10 +535,39 @@
             }
         },
         
-        setCover: function(url) {
-            const coverImg = document.getElementById('cover-img');
-            if (url) coverImg.src = url;
-            else coverImg.src = "https://via.placeholder.com/400x400/1c1c1e/333?text=Music";
+        // --- ИНИЦИАЛИЗАЦИЯ СЛАЙДЕРА (SWIPER) ---
+        initCoverSlider: function() {
+            const wrapper = document.getElementById('cover-swiper-wrapper');
+            wrapper.innerHTML = '';
+
+            // Если картинок нет, ставим заглушку
+            if (this.covers.length === 0) {
+                this.covers.push("https://via.placeholder.com/400x400/1c1c1e/333?text=Music");
+            }
+
+            // Создаем слайды
+            this.covers.forEach(url => {
+                const slide = document.createElement('div');
+                slide.className = 'swiper-slide';
+                slide.innerHTML = `<img src="${url}" alt="Cover">`;
+                wrapper.appendChild(slide);
+            });
+
+            // Если слайдер уже был создан, уничтожаем старый
+            if (this.swiperInstance) {
+                this.swiperInstance.destroy(true, true);
+            }
+            
+            // Создаем новый
+            this.swiperInstance = new Swiper(".mySwiper", {
+                pagination: {
+                    el: ".swiper-pagination",
+                    clickable: true,
+                    dynamicBullets: true,
+                },
+                loop: this.covers.length > 1, // Зациклить только если больше 1 картинки
+                grabCursor: true
+            });
         },
 
         loadTrack: function(index, autoPlay = true) {
@@ -492,16 +581,18 @@
             
             // Логика скачивания
             const downloadBtn = document.getElementById('download-btn');
+            // Клонируем кнопку, чтобы сбросить старые слушатели событий
             const newDownloadBtn = downloadBtn.cloneNode(true);
             downloadBtn.parentNode.replaceChild(newDownloadBtn, downloadBtn);
             
             newDownloadBtn.addEventListener('click', async (e) => {
                 e.preventDefault();
                 let fileName = track.original_name || track.filename || `${track.title}.mp3`;
-                fileName = fileName.replace(/[\\/:*?"<>|]/g, '');
+                fileName = fileName.replace(/[\\/:*?"<>|]/g, ''); // Чистим имя файла
                 if (!fileName.endsWith('.mp3')) fileName += '.mp3';
 
                 try {
+                    // Пытаемся скачать через Blob
                     const response = await fetch(track.url);
                     const blob = await response.blob();
                     const blobUrl = window.URL.createObjectURL(blob);
@@ -513,11 +604,10 @@
                     document.body.removeChild(link);
                     window.URL.revokeObjectURL(blobUrl);
                 } catch (err) {
+                    // Фолбек: просто открываем ссылку
                     window.open(track.url, '_blank');
                 }
             });
-            
-            if(track.cover) this.setCover(track.cover);
             
             this.highlightPlaylist();
             this.updateProgressBar(0);
@@ -569,7 +659,6 @@
             btn.innerHTML = this.isPlaying ? pauseIcon : playIcon;
         },
 
-        // --- ОБНОВЛЕННАЯ ФУНКЦИЯ ОТРИСОВКИ ПЛЕЙЛИСТА ---
         renderPlaylist: function() {
             const container = document.getElementById('playlist-container');
             container.innerHTML = '';
@@ -577,27 +666,26 @@
             this.tracks.forEach((track, idx) => {
                 const div = document.createElement('div');
                 div.className = 'playlist-item';
-                div.setAttribute('data-index', idx); // Важно для Sortable
+                div.setAttribute('data-index', idx);
 
-                // 1. Ручка перетаскивания (слева)
+                // 1. Ручка перетаскивания (Гамбургер)
                 const handle = document.createElement('div');
                 handle.className = 'drag-handle';
-                // Иконка "гамбургер"
+                // SVG иконка (стили для stroke заданы в CSS)
                 handle.innerHTML = `<svg viewBox="0 0 24 24"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>`;
                 
-                // 2. Название трека (центр)
+                // 2. Название
                 const name = document.createElement('div');
                 name.className = 'track-name';
                 name.textContent = track.title;
-                name.onclick = () => musicApp.loadTrack(musicApp.tracks.indexOf(track)); // Динамический поиск индекса
+                name.onclick = () => musicApp.loadTrack(musicApp.tracks.indexOf(track)); 
 
-                // 3. Кнопка копирования (справа)
+                // 3. Копировать
                 const copyBtn = document.createElement('button');
                 copyBtn.className = 'copy-btn';
-                // Иконка копирования
-                copyBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+                copyBtn.innerHTML = `<svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
                 copyBtn.onclick = (e) => {
-                    e.stopPropagation(); // Чтобы не включить трек при клике на копирование
+                    e.stopPropagation();
                     musicApp.copyToClipboard(track.title);
                 };
 
@@ -612,36 +700,27 @@
             this.highlightPlaylist();
         },
 
-        // --- ИНИЦИАЛИЗАЦИЯ DRAG & DROP ---
         initSortable: function() {
             const el = document.getElementById('playlist-container');
-            if (this.sortableInstance) this.sortableInstance.destroy(); // Очистка старого
+            if (this.sortableInstance) this.sortableInstance.destroy();
 
             this.sortableInstance = new Sortable(el, {
-                handle: '.drag-handle', // Тянем только за ручку
+                handle: '.drag-handle',
                 animation: 150,
                 ghostClass: 'sortable-ghost',
-                delay: 0, // Мгновенная реакция
+                delay: 0,
                 onEnd: (evt) => {
-                    // Логика пересчета массива после переноса
                     const oldIndex = evt.oldIndex;
                     const newIndex = evt.newIndex;
                     
                     if (oldIndex === newIndex) return;
 
-                    // 1. Сохраняем ссылку на текущую играющую песню
                     const currentTrack = this.tracks[this.currentindex];
-
-                    // 2. Меняем массив
                     const movedItem = this.tracks.splice(oldIndex, 1)[0];
                     this.tracks.splice(newIndex, 0, movedItem);
 
-                    // 3. Находим, где теперь текущая песня, и обновляем индекс
+                    // Обновляем текущий индекс
                     this.currentindex = this.tracks.indexOf(currentTrack);
-                    
-                    // Обновляем визуально (чтобы индексы атрибутов пересчитались, если нужно, но Sortable уже поменял DOM)
-                    // Для чистоты данных можно перерендерить, но это прервет анимацию.
-                    // Визуально DOM уже правильный, массив синхронизирован.
                 }
             });
         },
@@ -656,13 +735,10 @@
 
         highlightPlaylist: function() {
             const items = document.querySelectorAll('.playlist-item');
-            // Так как мы перетаскиваем элементы, порядок в DOM может отличаться от индекса,
-            // поэтому надежнее перебирать по соответствию трека
             items.forEach((item) => {
                 const nameDiv = item.querySelector('.track-name');
                 if (nameDiv && nameDiv.textContent === this.tracks[this.currentindex]?.title) {
                     item.classList.add('active');
-                    // Не скроллим автоматически, если пользователь что-то драгает
                 } else {
                     item.classList.remove('active');
                 }
