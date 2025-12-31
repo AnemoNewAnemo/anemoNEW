@@ -14244,14 +14244,14 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
                         music_name = raw_name.rsplit('.', 1)[0]
 
                         # обрезаем до 20 символов
-                        if len(music_name) > 20:
-                            cut = music_name[:20].rsplit(' ', 1)[0]
+                        if len(music_name) > 30:
+                            cut = music_name[:30].rsplit(' ', 1)[0]
                             music_name = cut + "..."
 
 
 
-        
-                button_text = f"▶︎ {music_name} ━━●──────"
+
+                button_text = f"◄◄⠀▐▐ ⠀►► {music_name}"
 
                 music_reply_markup = InlineKeyboardMarkup([
                     [
