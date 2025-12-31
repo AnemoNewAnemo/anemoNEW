@@ -13175,8 +13175,9 @@ async def handle_new_caption(update: Update, context: CallbackContext, key) -> i
 
 
 
+
 async def publish_to_telegram_scheduled(context: CallbackContext):
-    """Публикует пост в Telegram по расписанию."""
+    """Публикует пост в Telegram по расписанию с поддержкой музыкальной кнопки."""
     job_data = context.job.data
     user_id = job_data['user_id']
     message_id = job_data['message_id']
@@ -13196,8 +13197,31 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
     if not media_group_data:
         logging.error(f"Данные для публикации {key} не найдены.")
         return
+
+    # --- ЛОГИКА МУЗЫКАЛЬНОЙ КНОПКИ (добавлено) ---
+    is_music_post = media_group_data.get('music_post', False)
+    music_reply_markup = None
     
-    # ... (Остальная логика из handle_publish_button, адаптированная под работу без update)
+    if is_music_post:
+        web_app_url = f"https://anemonne.onrender.com/musicplayer/{user_id}/{key}"
+        music_name = "Музыка"
+        musicmedia = media_group_data.get('musicmedia', [])
+
+        if musicmedia and isinstance(musicmedia, list):
+            raw_name = musicmedia[0].get('music_name')
+            if raw_name:
+                # убираем расширение файла
+                music_name = raw_name.rsplit('.', 1)[0]
+                # обрезаем до 20 символов
+                if len(music_name) > 19:
+                    cut = music_name[:19].rsplit(' ', 1)[0]
+                    music_name = cut + "..."
+
+        button_text = f"◄⠀▐▐ ⠀►  |  {music_name}"
+        music_reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton(text=button_text, url=web_app_url)]
+        ])
+    # ---------------------------------------------
 
     try:
         # Логика извлечения медиа и каналов
@@ -13227,13 +13251,49 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
                 else:
                     media_group.append(InputMediaPhoto(media=processed_image, caption=caption, parse_mode=parse_mode))
 
-        # Отправка
-        await bot.send_media_group(chat_id=chat_id, media=media_group)
+        # --- ОТПРАВКА (Обновлено) ---
+        
+        # Сценарий 1: Музыкальный пост и ВСЕГО ОДИН файл.
+        # Отправляем через send_photo/send_animation, чтобы прикрепить кнопку к посту.
+        if is_music_post and len(media_group) == 1:
+            item = media_group[0]
+            
+            # Если это фото
+            if isinstance(item, InputMediaPhoto):
+                await bot.send_photo(
+                    chat_id=chat_id,
+                    photo=item.media,
+                    caption=item.caption,
+                    parse_mode=item.parse_mode,
+                    reply_markup=music_reply_markup
+                )
+            # Если это GIF (InputMediaDocument)
+            else:
+                await bot.send_animation(
+                    chat_id=chat_id,
+                    animation=item.media,
+                    caption=item.caption,
+                    parse_mode=item.parse_mode,
+                    reply_markup=music_reply_markup
+                )
+
+        # Сценарий 2: Обычный пост или Музыкальный пост с НЕСКОЛЬКИМИ файлами
+        else:
+            await bot.send_media_group(chat_id=chat_id, media=media_group)
+            
+            # Если это был музыкальный альбом (много фото), кнопку отправляем следом отдельным сообщением
+            if is_music_post:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text="🎧 Нажмите кнопку ниже, чтобы слушать музыку:",
+                    reply_markup=music_reply_markup
+                )
+
         logging.info(f"Пост {key} успешно опубликован в Telegram канал {chat_id}.")
         
-        # НОВОЕ: Удаляем ключ time только после успешной публикации
+        # Удаляем ключ time только после успешной публикации
         db.reference(f'users_publications/{user_id}/{key}/time').delete()
-        logging.info(f"Ключ time для {key} удален после публикации в VK.")
+        logging.info(f"Ключ time для {key} удален.")
 
         # Уведомляем пользователя об успешной публикации
         await bot.send_message(
