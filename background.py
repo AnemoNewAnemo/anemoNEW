@@ -209,12 +209,10 @@ def serve_music_player(user_id, message_id):
     # но лучше просто отдать HTML, а пути в HTML мы исправим ниже.
     return send_from_directory(app.static_folder, 'music_player.html')
 
+
 @app.route('/api/music/get_playlist', methods=['GET'])
 def api_get_playlist():
-    """
-    API, которое возвращает список треков с прямыми ссылками.
-    """
-    from gpt_helper import get_specific_music_post, get_telegram_file_url # Импорт функций из шага 1
+    from gpt_helper import get_specific_music_post, get_telegram_file_url
     
     user_id = request.args.get('user_id')
     message_id = request.args.get('message_id')
@@ -222,15 +220,12 @@ def api_get_playlist():
     if not user_id or not message_id:
         return jsonify({"error": "Missing params"}), 400
 
-    # 1. Получаем пост из базы
     post = get_specific_music_post(user_id, message_id)
     if not post:
-        return jsonify({"error": "Post not found or not a music post"}), 404
+        return jsonify({"error": "Post not found"}), 404
 
-    # 2. Формируем список треков
+    # 1. Формируем список треков
     tracks = []
-    
-    # Берем массив musicmedia
     music_media = post.get('musicmedia', [])
     
     for item in music_media:
@@ -238,7 +233,6 @@ def api_get_playlist():
         name = item.get('music_name', 'Unknown Track')
         
         if f_id:
-            # Превращаем file_id в URL
             url = get_telegram_file_url(f_id)
             if url:
                 tracks.append({
@@ -246,22 +240,34 @@ def api_get_playlist():
                     "url": url
                 })
     
-    # 3. (Опционально) Достаем обложку из media, если есть
-    cover_url = None
-    if 'media' in post and len(post['media']) > 0:
-        # Предполагаем, что первая картинка - обложка
-        media_file_id = post['media'][0].get('file_id')
-        # Если это URL (как в примере imagekit), используем его, если file_id - резолвим
-        if media_file_id.startswith('http'):
-            cover_url = media_file_id
-        else:
-            cover_url = get_telegram_file_url(media_file_id)
+    # 2. Формируем список обложек (ВСЕ картинки)
+    covers = []
+    if 'media' in post:
+        for m in post['media']:
+            media_file_id = m.get('file_id')
+            if not media_file_id:
+                continue
+            
+            # Если это уже ссылка
+            if media_file_id.startswith('http'):
+                covers.append(media_file_id)
+            else:
+                # Резолвим file_id
+                img_url = get_telegram_file_url(media_file_id)
+                if img_url:
+                    covers.append(img_url)
+
+    # Если картинок нет, добавляем заглушку, чтобы слайдер не был пустым (опционально)
+    if not covers:
+        covers.append("https://via.placeholder.com/400x400/1c1c1e/333?text=Music")
 
     return jsonify({
         "status": "success",
         "tracks": tracks,
-        "cover": cover_url
+        "covers": covers  # Возвращаем массив
     })
+
+
 @app.route('/musicplayer/')
 def music_player_root():
     """
