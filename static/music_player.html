@@ -4,11 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Music Player</title>
+    <!-- Подключаем Telegram WebApp -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- Подключаем SortableJS для перетаскивания -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
     <style>
         :root {
             --primary-color: #fff;
-            --accent-color: #3b82f6; /* Приятный синий */
+            --accent-color: #3b82f6;
             --bg-color: #0f0f0f;
             --card-bg: #1c1c1e;
             --text-secondary: #8e8e93;
@@ -27,6 +30,8 @@
             margin: 0;
             overflow: hidden;
             -webkit-font-smoothing: antialiased;
+            /* Предотвращаем обновление страницы свайпом вниз на мобилках */
+            overscroll-behavior-y: none;
         }
 
         .player-container {
@@ -38,7 +43,7 @@
             flex-direction: column;
         }
 
-        /* 1) ОБЛОЖКА: Пропорции оригинала + аккуратная тень */
+        /* ОБЛОЖКА */
         .cover-wrapper {
             width: 100%;
             display: flex;
@@ -82,7 +87,6 @@
             margin: 0;
         }
 
-        /* Кнопка скачивания - SVG */
         .btn-download {
             background: none;
             border: none;
@@ -99,10 +103,10 @@
         .btn-download:active { opacity: 1; background: rgba(255,255,255,0.1); }
         .btn-download svg { width: 20px; height: 20px; fill: currentColor; }
 
-        /* 2) ПРОГРЕСС БАР */
+        /* ПРОГРЕСС БАР */
         .progress-container {
             width: 100%;
-            height: 20px; /* Область клика */
+            height: 20px;
             cursor: pointer;
             position: relative;
             display: flex;
@@ -116,11 +120,11 @@
             background: var(--slider-bg);
             border-radius: 2px;
             position: relative;
-            overflow: hidden; /* Чтобы fill не вылезал за скругления */
+            overflow: hidden;
         }
         .progress-fill {
             height: 100%;
-            background: var(--primary-color); /* Белый прогресс, как в Spotify */
+            background: var(--primary-color);
             border-radius: 2px;
             width: 0%;
             pointer-events: none;
@@ -133,13 +137,12 @@
             position: absolute;
             top: 50%;
             left: 0%;
-            transform: translate(-50%, -50%) scale(0); /* Скрыт по умолчанию */
+            transform: translate(-50%, -50%) scale(0);
             box-shadow: 0 2px 6px rgba(0,0,0,0.5);
             z-index: 2;
             cursor: grab;
             transition: transform 0.1s;
         }
-        /* Показываем кружок при наведении или перетаскивании */
         .progress-container:hover .progress-knob,
         .progress-container:active .progress-knob, 
         .progress-knob.dragging {
@@ -163,7 +166,6 @@
             gap: 30px;
             margin-bottom: 30px;
         }
-
         .btn-control {
             background: none;
             border: none;
@@ -176,11 +178,10 @@
             transition: transform 0.1s, opacity 0.2s;
         }
         .btn-control:active { transform: scale(0.9); opacity: 0.8; }
-        
         .btn-skip svg { width: 32px; height: 32px; fill: currentColor; }
         .btn-play svg { width: 64px; height: 64px; fill: currentColor; }
 
-        /* 3) ПОЛЗУНОК ГРОМКОСТИ - Custom Style */
+        /* ГРОМКОСТЬ */
         .volume-container {
             display: flex;
             align-items: center;
@@ -189,12 +190,9 @@
             margin-bottom: 25px;
             width: 100%;
         }
-        
         .volume-icon svg { width: 16px; height: 16px; fill: var(--text-secondary); }
-
-        /* Кастомный Range Input для громкости */
         .volume-slider {
-            -webkit-appearance: none; /* Убираем дефолтный стиль */
+            -webkit-appearance: none;
             width: 100%;
             height: 4px;
             background: var(--slider-bg);
@@ -202,17 +200,10 @@
             outline: none;
             position: relative;
             cursor: pointer;
-        }
-        
-        /* Дорожка (Track) с градиентом для отображения заполнения */
-        /* Мы будем менять background-size через JS */
-        .volume-slider {
             background-image: linear-gradient(var(--primary-color), var(--primary-color));
-            background-size: 100% 100%; /* По умолчанию 100% */
+            background-size: 100% 100%;
             background-repeat: no-repeat;
         }
-
-        /* Ползунок (Thumb) */
         .volume-slider::-webkit-slider-thumb {
             -webkit-appearance: none;
             height: 16px;
@@ -221,17 +212,11 @@
             background: #fff;
             cursor: pointer;
             box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-            margin-top: 0; /* Webkit quirk */
-            /* Делаем ползунок невидимым, пока не наведем, для чистоты */
             transform: scale(0);
             transition: transform 0.1s;
         }
-        
         .volume-container:hover .volume-slider::-webkit-slider-thumb,
-        .volume-slider:active::-webkit-slider-thumb {
-            transform: scale(1);
-        }
-
+        .volume-slider:active::-webkit-slider-thumb { transform: scale(1); }
         .volume-slider::-moz-range-thumb {
             height: 16px;
             width: 16px;
@@ -242,45 +227,120 @@
             transition: transform 0.1s;
         }
         .volume-container:hover .volume-slider::-moz-range-thumb,
-        .volume-slider:active::-moz-range-thumb {
-            transform: scale(1);
-        }
+        .volume-slider:active::-moz-range-thumb { transform: scale(1); }
 
-        /* ПЛЕЙЛИСТ */
+        /* --- НОВЫЙ ПЛЕЙЛИСТ --- */
         .playlist {
             text-align: left;
             margin-top: 0;
-            max-height: 150px;
+            max-height: 180px; /* Чуть увеличил для удобства */
             overflow-y: auto;
             border-top: 1px solid rgba(255,255,255,0.1);
             padding-top: 10px;
             width: 100%;
         }
-        /* Кастомный скроллбар */
         .playlist::-webkit-scrollbar { width: 4px; }
         .playlist::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
 
+        /* Обновленный стиль элемента плейлиста */
         .playlist-item {
-            padding: 12px 10px;
-            cursor: pointer;
-            font-size: 14px;
-            color: var(--text-secondary);
-            border-radius: 8px;
-            transition: background 0.2s, color 0.2s;
             display: flex;
             align-items: center;
+            justify-content: space-between;
+            padding: 8px 5px; /* Уменьшил паддинги, т.к. элементы теперь крупные */
+            margin-bottom: 2px;
+            border-radius: 8px;
+            transition: background 0.2s;
+            user-select: none;
+            background: transparent;
         }
+        
         .playlist-item:hover {
             background: rgba(255,255,255,0.05);
         }
+        
         .playlist-item.active {
-            color: var(--primary-color);
             background: rgba(255,255,255,0.1);
+        }
+        .playlist-item.active .track-name {
+            color: var(--primary-color);
             font-weight: 600;
         }
-        
+
+        /* Зона перетаскивания (Левая часть) */
+        .drag-handle {
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: grab;
+            color: var(--text-secondary);
+            touch-action: none; /* Важно для мобилок */
+        }
+        .drag-handle:active { cursor: grabbing; color: var(--primary-color); }
+        .drag-handle svg { width: 18px; height: 18px; fill: currentColor; }
+
+        /* Название трека (Центр) */
+        .track-name {
+            flex: 1;
+            margin: 0 10px;
+            font-size: 14px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            cursor: pointer;
+            padding: 8px 0;
+        }
+
+        /* Кнопка копирования (Правая часть) */
+        .copy-btn {
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: var(--text-secondary);
+            border: none;
+            background: none;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+        .copy-btn:hover { opacity: 1; color: var(--primary-color); }
+        .copy-btn svg { width: 16px; height: 16px; fill: currentColor; }
+
+        /* Стиль "призрака" при перетаскивании (SortableJS) */
+        .sortable-ghost {
+            opacity: 0.4;
+            background: rgba(59, 130, 246, 0.2);
+        }
+        .sortable-drag {
+            cursor: grabbing;
+        }
+
         .loading { color: var(--text-secondary); margin-top: 20%; }
         .error { color: #ff453a; margin-top: 20%; }
+
+        /* Уведомление о копировании */
+        .toast {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255,255,255,0.9);
+            color: #000;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+            z-index: 100;
+        }
+        .toast.show { opacity: 1; }
     </style>
 </head>
 <body>
@@ -298,7 +358,6 @@
             <div class="track-title" id="track-title">Loading...</div>
         </div>
         <a id="download-btn" class="btn-download" href="#" target="_blank" download>
-            <!-- SVG Download Icon -->
             <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
         </a>
     </div>
@@ -316,14 +375,13 @@
         <span id="dur-time">0:00</span>
     </div>
 
-    <!-- Управление (SVG иконки) -->
+    <!-- Управление -->
     <div class="controls">
         <button class="btn-control btn-skip" onclick="musicApp.prevTrack()">
             <svg viewBox="0 0 24 24"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5"></line></svg>
         </button>
         
         <button class="btn-control btn-play" onclick="musicApp.togglePlay()" id="play-btn">
-            <!-- Play icon по умолчанию -->
             <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
         </button>
         
@@ -337,17 +395,20 @@
         <div class="volume-icon">
             <svg viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon></svg>
         </div>
-        <!-- input range стилизован в CSS, JS обновляет фон -->
         <input type="range" min="0" max="1" step="0.01" value="1" class="volume-slider" id="volume-slider">
         <div class="volume-icon">
             <svg viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
         </div>
     </div>
 
+    <!-- Плейлист -->
     <div class="playlist" id="playlist-container">
-        <!-- Список треков -->
+        <!-- Список треков генерируется JS -->
     </div>
 </div>
+
+<!-- Всплывающее сообщение -->
+<div id="toast" class="toast">Название скопировано</div>
 
 <div id="loading-msg" class="loading">Загрузка музыки...</div>
 <div id="error-msg" class="error" style="display:none;"></div>
@@ -361,6 +422,7 @@
         audio: null,
         isPlaying: false,
         isDragging: false,
+        sortableInstance: null,
 
         init: function() {
             this.audio = document.getElementById('audio-element');
@@ -369,23 +431,24 @@
             const userId = parts[2];
             const messageId = parts[3];
 
-            // Если ссылок нет, для теста (удалите в продакшене или раскомментируйте showError)
+            // MOCK DATA для проверки (удалить, если есть реальный API)
             if (!userId || !messageId) {
-                 // this.showError("Неверная ссылка"); 
-                 // return;
-                 // MOCK DATA FOR PREVIEW:
-                 this.tracks = [{title: "Demo Track", url: "#", cover: "https://via.placeholder.com/600x400"}];
+                 this.tracks = [
+                     {title: "Song One - Artist A", url: "#", cover: ""},
+                     {title: "Song Two - Artist B", url: "#", cover: ""},
+                     {title: "Song Three - Artist C", url: "#", cover: ""},
+                     {title: "Song Four - Artist D", url: "#", cover: ""}
+                 ];
                  this.renderPlaylist();
                  this.loadTrack(0, false);
                  document.getElementById('loading-msg').style.display = 'none';
                  document.getElementById('player-ui').style.display = 'block';
-                 // END MOCK
             } else {
                  this.loadData(userId, messageId);
             }
 
             this.setupEvents();
-            this.updateVolumeVisuals(1); // Инициализация цвета громкости
+            this.updateVolumeVisuals(1);
         },
 
         loadData: async function(userId, messageId) {
@@ -427,8 +490,32 @@
             document.getElementById('track-title').textContent = track.title;
             this.audio.src = track.url;
             
+            // Логика скачивания
             const downloadBtn = document.getElementById('download-btn');
-            downloadBtn.href = track.url;
+            const newDownloadBtn = downloadBtn.cloneNode(true);
+            downloadBtn.parentNode.replaceChild(newDownloadBtn, downloadBtn);
+            
+            newDownloadBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                let fileName = track.original_name || track.filename || `${track.title}.mp3`;
+                fileName = fileName.replace(/[\\/:*?"<>|]/g, '');
+                if (!fileName.endsWith('.mp3')) fileName += '.mp3';
+
+                try {
+                    const response = await fetch(track.url);
+                    const blob = await response.blob();
+                    const blobUrl = window.URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = blobUrl;
+                    link.download = fileName;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    window.URL.revokeObjectURL(blobUrl);
+                } catch (err) {
+                    window.open(track.url, '_blank');
+                }
+            });
             
             if(track.cover) this.setCover(track.cover);
             
@@ -477,31 +564,105 @@
 
         updatePlayBtn: function() {
             const btn = document.getElementById('play-btn');
-            // SVG для паузы и воспроизведения
             const playIcon = `<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
             const pauseIcon = `<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>`;
-            
             btn.innerHTML = this.isPlaying ? pauseIcon : playIcon;
         },
 
+        // --- ОБНОВЛЕННАЯ ФУНКЦИЯ ОТРИСОВКИ ПЛЕЙЛИСТА ---
         renderPlaylist: function() {
             const container = document.getElementById('playlist-container');
             container.innerHTML = '';
+            
             this.tracks.forEach((track, idx) => {
                 const div = document.createElement('div');
                 div.className = 'playlist-item';
-                div.innerHTML = `<span style="margin-right:10px; opacity:0.5; font-size:12px;">${idx + 1}</span> ${track.title}`;
-                div.onclick = () => musicApp.loadTrack(idx);
+                div.setAttribute('data-index', idx); // Важно для Sortable
+
+                // 1. Ручка перетаскивания (слева)
+                const handle = document.createElement('div');
+                handle.className = 'drag-handle';
+                // Иконка "гамбургер"
+                handle.innerHTML = `<svg viewBox="0 0 24 24"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>`;
+                
+                // 2. Название трека (центр)
+                const name = document.createElement('div');
+                name.className = 'track-name';
+                name.textContent = track.title;
+                name.onclick = () => musicApp.loadTrack(musicApp.tracks.indexOf(track)); // Динамический поиск индекса
+
+                // 3. Кнопка копирования (справа)
+                const copyBtn = document.createElement('button');
+                copyBtn.className = 'copy-btn';
+                // Иконка копирования
+                copyBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+                copyBtn.onclick = (e) => {
+                    e.stopPropagation(); // Чтобы не включить трек при клике на копирование
+                    musicApp.copyToClipboard(track.title);
+                };
+
+                div.appendChild(handle);
+                div.appendChild(name);
+                div.appendChild(copyBtn);
+                
                 container.appendChild(div);
             });
+
+            this.initSortable();
+            this.highlightPlaylist();
+        },
+
+        // --- ИНИЦИАЛИЗАЦИЯ DRAG & DROP ---
+        initSortable: function() {
+            const el = document.getElementById('playlist-container');
+            if (this.sortableInstance) this.sortableInstance.destroy(); // Очистка старого
+
+            this.sortableInstance = new Sortable(el, {
+                handle: '.drag-handle', // Тянем только за ручку
+                animation: 150,
+                ghostClass: 'sortable-ghost',
+                delay: 0, // Мгновенная реакция
+                onEnd: (evt) => {
+                    // Логика пересчета массива после переноса
+                    const oldIndex = evt.oldIndex;
+                    const newIndex = evt.newIndex;
+                    
+                    if (oldIndex === newIndex) return;
+
+                    // 1. Сохраняем ссылку на текущую играющую песню
+                    const currentTrack = this.tracks[this.currentindex];
+
+                    // 2. Меняем массив
+                    const movedItem = this.tracks.splice(oldIndex, 1)[0];
+                    this.tracks.splice(newIndex, 0, movedItem);
+
+                    // 3. Находим, где теперь текущая песня, и обновляем индекс
+                    this.currentindex = this.tracks.indexOf(currentTrack);
+                    
+                    // Обновляем визуально (чтобы индексы атрибутов пересчитались, если нужно, но Sortable уже поменял DOM)
+                    // Для чистоты данных можно перерендерить, но это прервет анимацию.
+                    // Визуально DOM уже правильный, массив синхронизирован.
+                }
+            });
+        },
+
+        copyToClipboard: function(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                const toast = document.getElementById('toast');
+                toast.classList.add('show');
+                setTimeout(() => toast.classList.remove('show'), 2000);
+            }).catch(err => console.error('Copy failed', err));
         },
 
         highlightPlaylist: function() {
             const items = document.querySelectorAll('.playlist-item');
-            items.forEach((item, idx) => {
-                if (idx === this.currentindex) {
+            // Так как мы перетаскиваем элементы, порядок в DOM может отличаться от индекса,
+            // поэтому надежнее перебирать по соответствию трека
+            items.forEach((item) => {
+                const nameDiv = item.querySelector('.track-name');
+                if (nameDiv && nameDiv.textContent === this.tracks[this.currentindex]?.title) {
                     item.classList.add('active');
-                    item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    // Не скроллим автоматически, если пользователь что-то драгает
                 } else {
                     item.classList.remove('active');
                 }
@@ -513,11 +674,9 @@
             document.getElementById('progress-knob').style.left = `${percent}%`;
         },
 
-        // Визуальное обновление полоски громкости (закрашивание)
         updateVolumeVisuals: function(val) {
             const percentage = val * 100;
             const slider = document.getElementById('volume-slider');
-            // Меняем размер фона (градиента), чтобы он выглядел как прогресс бар
             slider.style.backgroundSize = `${percentage}% 100%`;
         },
 
