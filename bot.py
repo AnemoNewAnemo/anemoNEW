@@ -14251,7 +14251,7 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
 
 
 
-                button_text = f"|◄⠀▐▐ ⠀►| {music_name}|"
+                button_text = f"◄⠀▐▐ ⠀►  |  {music_name}"
 
                 music_reply_markup = InlineKeyboardMarkup([
                     [
