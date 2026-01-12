@@ -2323,26 +2323,82 @@ GAME_ROLES = {
 
 chat_words = {}
 
+
+def prepare_gemini_context(user_id, current_query):
+    """
+    Преобразует строковую историю из user_contexts в список сообщений (JSON-структуру),
+    понятную для Gemini API (роли 'user' и 'model').
+    """
+    formatted_history = []
+
+    # 1. Обработка истории из памяти
+    if user_id in user_contexts:
+        # Получаем список строк из deque
+        raw_history = list(user_contexts[user_id])
+        
+        for entry in raw_history:
+            try:
+                # Ожидаемый формат: "YYYY-MM-DD HH:MM:SS | message_type: текст сообщения"
+                # Разделяем по первому разделителю " | "
+                parts = entry.split(" | ", 1)
+                if len(parts) < 2:
+                    continue
+                
+                # Разделяем тип сообщения и сам текст
+                type_and_text = parts[1].split(": ", 1)
+                if len(type_and_text) < 2:
+                    continue
+                
+                msg_type = type_and_text[0].strip()
+                content_text = type_and_text[1].strip()
+                
+                # Определяем роль (user или model) на основе вашего типа сообщения
+                role = "user"
+                if msg_type in ["bot_response", "bot_text_response", "bot_image_response"]:
+                    role = "model"
+                elif msg_type in ["user_send_text", "user_reply_text", "user_reply_image", "user_reply_video", "user_reply_audio", "user_reply_GIF", "user_reply_document", "user_send_image"]:
+                    role = "user"
+                
+                # Добавляем в список
+                formatted_history.append({
+                    "role": role,
+                    "parts": [{"text": content_text}]
+                })
+            except Exception as e:
+                logging.error(f"Ошибка парсинга строки истории: {entry}, ошибка: {e}")
+                continue
+
+    # 2. Добавляем текущий запрос пользователя в конец (это самое важное!)
+    if current_query:
+        formatted_history.append({
+            "role": "user",
+            "parts": [{"text": current_query}]
+        })
+
+    # Если история пуста и запроса нет (на случай сбоев), ставим заглушку, чтобы API не ругался
+    if not formatted_history:
+        formatted_history.append({"role": "user", "parts": [{"text": "Привет"}]})
+
+    return formatted_history
+
+
+
 async def generate_gemini_response(user_id, query=None, use_context=True):
-    # Проверяем, выбрана ли роль по умолчанию или пользовательская роль
+    # --- БЛОК 1: Определение роли (как было у вас) ---
     user_roles_data = user_roles.get(user_id, {})
     selected_role = None
 
-    # Проверяем наличие роли по умолчанию
     default_role_key = user_roles_data.get("default_role")
     if default_role_key and default_role_key in DEFAULT_ROLES:
         selected_role = DEFAULT_ROLES[default_role_key]["full_description"]
 
-    # Если у пользователя есть игровая роль, она имеет приоритет над дефолтной
     game_role_key = user_roles_data.get("game_role")
     if game_role_key and game_role_key in GAME_ROLES:
         selected_role = GAME_ROLES[game_role_key]["full_description"]
 
-    # Если пользователь выбрал новую роль, она имеет наивысший приоритет
     if "selected_role" in user_roles_data:
         selected_role = user_roles_data["selected_role"]
 
-    # Если нет ни роли по умолчанию, ни пользовательской роли
     if not selected_role:
         selected_role = "Ты обычный вариант модели Gemini реализованный в виде телеграм бота, помогаешь пользователю выполнять различные задачи и выполняешь его поручения. В боте есть кнопка выбор роли, сообщи об этом пользователю если он поинтересуется. Так же ты умеешь рисовать и дорисовывать изображения. Для того чтобы ты что-то нарисовал, тебе нужно прислать сообщение которое начинается со слово \"Нарисуй\". Чтобы ты изменил, обработал или дорисовал изображение, тебе нужно отправить исходное сообщение с подписью начинающейся с \"Дорисуй\", так же сообщи об этом пользователю если он будет спрашивать."
 
@@ -2364,99 +2420,81 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
 
         selected_role = GAME_ROLES[game_role_key]["full_description"].format(word=word)
 
-    # Формируем system_instruction
-    relevant_context = await get_relevant_context(user_id) if use_context else ""
+    # --- БЛОК 2: Подготовка данных ---
+    
+    # 1. Формируем чистую системную инструкцию (без мусора про message_type)
     system_instruction = (
-        f"Ты чат-бот играющий роль: {selected_role}. Эту роль задал тебе пользователь и ты должен строго её придерживаться. "
-        f"Конструкции вроде bot_response или user_send_text служат только для структурирования истории диалога, "
-        f"ни в коем случае не используй их в своих ответах"
+        f"Твоя роль: {selected_role}. "
+        f"Ты должен строго придерживаться этой роли. "
+        f"Отвечай только на последнее сообщение пользователя, используя историю переписки как контекст."
     )
-
     logging.info(f"system_instruction: {system_instruction}")
 
-    # Исключаем дубли текущего сообщения в relevant_context
-    if query and relevant_context:
-        relevant_context = relevant_context.replace(f"user_message: {query}", "").strip()
+    # 2. Используем helper-функцию для подготовки содержимого
+    # Если use_context=False, передаем user_id=None, чтобы функция вернула только текущий запрос
+    messages_payload = prepare_gemini_context(user_id if use_context else None, query)
 
-    # Формируем контекст
-    context = (
-        f"Текущий запрос:\n{query}"
-        f"Сосредоточь особенное внимание именно на текущем запросе, контекст используй только по необходимости, когда это уместно. "
-        f"Предыдущий контекст вашего диалога: {relevant_context if relevant_context else 'отсутствует.'}"
-    )
-    logger.info(f"context {context}")
-
+    # Инициализация инструментов
     google_search_tool = Tool(google_search=GoogleSearch())
 
-    # Сначала основная модель, потом запасные
-    models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS + GEMMA_MODELS
+    # --- БЛОК 3: Конфигурация генерации (ИСПРАВЛЕНА ТЕМПЕРАТУРА) ---
+    generation_config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        temperature=1.0,   # <-- Снижено с 1.4. Это уберет галлюцинации и дублирование текста.
+        top_p=0.95,
+        top_k=30,
+        tools=[google_search_tool],
+        safety_settings=[
+            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+        ]
+    )
 
-
-    # Сначала пробуем основную модель на всех ключах
+    # --- БЛОК 4: Запросы к API ---
+    
+    # Попытка 1: Перебор ключей на основной модели
     for api_key in key_manager.get_keys_to_try():
         try:
             client = genai.Client(api_key=api_key)
+            
+            # ВАЖНО: передаем messages_payload в contents
             response = await client.aio.models.generate_content(
                 model=PRIMARY_MODEL,
-                contents=context,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=1.4,
-                    top_p=0.95,
-                    top_k=25,
-                    tools=[google_search_tool],
-                    safety_settings=[
-                        types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-                        types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-                        types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-                        types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
-                    ]
-                )
+                contents=messages_payload, 
+                config=generation_config
             )
-
-
 
             if response.candidates and response.candidates[0].content.parts:
                 response_text = "".join(
                     part.text for part in response.candidates[0].content.parts
                     if part.text and not getattr(part, "thought", False)
                 ).strip()
+                
                 logging.info(f"response_text: {response_text}")
-                # Запоминаем успешный ключ
                 await key_manager.set_successful_key(api_key)
-
-                return response_text if response_text else "Извините, я не могу ответить на этот запрос."
+                return response_text if response_text else "Извините, получен пустой ответ."
             else:
-                logging.warning("Ответ от модели не содержит текстового компонента.")
+                logging.warning("Ответ от модели не содержит текста.")
 
         except Exception as e:
             logging.error(f"Ошибка при генерации (модель={PRIMARY_MODEL}, ключ={api_key}): {e}")
-            continue  # Пробуем следующий ключ
+            continue
 
-    # Если все ключи сломаны → перебираем модели на одном ключе (последнем)
+    # Попытка 2: Перебор моделей на последнем ключе (Fallback)
     last_key = key_manager.get_keys_to_try()[-1]
-    for model_name in [PRIMARY_MODEL] + FALLBACK_MODELS + GEMMA_MODELS:
+    models_to_try = [PRIMARY_MODEL] + FALLBACK_MODELS + GEMMA_MODELS
+
+    for model_name in models_to_try:
         try:
             client = genai.Client(api_key=last_key)
+            
             response = await client.aio.models.generate_content(
                 model=model_name,
-                contents=context,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=1.4,
-                    top_p=0.95,
-                    top_k=25,
-                    tools=[google_search_tool],
-                    safety_settings=[
-                        types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
-                        types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
-                        types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
-                        types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
-                    ]
-                )
+                contents=messages_payload,
+                config=generation_config
             )
-
-            logging.info(f"response (fallback model): {response}")
 
             if response.candidates and response.candidates[0].content.parts:
                 response_text = "".join(
@@ -2464,19 +2502,13 @@ async def generate_gemini_response(user_id, query=None, use_context=True):
                     if part.text and not getattr(part, "thought", False)
                 ).strip()
 
-                # Запоминаем успешный ключ
                 await key_manager.set_successful_key(last_key)
-
-                return response_text if response_text else "Извините, я не могу ответить на этот запрос."
-            else:
-                logging.warning("Ответ от модели не содержит текстового компонента.")
-
+                return response_text if response_text else "Извините, получен пустой ответ."
         except Exception as e:
-            logging.error(f"Ошибка при генерации (модель={model_name}, ключ={last_key}): {e}")
+            logging.error(f"Ошибка fallback (модель={model_name}): {e}")
             continue
 
-    return "К сожалению, ни одна модель не смогла обработать запрос. Попробуйте сбросить ваш диалог через кнопку меню, возможно что-то в нём блокируется цензурой. Либо попытайтесь позже позже."
-
+    return "К сожалению, ни одна модель не смогла обработать запрос. Попробуйте сбросить диалог или повторить позже."
 
 def limit_response_length(text):
     """Обрезает текст, если он слишком длинный для отправки в Telegram."""
