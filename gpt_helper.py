@@ -215,8 +215,10 @@ def delete_media(user_id, media_id):
         logging.error(f"Ошибка удаления медиа: {e}")
         return False
 
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
-TELEGRAM_BOT_TOKEN = "7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI"
+if not TELEGRAM_BOT_TOKEN:
+    raise RuntimeError("TELEGRAM_BOT_TOKEN не задан в переменных окружения")
 
 def upload_file_to_telegram(file_storage, chat_id):
     """
