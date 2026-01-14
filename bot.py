@@ -111,7 +111,10 @@ import time
 import uuid
 from io import BytesIO
 # Укажите ваши токены и ключ для imgbb
-TELEGRAM_BOT_TOKEN = '7538468672:AAEOEFS7V0z0uDzZkeGNQKYsDGlzdOziAZI'
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+
+if not TELEGRAM_BOT_TOKEN:
+    raise RuntimeError("TELEGRAM_BOT_TOKEN не задан в переменных окружения")
 TELEGRAPH_TOKEN = 'c244b32be4b76eb082d690914944da14238249bbdd55f6ffd349b9e000c1'
 IMGBB_API_KEY = '0f0f15b17c990ae3d20936ec8e614493'
 GROUP_CHAT_ID = -1002233281756
