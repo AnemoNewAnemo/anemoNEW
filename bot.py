@@ -1267,33 +1267,30 @@ import urllib.parse
 async def find_anime_source(update: Update, context: CallbackContext, image_path: str, reply_markup: InlineKeyboardMarkup) -> bool:
     """
     Анализирует изображение через trace.moe по ЛОКАЛЬНОМУ ПУТИ.
-    Возвращает True — если найдено (similarity >= 86%), False — иначе.
+    Возвращает True — если найдено (similarity >= 92%), False — иначе.
     """
-    # Если вызывается из find_image_source (через query)
-    if update.callback_query:
-        # Для query нужно использовать edit_message_text, а не reply_text
-        temp_msg = await update.callback_query.message.edit_text("Ищу источник... 🔍")
-        
-        # NOTE: В вашем коде temp_msg не удаляется в случае нахождения аниме, 
-        # но это можно сделать в find_image_source. Здесь оставляем как есть.
-        delete_temp_msg = lambda: temp_msg.delete()
 
-    # Если вызывается из start (через message)
+    # Определяем источник вызова
+    if update.callback_query:
+        temp_msg = await update.callback_query.message.edit_text("Ищу источник... 🔍")
+        chat_id = update.callback_query.message.chat_id
+
     elif update.message:
         temp_msg = await update.message.reply_text("Ищу источник... 🔍")
-        delete_temp_msg = lambda: temp_msg.delete()
-        
+        chat_id = update.message.chat_id
+
     else:
-        return False # Некорректный вызов
+        return False
 
     try:
-        # === trace.moe поиск — используем image_path, который нам передали ===
+        # === trace.moe ===
         with open(image_path, "rb") as f:
             resp = requests.post(
                 "https://api.trace.moe/search?anilistInfo&cutBorders",
                 data=f,
                 headers={"Content-Type": "image/jpeg"}
             )
+
         data = resp.json()
 
         if "result" not in data or not data["result"]:
@@ -1303,18 +1300,16 @@ async def find_anime_source(update: Update, context: CallbackContext, image_path
         result = data["result"][0]
         similarity = result.get("similarity", 0) * 100
 
-        # Если точность низкая
-        if similarity < 86:
+        if similarity < 92:
             await temp_msg.edit_text(
                 f"🤔 Найдено, но точность низкая: {similarity:.2f}%\n"
                 f"Попробуйте кадр получше!"
             )
             return False
 
-        # Удаляем "ищу..."
         await temp_msg.delete()
 
-        # === Доп. запрос как во втором боте — quota ===
+        # === quota ===
         try:
             me = requests.get("https://api.trace.moe/me").json()
             quota = int(me.get("quota", 0))
@@ -1323,25 +1318,32 @@ async def find_anime_source(update: Update, context: CallbackContext, image_path
         except:
             left_requests = None
 
-        # ==== Данные AniList ====
+        # === AniList ===
         anilist = result.get("anilist", {})
+
         title = (
             anilist.get("title", {}).get("english")
             or anilist.get("title", {}).get("romaji")
             or anilist.get("title", {}).get("native")
         )
 
-        genres = anilist.get("genres")
+        genres = anilist.get("genres") or []
         genres_str = ", ".join(genres) if genres else None
+        genres_lower = {g.lower() for g in genres}
+
+        # 🔥 СПОЙЛЕР ЛОГИКА
+        is_hentai = "hentai" in genres_lower
+
         fmt = anilist.get("format")
 
         studios = anilist.get("studios", {}).get("edges", [])
         main_studios = [s["node"]["name"] for s in studios if s.get("isMain")]
         studio_str = ", ".join(main_studios) if main_studios else None
 
-        # Годы выхода
+        # Годы
         start_date = anilist.get("startDate")
-        end_date   = anilist.get("endDate")
+        end_date = anilist.get("endDate")
+
         if start_date and start_date.get("year"):
             years_str = (
                 f"{start_date['year']}–{end_date['year']}"
@@ -1354,22 +1356,31 @@ async def find_anime_source(update: Update, context: CallbackContext, image_path
         synonyms = anilist.get("synonyms", [])
         synonyms_str = ", ".join(synonyms[:3]) if synonyms else None
 
-        # Эпизод и время фрагмента
-        episode         = result.get("episode")
-        total_episodes  = anilist.get("episodes")
-        t_from, t_to    = result.get("from"), result.get("to")
+        episode = result.get("episode")
+        total_episodes = anilist.get("episodes")
 
-        def fmt_time(t): return f"{int(t//60):02d}:{int(t%60):02d}"
-        time_str = f"{fmt_time(t_from)} — {fmt_time(t_to)}" if t_from and t_to else None
+        t_from = result.get("from")
+        t_to = result.get("to")
 
-        # Видео
+        def fmt_time(t):
+            return f"{int(t//60):02d}:{int(t%60):02d}"
+
+        time_str = (
+            f"{fmt_time(t_from)} — {fmt_time(t_to)}"
+            if t_from is not None and t_to is not None
+            else None
+        )
+
         video_url = result.get("video")
-        if video_url: video_url += "?size=l"
+        if video_url:
+            video_url += "?size=l"
 
-        def c(x): return f"<code>{html.escape(str(x))}</code>" if x else None
+        def c(x):
+            return f"<code>{html.escape(str(x))}</code>" if x else None
 
-        # === Формирование сообщения ===
+        # === caption ===
         lines = ["<b>Найден источник (Аниме):</b>"]
+
         if title:        lines.append(f"Название: {c(title)}")
         if genres_str:   lines.append(f"Жанр: {c(genres_str)}")
         if fmt:          lines.append(f"Формат: {c(fmt)}")
@@ -1379,35 +1390,37 @@ async def find_anime_source(update: Update, context: CallbackContext, image_path
 
         if episode:
             ep = f"Эпизод: {c(episode)}"
-            if total_episodes: ep += f" из {c(total_episodes)}"
+            if total_episodes:
+                ep += f" из {c(total_episodes)}"
             lines.append(ep)
 
-        if time_str:     lines.append(f"Фрагмент: {c(time_str)}")
+        if time_str:
+            lines.append(f"Фрагмент: {c(time_str)}")
+
         lines.append(f"Точность: <b>{similarity:.2f}%</b>")
 
-        # === Новое — как во втором боте ===
         if left_requests is not None:
             lines.append(f"\nОсталось запросов в этом месяце: {c(left_requests)}")
 
         caption = "\n".join(lines)
 
-        # === Отправка результата ===
+        # === отправка ===
         if video_url:
             await context.bot.send_video(
-                chat_id=temp_msg.chat_id, # Используем chat_id из temp_msg
+                chat_id=chat_id,
                 video=video_url,
                 caption=caption,
                 parse_mode="HTML",
-                reply_markup=reply_markup
+                reply_markup=reply_markup,
+                has_spoiler=is_hentai  # ⭐ ключевая строка
             )
         else:
-            await context.bot.send_message( # Используем send_message вместо reply_text, т.к. temp_msg уже удален
-                chat_id=temp_msg.chat_id,
-                text=caption, 
-                parse_mode="HTML", 
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=caption,
+                parse_mode="HTML",
                 reply_markup=reply_markup
             )
-
 
         return True
 
@@ -1415,9 +1428,6 @@ async def find_anime_source(update: Update, context: CallbackContext, image_path
         logger.error(f"trace.moe error: {e}")
         await temp_msg.edit_text("❗ Ошибка анализа. Попробуйте ещё раз позже.")
         return False
-        
-    # NOTE: Логику удаления файла image_path переносим в вызывающие функции
-
 
 
 
