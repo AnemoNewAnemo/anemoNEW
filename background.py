@@ -15,39 +15,37 @@ if not TELEGRAM_BOT_TOKEN:
 import random
 import requests
 from flask import Response, stream_with_context
-# Константа канала (из твоего запроса)
+import random
+import hashlib
+
+DUMP_CHAT_ID = "5129048838"  
 CHANNEL_ID = "-1001479526905" 
+
 MAX_POST_ID = 8504
 
-# --- ДОБАВЬТЕ ЭТИ ФУНКЦИИ В НАЧАЛО ФАЙЛА ИЛИ В HELPER ---
+# Простой кэш в оперативной памяти: {post_id: "url_картинки"}
+# Сбрасывается при перезагрузке сервера, но это не страшно
+IMAGE_CACHE = {} 
 
-def get_real_image_url_from_channel(channel_id, message_id):
+def get_image_from_telegram(post_id):
     """
-    Пытается получить URL картинки из сообщения в канале.
-    Т.к. getMessage нет, мы используем трюк: 
-    Мы (бот) пытаемся переслать сообщение в чат к самому себе (или просто получить его, если библиотека позволяет).
-    Но самый надежный способ через HTTP API без базы - это forwardMessage.
+    1. Проверяет кэш.
+    2. Если нет в кэше, пересылает пост в Dump Chat.
+    3. Извлекает file_id и получает ссылку.
     """
-    # 1. Пытаемся скопировать/переслать сообщение, чтобы получить его содержимое
-    # Мы пересылаем сообщение в "никуда" (в чат с самим ботом нельзя, нужен chat_id).
-    # Лучше всего использовать ID админа или лог-канала.
-    # Если бот админ канала, он может видеть сообщения, но API не дает метода getMessage.
-    # ЕДИНСТВЕННЫЙ способ получить file_id старого поста без БД - переслать его.
+    post_id = str(post_id)
     
-    # ВАЖНО: Замените YOUR_LOG_CHAT_ID на ваш ID (личка с ботом) или ID технического канала.
-    # Бот должен быть там админом или участником.
-    LOG_CHAT_ID = os.environ.get("LOG_CHAT_ID") # Или жестко пропишите ID цифрами
-    
-    if not LOG_CHAT_ID:
-        # Если нет лог-чата, возвращаем заглушку, чтобы не крашилось
-        return None 
+    # 1. Проверка кэша (чтобы не спамить API)
+    if post_id in IMAGE_CACHE:
+        return IMAGE_CACHE[post_id]
 
+    # 2. Формируем запрос на Forward
     forward_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/forwardMessage"
     params = {
-        "chat_id": LOG_CHAT_ID,
-        "from_chat_id": channel_id,
-        "message_id": message_id,
-        "disable_notification": True
+        "chat_id": DUMP_CHAT_ID,      # Куда пересылаем (скрытый чат)
+        "from_chat_id": CHANNEL_ID,   # Откуда (основной канал)
+        "message_id": post_id,
+        "disable_notification": True  # Без звука
     }
     
     try:
@@ -55,30 +53,104 @@ def get_real_image_url_from_channel(channel_id, message_id):
         data = r.json()
         
         if not data.get("ok"):
-            # Сообщение удалено или это не сообщение
+            # Пост удален или не существует
+            IMAGE_CACHE[post_id] = None # Запоминаем, что поста нет
             return None
             
         result = data["result"]
-        
-        # Проверяем, есть ли фото
         file_id = None
+        
+        # 3. Ищем картинку в сообщении
         if "photo" in result:
-            file_id = result["photo"][-1]["file_id"] # Берем самое большое качество
+            # Берем последнее фото (самое высокое качество)
+            file_id = result["photo"][-1]["file_id"]
         elif "document" in result and result["document"]["mime_type"].startswith("image"):
+            # Если отправлено как файл (без сжатия)
             file_id = result["document"]["file_id"]
+        elif "video" in result:
+             # Можно брать превью видео
+             file_id = result["video"]["thumb"]["file_id"]
+
+        if not file_id:
+            IMAGE_CACHE[post_id] = None # Это текст, картинки нет
+            return None
+
+        # 4. Получаем путь к файлу (getFile)
+        path_r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}")
+        path_data = path_r.json()
+        
+        if path_data.get("ok"):
+            file_path = path_data["result"]["file_path"]
+            # Ссылка на скачивание (живет 1 час)
+            full_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
             
-        if file_id:
-            # Получаем file_path
-            path_r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}")
-            path_data = path_r.json()
-            if path_data.get("ok"):
-                file_path = path_data["result"]["file_path"]
-                return f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
-                
+            # Сохраняем в кэш
+            IMAGE_CACHE[post_id] = full_url
+            return full_url
+            
     except Exception as e:
-        logging.error(f"Error resolving image: {e}")
+        logging.error(f"Telegram Forward Error: {e}")
         
     return None
+
+
+@app.route('/api/anemone/resolve_image')
+def api_resolve_image():
+    """
+    Эндпоинт, который вызывает JS для каждого квадрата.
+    """
+    post_id = request.args.get('post_id')
+    
+    # Пытаемся получить реальную ссылку
+    tg_url = get_image_from_telegram(post_id)
+    
+    if tg_url:
+        # ВАЖНО: Мы отдаем ссылку на НАШ ПРОКСИ, а не на Telegram.
+        # Потому что Telegram не дает заголовки CORS, и WebGL (Three.js) выдаст ошибку.
+        from urllib.parse import quote
+        encoded = quote(tg_url)
+        return jsonify({"url": f"/api/proxy_image?url={encoded}"})
+    
+    # Если поста нет или в нем нет картинки -> возвращаем случайную заглушку
+    # (чтобы в 3D мире не было дырок)
+    return jsonify({"url": f"https://picsum.photos/seed/{post_id}/400/600"})
+
+
+@app.route('/api/proxy_image')
+def proxy_image():
+    """
+    Прокси-сервер. Скачивает картинку у Telegram и отдает браузеру 
+    с разрешением CORS (Access-Control-Allow-Origin).
+    """
+    url = request.args.get('url')
+    if not url: return "No URL", 400
+    
+    try:
+        # Скачиваем потоком (stream=True), чтобы не грузить оперативку сервера
+        req = requests.get(url, stream=True, timeout=10)
+        
+        # Фильтруем заголовки (hop-by-hop headers нельзя передавать)
+        excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
+        headers = [(name, value) for (name, value) in req.raw.headers.items()
+                   if name.lower() not in excluded_headers]
+        
+        # Разрешаем доступ отовсюду
+        headers.append(('Access-Control-Allow-Origin', '*'))
+        headers.append(('Cache-Control', 'public, max-age=3600')) # Кэш браузера на час
+
+        return Response(stream_with_context(req.iter_content(chunk_size=1024)),
+                        status=req.status_code,
+                        headers=headers,
+                        content_type=req.headers.get('content-type'))
+    except Exception as e:
+        return str(e), 500
+
+
+import random
+import requests
+from flask import Response, stream_with_context
+
+# --- ДОБАВЬТЕ ЭТИ ФУНКЦИИ В НАЧАЛО ФАЙЛА ИЛИ В HELPER ---
 
 # --- ИСПРАВЛЕННЫЕ ЭНДПОИНТЫ ---
 
@@ -124,56 +196,11 @@ def api_get_anemone_chunk():
         "items": planes
     })
 
-@app.route('/api/anemone/resolve_image')
-def api_resolve_image():
-    post_id = request.args.get('post_id')
-    if not post_id:
-        return jsonify({"url": "https://via.placeholder.com/300"})
 
-    # 1. Пытаемся достать реальную ссылку через Telegram
-    # ВНИМАНИЕ: Это медленная операция (2 запроса к API). 
-    # В реальном проекте тут нужен кэш (Redis или словарь в памяти).
-    
-    img_url = get_real_image_url_from_channel(CHANNEL_ID, post_id)
-    
-    if img_url:
-        # ВАЖНО: Мы не отдаем прямую ссылку Telegram, потому что Three.js заблокирует её (CORS).
-        # Мы отдаем ссылку на НАШ прокси.
-        # Кодируем URL, чтобы передать параметром
-        from urllib.parse import quote
-        encoded_url = quote(img_url)
-        # Возвращаем ссылку на наш собственный прокси
-        return jsonify({"url": f"/api/proxy_image?url={encoded_url}"})
-    
-    # Если картинки нет в посте или ошибка - отдаем красивую заглушку
-    # Используем picsum, так как он поддерживает CORS
-    return jsonify({"url": f"https://picsum.photos/seed/{post_id}/400/600"})
 
-# --- ПРОКСИ ДЛЯ КАРТИНОК (РЕШЕНИЕ ПРОБЛЕМЫ CORS) ---
-@app.route('/api/proxy_image')
-def proxy_image():
-    url = request.args.get('url')
-    if not url:
-        return "No URL", 400
-        
-    try:
-        # Скачиваем картинку с Telegram/Интернета сервером
-        req = requests.get(url, stream=True)
-        
-        # Отдаем её клиенту с правильными заголовками
-        excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
-        headers = [(name, value) for (name, value) in req.raw.headers.items()
-                   if name.lower() not in excluded_headers]
-        
-        # Разрешаем CORS
-        headers.append(('Access-Control-Allow-Origin', '*'))
 
-        return Response(stream_with_context(req.iter_content(chunk_size=1024)),
-                        status=req.status_code,
-                        headers=headers,
-                        content_type=req.headers.get('content-type'))
-    except Exception as e:
-        return str(e), 500
+
+
 
 
 
