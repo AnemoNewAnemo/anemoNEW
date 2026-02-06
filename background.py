@@ -28,85 +28,21 @@ MAX_POST_ID = 8504
 IMAGE_CACHE = {} 
 from datetime import datetime
 
-
-# Папка для кэша внутри static (чтобы Flask отдавал файлы сам)
-CACHE_DIR = os.path.join(app.static_folder, 'cache')
-if not os.path.exists(CACHE_DIR):
-    os.makedirs(CACHE_DIR)
-# Структура: {"channel_postid": {metadata}}
-META_CACHE = {}
-
-def process_and_cache_image(file_id):
+# --- ЗАМЕНИТЬ ФУНКЦИЮ get_image_from_telegram ---
+def get_image_from_telegram(post_id, custom_channel_id=None):
     """
-    1. Проверяет, есть ли файл на диске.
-    2. Если нет - качает, сжимает, сохраняет.
-    3. Возвращает относительный путь для веба.
+    Возвращает данные картинки. Поддерживает кастомный канал.
     """
-    # Генерируем имя файла на основе file_id (чтобы не было дублей)
-    # Можно использовать file_unique_id, но file_id тоже пойдет для короткого кэша
-    filename = f"{file_id}.jpg"
-    local_path = os.path.join(CACHE_DIR, filename)
-    web_path = f"/static/cache/{filename}"
-
-    # 1. Если файл уже есть и он не пустой - отдаем его
-    if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
-        return web_path, True
-
-    # 2. Если файла нет, получаем путь от Telegram
-    try:
-        path_r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}", timeout=5)
-        path_data = path_r.json()
-        
-        if not path_data.get("ok"):
-            return None, False
-            
-        remote_file_path = path_data["result"]["file_path"]
-        download_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{remote_file_path}"
-        
-        # 3. Скачиваем байты
-        img_req = requests.get(download_url, timeout=10)
-        if img_req.status_code != 200:
-            return None, False
-
-        # 4. Обработка изображения (Pillow)
-        img = Image.open(BytesIO(img_req.content))
-        
-        # Конвертируем в RGB (на случай если это PNG с прозрачностью)
-        if img.mode in ("RGBA", "P"):
-            img = img.convert("RGB")
-
-        # 5. Сжимаем до 1300px по широкой стороне с сохранением пропорций
-        img.thumbnail((1300, 1300), Image.LANCZOS)
-        
-        # 6. Сохраняем на диск (Quality=85 - хороший баланс веса и качества)
-        img.save(local_path, "JPEG", quality=85, optimize=True)
-        
-        return web_path, True
-
-    except Exception as e:
-        logging.error(f"Error caching image: {e}")
-        return None, False
-
-def get_image_data_from_telegram(post_id, custom_channel_id=None):
     post_id = str(post_id)
+    # Используем кастомный ID если передан, иначе дефолтный
     target_channel = custom_channel_id if custom_channel_id else CHANNEL_ID
     
-    # Ключ для кэша метаданных
+    # Ключ кэша теперь должен включать ID канала, чтобы не смешивать разные каналы
     cache_key = f"{target_channel}_{post_id}"
 
-    # Если метаданные уже есть в памяти, просто возвращаем их
-    # (Но нам нужно убедиться, что файл на диске всё ещё существует,
-    # поэтому проверка файла внутри process_and_cache_image важна)
-    if cache_key in META_CACHE:
-        data = META_CACHE[cache_key]
-        # Проверяем наличие файла на диске (вдруг удалили вручную)
-        # Если process_and_cache_image вернет путь, значит все ок
-        # file_id хранится в метаданных, используем его для проверки
-        # Здесь упростим: считаем, что если кэш есть, то и файл есть, 
-        # или он пересоздастся при запросе.
-        return data
+    if cache_key in IMAGE_CACHE:
+        return IMAGE_CACHE[cache_key]
 
-    # Форвард сообщения для получения ID файла
     forward_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/forwardMessage"
     params = {
         "chat_id": DUMP_CHAT_ID,
@@ -119,85 +55,97 @@ def get_image_data_from_telegram(post_id, custom_channel_id=None):
         r = requests.post(forward_url, json=params)
         data = r.json()
         
+        # Обработка ошибки доступа
         if not data.get("ok"):
             err_desc = data.get("description", "").lower()
+            # Если ошибка связана с правами или отсутствием чата
             if "chat not found" in err_desc or "admin" in err_desc or "kicked" in err_desc:
                 return {"error": "access_denied"}
-            # Сохраняем "пустышку", чтобы не долбить API
-            META_CACHE[cache_key] = None 
+            
+            IMAGE_CACHE[cache_key] = None 
             return None
             
         result = data["result"]
+        # ... (Код извлечения file_id, width, height, caption, date остается прежним) ...
+        # ВНИМАНИЕ: Скопируйте логику парсинга (file_id, width, date и т.д.) из старой функции сюда
+        # Для краткости ответа я показываю только изменившуюся логику API
         
-        # Извлекаем данные
+        # Пример сокращенного блока (восстановите полный код парсинга из вашего исходника):
         file_id = None
-        orig_width = 1
-        orig_height = 1
+        width = 1
+        height = 1
         caption = result.get("caption", "") or result.get("text", "")
         msg_date = result.get("date")
         date_str = datetime.fromtimestamp(msg_date).strftime('%d.%m.%Y %H:%M') if msg_date else ""
 
         if "photo" in result:
-            # Берем самое большое фото для исходника, но мы его ужмем
-            photo = result["photo"][-1]
-            file_id = photo["file_id"]
-            orig_width = photo["width"]
-            orig_height = photo["height"]
+            # ОПТИМИЗАЦИЯ: Вместо последней (самой тяжелой) картинки ищем оптимальную.
+            # Нам нужна ширина около 1024-1280px. Это уменьшит вес файла с 5МБ до ~200КБ.
+            photo = None
+            # Телеграм обычно отдает массив от меньшего к большему
+            for p in result["photo"]:
+                if p["width"] >= 1024: # Ищем первую подходящую по качеству
+                    photo = p
+                    break
+            
+            # Если все картинки меньше 1024px, берем самую качественную из доступных
+            if not photo:
+                photo = result["photo"][-1]
 
+            file_id = photo["file_id"]
+            width = photo["width"]
+            height = photo["height"]
+        # ... (тут должна быть проверка document как в оригинале) ...
         elif "document" in result and result["document"]["mime_type"].startswith("image"):
              file_id = result["document"]["file_id"]
-             # У документов размеры могут быть в thumb
              if "thumb" in result["document"]:
-                 orig_width = result["document"]["thumb"]["width"]
-                 orig_height = result["document"]["thumb"]["height"]
+                 width = result["document"]["thumb"]["width"]
+                 height = result["document"]["thumb"]["height"]
 
         if not file_id:
-            META_CACHE[cache_key] = None
+            IMAGE_CACHE[cache_key] = None
             return None
 
-        # --- ГЛАВНОЕ ИЗМЕНЕНИЕ: Обработка файла ---
-        web_path, success = process_and_cache_image(file_id)
+        path_r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}")
+        path_data = path_r.json()
         
-        if not success:
-            return None
-
-        # Формируем объект ответа
-        # Важно: width/height здесь - это оригинальные пропорции.
-        # Frontend использует их для расчета aspect ratio.
-        # Поскольку мы сохраняем пропорции при ресайзе, старые w/h подходят для ratio.
-        res_obj = {
-            "url": web_path, # Теперь это локальный путь!
-            "width": orig_width,
-            "height": orig_height,
-            "caption": caption[:200], # Обрезаем длинные подписи
-            "date": date_str
-        }
-        
-        # Сохраняем в память
-        META_CACHE[cache_key] = res_obj
-        return res_obj
+        if path_data.get("ok"):
+            file_path = path_data["result"]["file_path"]
+            full_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+            
+            res_obj = {
+                "url": full_url,
+                "width": width,
+                "height": height,
+                "caption": caption[:100],
+                "date": date_str
+            }
+            IMAGE_CACHE[cache_key] = res_obj
+            return res_obj
             
     except Exception as e:
-        logging.error(f"Telegram Handler Error: {e}")
+        logging.error(f"Telegram Forward Error: {e}")
         
     return None
-
 
 @app.route('/api/anemone/resolve_image')
 def api_resolve_image():
     post_id = request.args.get('post_id')
-    channel_id = request.args.get('channel_id')
+    channel_id = request.args.get('channel_id') # Получаем параметр
     
-    img_data = get_image_data_from_telegram(post_id, custom_channel_id=channel_id)
+    img_data = get_image_from_telegram(post_id, custom_channel_id=channel_id)
     
+    # Проверка на ошибку доступа
     if img_data and "error" in img_data and img_data["error"] == "access_denied":
         return jsonify({"found": False, "error": "access_denied"})
 
     if img_data:
-        # Теперь img_data['url'] - это уже ссылка на наш статик (/static/cache/...)
+        from urllib.parse import quote
+        encoded = quote(img_data['url'])
+        
         return jsonify({
             "found": True,
-            "url": img_data['url'], 
+            "url": f"/api/proxy_image?url={encoded}",
             "width": img_data['width'],
             "height": img_data['height'],
             "caption": img_data.get('caption', ''),
@@ -205,6 +153,7 @@ def api_resolve_image():
         })
     
     return jsonify({"found": False})
+
 
 @app.route('/api/proxy_image')
 def proxy_image():
@@ -251,13 +200,13 @@ def api_get_anemone_chunk():
     except ValueError:
         return jsonify([])
 
-    # Детерминированная случайность (Seed)
+    # Детерминированная случайность на основе координат
     seed_str = f"{cx},{cy},{cz}"
     seed_int = int(hashlib.sha256(seed_str.encode('utf-8')).hexdigest(), 16) % 10**8
     random.seed(seed_int)
 
-    items_count = random.randint(2, 5) 
-    chunk_size = 1500
+    items_count = random.randint(2, 4) # Чуть меньше, чтобы не спамить API
+    chunk_size = 1000
     
     planes = []
     
@@ -265,12 +214,11 @@ def api_get_anemone_chunk():
         px = random.uniform(-chunk_size/2, chunk_size/2)
         py = random.uniform(-chunk_size/2, chunk_size/2)
         pz = random.uniform(-chunk_size/2, chunk_size/2)
-        
-        # Масштаб чуть увеличим для красоты
-        scale = random.uniform(150, 350)
+        scale = random.uniform(100, 300)
 
-        # Генерация ID поста
-        random_msg_id = random.randint(2, MAX_POST_ID) 
+        # Генерируем ID поста. Убедитесь, что MAX_POST_ID актуален.
+        # Лучше брать диапазон ближе к концу, там больше живых картинок.
+        random_msg_id = random.randint(50, MAX_POST_ID) 
 
         planes.append({
             "id": f"{cx}_{cy}_{cz}_{i}",
@@ -284,6 +232,7 @@ def api_get_anemone_chunk():
         "cx": cx, "cy": cy, "cz": cz,
         "items": planes
     })
+
 
 
 
