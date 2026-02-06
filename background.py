@@ -30,66 +30,87 @@ IMAGE_CACHE = {}
 def get_image_from_telegram(post_id):
     """
     1. Проверяет кэш.
-    2. Если нет в кэше, пересылает пост в Dump Chat.
-    3. Извлекает file_id и получает ссылку.
+    2. Пересылает пост в Dump Chat.
+    3. Извлекает file_id.
+    4. Удаляет пересланное сообщение (чтобы не мусорить).
+    5. Возвращает прямую ссылку.
     """
     post_id = str(post_id)
     
-    # 1. Проверка кэша (чтобы не спамить API)
+    # 1. Кэш
     if post_id in IMAGE_CACHE:
         return IMAGE_CACHE[post_id]
 
-    # 2. Формируем запрос на Forward
-    forward_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/forwardMessage"
-    params = {
-        "chat_id": DUMP_CHAT_ID,      # Куда пересылаем (скрытый чат)
-        "from_chat_id": CHANNEL_ID,   # Откуда (основной канал)
+    base_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+
+    # 2. Пересылка (Forward)
+    # Используем forwardMessage, так как он возвращает содержимое сообщения сразу
+    forward_params = {
+        "chat_id": DUMP_CHAT_ID,
+        "from_chat_id": CHANNEL_ID,
         "message_id": post_id,
-        "disable_notification": True  # Без звука
+        "disable_notification": True
     }
     
     try:
-        r = requests.post(forward_url, json=params)
+        r = requests.post(f"{base_url}/forwardMessage", json=forward_params)
         data = r.json()
         
         if not data.get("ok"):
-            # Пост удален или не существует
-            IMAGE_CACHE[post_id] = None # Запоминаем, что поста нет
+            # Логируем конкретную ошибку от Telegram
+            error_desc = data.get("description", "Unknown error")
+            
+            # Если сообщение не найдено (удалено или ID еще не существует)
+            if "message to forward not found" in error_desc or "message not found" in error_desc:
+                IMAGE_CACHE[post_id] = None # Запоминаем, что там пусто
+                return None
+                
+            logging.error(f"TG Forward Error [Post {post_id}]: {error_desc}")
             return None
             
         result = data["result"]
+        dump_message_id = result["message_id"] # ID сообщения в мусорке (чтобы удалить)
+        
         file_id = None
         
-        # 3. Ищем картинку в сообщении
+        # 3. Поиск картинки (Фото, Документ или Превью видео)
         if "photo" in result:
-            # Берем последнее фото (самое высокое качество)
             file_id = result["photo"][-1]["file_id"]
         elif "document" in result and result["document"]["mime_type"].startswith("image"):
-            # Если отправлено как файл (без сжатия)
             file_id = result["document"]["file_id"]
         elif "video" in result:
-             # Можно брать превью видео
              file_id = result["video"]["thumb"]["file_id"]
 
+        # 4. Удаляем сообщение из мусорки (Clean up)
+        # Делаем это асинхронно или просто отправляем запрос и не ждем особо
+        try:
+            requests.post(f"{base_url}/deleteMessage", json={
+                "chat_id": DUMP_CHAT_ID,
+                "message_id": dump_message_id
+            })
+        except Exception as e:
+            logging.warning(f"Failed to cleanup message {dump_message_id}: {e}")
+
         if not file_id:
-            IMAGE_CACHE[post_id] = None # Это текст, картинки нет
+            IMAGE_CACHE[post_id] = None
             return None
 
-        # 4. Получаем путь к файлу (getFile)
-        path_r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}")
+        # 5. Получаем путь (getFile)
+        path_r = requests.get(f"{base_url}/getFile?file_id={file_id}")
         path_data = path_r.json()
         
         if path_data.get("ok"):
             file_path = path_data["result"]["file_path"]
-            # Ссылка на скачивание (живет 1 час)
             full_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
             
             # Сохраняем в кэш
             IMAGE_CACHE[post_id] = full_url
             return full_url
+        else:
+            logging.error(f"GetFile Error: {path_data}")
             
     except Exception as e:
-        logging.error(f"Telegram Forward Error: {e}")
+        logging.error(f"Exception in get_image: {e}")
         
     return None
 
