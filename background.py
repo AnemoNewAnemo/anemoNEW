@@ -26,22 +26,27 @@ MAX_POST_ID = 8504
 # Простой кэш в оперативной памяти: {post_id: "url_картинки"}
 # Сбрасывается при перезагрузке сервера, но это не страшно
 IMAGE_CACHE = {} 
+from datetime import datetime
 
-def get_image_from_telegram(post_id):
+# --- ЗАМЕНИТЬ ФУНКЦИЮ get_image_from_telegram ---
+def get_image_from_telegram(post_id, custom_channel_id=None):
     """
-    Возвращает словарь {"url": ..., "width": ..., "height": ...} или None
+    Возвращает данные картинки. Поддерживает кастомный канал.
     """
     post_id = str(post_id)
+    # Используем кастомный ID если передан, иначе дефолтный
+    target_channel = custom_channel_id if custom_channel_id else CHANNEL_ID
     
-    # 1. Проверка кэша
-    if post_id in IMAGE_CACHE:
-        return IMAGE_CACHE[post_id]
+    # Ключ кэша теперь должен включать ID канала, чтобы не смешивать разные каналы
+    cache_key = f"{target_channel}_{post_id}"
 
-    # 2. Формируем запрос на Forward
+    if cache_key in IMAGE_CACHE:
+        return IMAGE_CACHE[cache_key]
+
     forward_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/forwardMessage"
     params = {
         "chat_id": DUMP_CHAT_ID,
-        "from_chat_id": CHANNEL_ID,
+        "from_chat_id": target_channel,
         "message_id": post_id,
         "disable_notification": True
     }
@@ -50,37 +55,45 @@ def get_image_from_telegram(post_id):
         r = requests.post(forward_url, json=params)
         data = r.json()
         
+        # Обработка ошибки доступа
         if not data.get("ok"):
-            IMAGE_CACHE[post_id] = None # Поста нет
+            err_desc = data.get("description", "").lower()
+            # Если ошибка связана с правами или отсутствием чата
+            if "chat not found" in err_desc or "admin" in err_desc or "kicked" in err_desc:
+                return {"error": "access_denied"}
+            
+            IMAGE_CACHE[cache_key] = None 
             return None
             
         result = data["result"]
+        # ... (Код извлечения file_id, width, height, caption, date остается прежним) ...
+        # ВНИМАНИЕ: Скопируйте логику парсинга (file_id, width, date и т.д.) из старой функции сюда
+        # Для краткости ответа я показываю только изменившуюся логику API
+        
+        # Пример сокращенного блока (восстановите полный код парсинга из вашего исходника):
         file_id = None
         width = 1
         height = 1
-        
-        # 3. Ищем картинку и размеры
+        caption = result.get("caption", "") or result.get("text", "")
+        msg_date = result.get("date")
+        date_str = datetime.fromtimestamp(msg_date).strftime('%d.%m.%Y %H:%M') if msg_date else ""
+
         if "photo" in result:
-            # Берем последнее фото (лучшее качество)
             photo = result["photo"][-1]
             file_id = photo["file_id"]
             width = photo["width"]
             height = photo["height"]
-        
-        # (Видео и документы можно обработать аналогично, но для canvas важны фото)
+        # ... (тут должна быть проверка document как в оригинале) ...
         elif "document" in result and result["document"]["mime_type"].startswith("image"):
              file_id = result["document"]["file_id"]
-             # У документов размеры часто в thumb, но не всегда точные. 
-             # Для простоты можно брать квадрат или thumb размеры.
              if "thumb" in result["document"]:
                  width = result["document"]["thumb"]["width"]
                  height = result["document"]["thumb"]["height"]
 
         if not file_id:
-            IMAGE_CACHE[post_id] = None
+            IMAGE_CACHE[cache_key] = None
             return None
 
-        # 4. Получаем путь (getFile)
         path_r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}")
         path_data = path_r.json()
         
@@ -91,9 +104,11 @@ def get_image_from_telegram(post_id):
             res_obj = {
                 "url": full_url,
                 "width": width,
-                "height": height
+                "height": height,
+                "caption": caption[:100],
+                "date": date_str
             }
-            IMAGE_CACHE[post_id] = res_obj
+            IMAGE_CACHE[cache_key] = res_obj
             return res_obj
             
     except Exception as e:
@@ -104,28 +119,28 @@ def get_image_from_telegram(post_id):
 @app.route('/api/anemone/resolve_image')
 def api_resolve_image():
     post_id = request.args.get('post_id')
+    channel_id = request.args.get('channel_id') # Получаем параметр
     
-    # Получаем данные
-    img_data = get_image_from_telegram(post_id)
+    img_data = get_image_from_telegram(post_id, custom_channel_id=channel_id)
     
+    # Проверка на ошибку доступа
+    if img_data and "error" in img_data and img_data["error"] == "access_denied":
+        return jsonify({"found": False, "error": "access_denied"})
+
     if img_data:
         from urllib.parse import quote
         encoded = quote(img_data['url'])
         
-        # Считаем соотношение сторон (AspectRatio)
-        # Если width=1920, height=1080, ratio = 1.77
-        ratio = img_data['width'] / max(img_data['height'], 1)
-        
         return jsonify({
             "found": True,
             "url": f"/api/proxy_image?url={encoded}",
-            "ratio": ratio
+            "width": img_data['width'],
+            "height": img_data['height'],
+            "caption": img_data.get('caption', ''),
+            "date": img_data.get('date', '')
         })
     
-    # Если картинки нет — возвращаем found: False
-    # Фронтенд просто удалит этот квадрат
     return jsonify({"found": False})
-
 
 @app.route('/api/proxy_image')
 def proxy_image():
