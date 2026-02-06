@@ -626,7 +626,8 @@ const state = {
     lastMouse: { x: 0, y: 0 },
     currentChunk: { x: null, y: null, z: null },
     loadQueue: [],
-    activeLoads: 0
+    activeLoads: 0,
+    occupied: [] // <--- ДОБАВИТЬ ЭТО (Хранит {x,y,z, r, chunkKey})
 };
 
 // ... Функция очереди загрузки осталась прежней (сокращена для краткости) ...
@@ -837,7 +838,8 @@ async function loadChunk(cx, cy, cz) {
     try {
         const res = await fetch(`/api/anemone/get_chunk?x=${cx}&y=${cy}&z=${cz}`);
         const data = await res.json();
-        if (data.items) data.items.forEach(item => createHangingArt(g, item));
+        // ПЕРЕДАЕМ key третьим аргументом
+        if (data.items) data.items.forEach(item => createHangingArt(g, item, key));
     } catch (e) {}
 }
 
@@ -867,12 +869,52 @@ const globalUniforms = {
     uTwistAmp: { value: CONFIG.motion.twistAmp }
 };
 
-function createHangingArt(group, data) {
+function createHangingArt(group, data, chunkKey) { // <--- Добавлен аргумент chunkKey
     const baseScale = data.scale[0] * 1.5; 
     const geometry = commonPaperGeometry;
-
     const phase = Math.random() * 10;
     const swaySpeed = 0.5 + Math.random() * 0.5;
+
+    // --- ЛОГИКА ПРЕДОТВРАЩЕНИЯ НАЛОЖЕНИЯ ---
+    // Создаем временный вектор позиции
+    const pos = new THREE.Vector3(data.pos[0], data.pos[1] + (baseScale / 2), data.pos[2]);
+    const radius = baseScale * 0.9; // Радиус карточки (чуть меньше реального)
+    const minZGap = 40; // Минимальное расстояние по Z (чтобы не слипались слои)
+
+    // Пытаемся найти свободное место (макс. 5 попыток сдвига)
+    for (let i = 0; i < 5; i++) {
+        let collision = false;
+        for (const item of state.occupied) {
+            // Быстрая проверка: если объект слишком далеко, пропускаем
+            if (Math.abs(item.x - pos.x) > radius * 2) continue;
+            if (Math.abs(item.y - pos.y) > radius * 2) continue;
+
+            // Точная проверка расстояний
+            const dx = pos.x - item.x;
+            const dy = pos.y - item.y;
+            const dz = pos.z - item.z;
+            const distXY = Math.sqrt(dx*dx + dy*dy);
+
+            // Если карточки перекрываются визуально (XY) И слишком близки по глубине (Z)
+            if (distXY < (radius + item.r) * 0.8 && Math.abs(dz) < minZGap) {
+                collision = true;
+                
+                // РЕАКЦИЯ: Сдвигаем текущую карточку
+                // 1. Сильно толкаем по Z (чтобы разнести слои)
+                pos.z += (dz >= 0 ? minZGap : -minZGap) * 1.5; 
+                
+                // 2. Немного сдвигаем в сторону (рандомно), чтобы разбить "стопку"
+                pos.x += (Math.random() - 0.5) * 50;
+                pos.y += (Math.random() - 0.5) * 50;
+                break; // Выходим из внутреннего цикла и проверяем новую позицию
+            }
+        }
+        if (!collision) break; // Если коллизий нет, позиция утверждена
+    }
+
+    // Сохраняем занятую позицию
+    state.occupied.push({ x: pos.x, y: pos.y, z: pos.z, r: radius, chunkKey: chunkKey });
+    // ----------------------------------------
 
     const material = new THREE.ShaderMaterial({
         vertexShader: paperVertexShader,
@@ -885,7 +927,6 @@ function createHangingArt(group, data) {
             uAspectRatio: { value: 1.0 },
             uPhase: { value: phase },
             uSwaySpeed: { value: swaySpeed },
-            // Инициализируем масштаб картинки как 1:1
             uImageScale: { value: new THREE.Vector2(1, 1) }
         },
         side: THREE.DoubleSide,
@@ -894,7 +935,8 @@ function createHangingArt(group, data) {
     });
 
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.set(data.pos[0], data.pos[1] + (baseScale / 2), data.pos[2]);
+    // Используем обновленный pos
+    mesh.position.copy(pos);
     
     // ВАЖНО: Делаем масштаб равномерным по всем осям!
     // Это предотвращает сплющивание при вращении
@@ -949,7 +991,13 @@ queueImageLoad(data.post_id, data.pos, (tex, ratio) => {
 
 function unloadChunk(key) {
     const c = state.chunks.get(key);
-    if(c) { scene.remove(c.group); state.chunks.delete(key); }
+    if(c) { 
+        scene.remove(c.group); 
+        state.chunks.delete(key);
+        
+        // Очищаем массив занятых позиций для этого чанка
+        state.occupied = state.occupied.filter(item => item.chunkKey !== key);
+    }
 }
 
 function updateChunks() {
