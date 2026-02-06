@@ -147,9 +147,9 @@ container.appendChild(renderer.domElement);
 
 
 // --- ЧАСТИЦЫ (Пыль и Светлячки) ---
-const particleCount = 2000;
+const particleCount = 4000;
 const wrapSize = 4000; // Размер области вокруг камеры
-const fireflyCount = 400; 
+const fireflyCount = 600; 
 
 const particleGroup = new THREE.Group();
 scene.add(particleGroup);
@@ -349,13 +349,14 @@ const fireflyMat = new THREE.ShaderMaterial({
     `,
     transparent: true,
     blending: THREE.AdditiveBlending,
-    depthWrite: false
+    depthWrite: false,
+    depthTest: false // <-- ВАЖНО
 });
 
 const fireflySystem = new THREE.Points(fireflyGeo, fireflyMat);
 fireflySystem.frustumCulled = false;
 scene.add(fireflySystem);
-
+fireflySystem.renderOrder = 11;
 
 
 // 1. ПЫЛЬ
@@ -394,12 +395,13 @@ const dustMat = new THREE.ShaderMaterial({
     `,
     transparent: true,
     depthWrite: false,
+    depthTest: false, // <-- ВАЖНО
     blending: THREE.AdditiveBlending
 });
 const dustSystem = new THREE.Points(dustGeo, dustMat);
 dustSystem.frustumCulled = false; // <--- ВАЖНО: Запрещаем Three.js прятать частицы при вылете из центра
 scene.add(dustSystem);
-
+dustSystem.renderOrder = 10;
 
 // --- REALISTIC SKY SYSTEM (Звезды и Кометы) ---
 
@@ -935,6 +937,7 @@ function createHangingArt(group, data, chunkKey) { // <--- Добавлен ар
     });
 
     const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = 5;
     // Используем обновленный pos
     mesh.position.copy(pos);
     
