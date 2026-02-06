@@ -977,6 +977,77 @@ function isUIInteraction(e) {
            e.target.closest('.custom-picker-popover');
 }
 
+
+let isTwoFingerTouch = false; 
+let initialPinchDistance = 0;
+const PINCH_SENSITIVITY = 5.0; // Чем больше число, тем резче зум
+
+// Хелпер для расчета расстояния между двумя пальцами
+function getPinchDistance(e) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+}
+
+// 2. Начало касания
+window.addEventListener('touchstart', (e) => {
+    // Если касание двумя пальцами — инициализируем щипок
+    if (e.touches.length === 2) {
+        isTwoFingerTouch = true;
+        initialPinchDistance = getPinchDistance(e);
+        // Блокируем стандартный зум браузера
+        e.preventDefault(); 
+    } else if (e.touches.length === 1) {
+        // Логика для одного пальца (перемещение X/Y)
+        if (isUIInteraction(e)) return;
+        state.isDragging = true; 
+        state.lastMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+}, { passive: false });
+
+// 3. Движение пальцами
+window.addEventListener('touchmove', (e) => {
+    // ЛОГИКА ЩИПКА (ZOOM Z)
+    if (isTwoFingerTouch && e.touches.length === 2) {
+        const currentDistance = getPinchDistance(e);
+        
+        // Разница: положительная = отдаление, отрицательная = приближение
+        const delta = initialPinchDistance - currentDistance;
+
+        // Применяем к позиции камеры по Z
+        state.targetPos.z += delta * PINCH_SENSITIVITY;
+
+        // Обновляем "старое" расстояние для следующего кадра (чтобы движение было плавным)
+        initialPinchDistance = currentDistance;
+        
+        e.preventDefault();
+        return; // Выходим, чтобы не сработал драг по X/Y
+    }
+
+    // ЛОГИКА ДРАГА (PAN X/Y)
+    if (state.isDragging && e.touches.length === 1) {
+        e.preventDefault(); // Блокируем скролл страницы
+        const dx = e.touches[0].clientX - state.lastMouse.x;
+        const dy = e.touches[0].clientY - state.lastMouse.y;
+        state.targetPos.x -= dx * 2.5; 
+        state.targetPos.y += dy * 2.5;
+        state.lastMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+}, { passive: false });
+
+// 4. Окончание касания
+window.addEventListener('touchend', (e) => {
+    // Если пальцев стало меньше 2, выключаем режим щипка
+    if (e.touches.length < 2) {
+        isTwoFingerTouch = false;
+    }
+    // Если убрали все пальцы, выключаем драг
+    if (e.touches.length === 0) {
+        state.isDragging = false;
+    }
+});
+
+
 window.addEventListener('mousedown', e => { 
     // Если клик по интерфейсу — выходим, не запуская драг
     if (isUIInteraction(e)) return;
