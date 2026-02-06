@@ -218,7 +218,7 @@ def api_get_anemone_chunk():
 
         # Генерируем ID поста. Убедитесь, что MAX_POST_ID актуален.
         # Лучше брать диапазон ближе к концу, там больше живых картинок.
-        random_msg_id = random.randint(100, MAX_POST_ID) 
+        random_msg_id = random.randint(10, MAX_POST_ID) 
 
         planes.append({
             "id": f"{cx}_{cy}_{cz}_{i}",
