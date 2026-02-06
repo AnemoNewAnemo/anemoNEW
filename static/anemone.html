@@ -2,19 +2,17 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <!-- Запрещаем зум самой страницы, чтобы работали жесты Three.js -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Infinite Canvas</title>
+    <title>Infinite Hanging Gallery</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #ffffff; color: #000; font-family: sans-serif; touch-action: none; /* Важно для жестов */ }
+        body { margin: 0; overflow: hidden; background-color: #ffffff; color: #000; font-family: 'Helvetica Neue', sans-serif; touch-action: none; }
         #canvas-container { width: 100vw; height: 100vh; display: block; }
         
-        #loading { 
-            position: absolute; bottom: 20px; right: 20px; 
-            font-size: 10px; color: #aaa; pointer-events: none; 
-            opacity: 1; transition: opacity 0.5s; 
-            background: rgba(255,255,255,0.8); padding: 5px;
-            border-radius: 4px;
+        /* Упрощенный индикатор подключения */
+        #status { 
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            font-size: 11px; color: #aaa; letter-spacing: 2px; pointer-events: none; 
+            opacity: 1; transition: opacity 0.8s; text-transform: uppercase;
         }
     </style>
     <script type="importmap">
@@ -26,7 +24,7 @@
     </script>
 </head>
 <body>
-    <div id="loading">CONNECTING...</div>
+    <div id="status">Connecting...</div>
     <div id="canvas-container"></div>
 
     <script type="module">
@@ -35,32 +33,32 @@
         // --- НАСТРОЙКИ ---
         const CHUNK_SIZE = 1500; 
         const RENDER_DISTANCE = 1; 
-        const FADE_DISTANCE = 1200; 
-        const MAX_CONCURRENT_LOADS = 6; // Чуть увеличили поток
+        const FADE_DISTANCE = 1400; 
+        const MAX_CONCURRENT_LOADS = 6;
 
-        // --- ГЕНЕРАЦИЯ ТЕКСТУРЫ ЗАГРУЗКИ (Точки) ---
+        // --- ГЕНЕРАЦИЯ ТЕКСТУРЫ ЗАГРУЗКИ (Минимализм) ---
         function createPlaceholderTexture() {
-            const size = 256;
+            const size = 512;
             const canvas = document.createElement('canvas');
             canvas.width = size;
             canvas.height = size;
             const ctx = canvas.getContext('2d');
 
-            // Фон
-            ctx.fillStyle = '#f0f0f0'; 
+            // 1. Светлый фон
+            ctx.fillStyle = '#fafafa'; 
             ctx.fillRect(0, 0, size, size);
 
-            // Рамка
-            ctx.strokeStyle = '#e0e0e0';
-            ctx.lineWidth = 10;
+            // 2. Очень тонкая рамка
+            ctx.strokeStyle = '#d0d0d0';
+            ctx.lineWidth = 2; // Тонкая линия
             ctx.strokeRect(0, 0, size, size);
 
-            // Точки
-            ctx.fillStyle = '#b0b0b0';
-            ctx.font = 'bold 80px sans-serif';
+            // 3. Текст LOADING красивым шрифтом
+            ctx.fillStyle = '#888888';
+            ctx.font = '300 24px "Helvetica Neue", Arial, sans-serif'; // Тонкий шрифт
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText('• • •', size/2, size/2);
+            ctx.fillText('L O A D I N G', size/2, size/2 + 40); // Чуть ниже центра
 
             const tex = new THREE.CanvasTexture(canvas);
             tex.colorSpace = THREE.SRGBColorSpace;
@@ -68,20 +66,18 @@
         }
         
         const PLACEHOLDER_TEXTURE = createPlaceholderTexture();
+        
+        // Материал для "точки" загрузки
+        const DOT_TEXTURE = new THREE.TextureLoader().load('https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/sprites/disc.png'); 
 
         // --- СОСТОЯНИЕ ---
         const state = {
             chunks: new Map(),
             targetPos: new THREE.Vector3(0, 0, 1000), 
             currentPos: new THREE.Vector3(0, 0, 1000), 
-            
-            // Мышь
             isDragging: false,
             lastMouse: { x: 0, y: 0 },
-            
-            // Тач (2 пальца)
             lastTouchDist: 0,
-            
             currentChunk: { x: null, y: null, z: null },
             loadQueue: [],
             activeLoads: 0
@@ -91,29 +87,28 @@
         const container = document.getElementById('canvas-container');
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0xffffff); 
-        scene.fog = new THREE.FogExp2(0xffffff, 0.00035); 
+        scene.fog = new THREE.FogExp2(0xffffff, 0.0003); 
 
-        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 10, 5000);
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 10, 8000);
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); 
         container.appendChild(renderer.domElement);
 
-        const loader = new THREE.TextureLoader();
-        loader.setCrossOrigin('anonymous');
+        const textureLoader = new THREE.TextureLoader();
+        textureLoader.setCrossOrigin('anonymous');
 
-        // --- МЕНЕДЖЕР ЗАГРУЗКИ ---
+        // --- ОЧЕРЕДЬ ЗАГРУЗКИ ---
         function processLoadQueue() {
             if (state.activeLoads >= MAX_CONCURRENT_LOADS || state.loadQueue.length === 0) return;
-
-            const task = state.loadQueue.shift(); // Берем FIFO, можно переделать на LIFO для актуальности
+            const task = state.loadQueue.shift();
             state.activeLoads++;
 
             fetch(`/api/anemone/resolve_image?post_id=${task.postId}`)
                 .then(r => r.json())
                 .then(data => {
                     if (data.found && data.url) {
-                        loader.load(data.url, (tex) => {
+                        textureLoader.load(data.url, (tex) => {
                             task.onSuccess(tex, data.ratio);
                             state.activeLoads--;
                             processLoadQueue();
@@ -136,8 +131,6 @@
         }
 
         function queueImageLoad(postId, onSuccess, onError) {
-            // Добавляем в начало массива (LIFO), чтобы грузить то, что перед глазами сейчас
-            // или в конец (FIFO). Для навигации лучше LIFO, но проще push.
             state.loadQueue.push({ postId, onSuccess, onError });
             processLoadQueue();
         }
@@ -150,71 +143,106 @@
             const chunkGroup = new THREE.Group();
             chunkGroup.position.set(cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE);
             scene.add(chunkGroup);
-
-            const chunkData = { group: chunkGroup, items: [] };
-            state.chunks.set(key, chunkData);
+            state.chunks.set(key, { group: chunkGroup });
 
             try {
                 const res = await fetch(`/api/anemone/get_chunk?x=${cx}&y=${cy}&z=${cz}`);
                 const data = await res.json();
-
                 if (data.items) {
-                    data.items.forEach(item => {
-                        createArtObject(chunkGroup, item);
-                    });
+                    data.items.forEach(item => createHangingArt(chunkGroup, item));
                 }
             } catch (e) { console.error(e); }
         }
 
-        function createArtObject(group, data) {
+        function createHangingArt(group, data) {
             const baseScale = data.scale[0];
-            const geometry = new THREE.PlaneGeometry(1, 1);
             
-            // СРАЗУ ставим заглушку и opacity 1, чтобы видеть блоки
+            // 1. ГЕОМЕТРИЯ КАРТИНЫ
+            // Смещаем геометрию вниз на 0.5, чтобы origin (0,0,0) был посередине ВЕРХНЕЙ грани.
+            // Это нужно для правильного вращения (эффект маятника).
+            const geometry = new THREE.PlaneGeometry(1, 1);
+            geometry.translate(0, -0.5, 0); 
+
             const material = new THREE.MeshBasicMaterial({ 
                 color: 0xffffff,
-                map: PLACEHOLDER_TEXTURE, // Наши точки
+                map: PLACEHOLDER_TEXTURE,
                 side: THREE.DoubleSide,
-                transparent: true,
-                opacity: 1 
+                transparent: true 
             });
 
             const mesh = new THREE.Mesh(geometry, material);
-            mesh.position.set(data.pos[0], data.pos[1], data.pos[2]);
-            mesh.rotation.set(data.rotation[0], data.rotation[1], 0);
             
-            // Квадратная форма пока грузится
+            // Компенсируем смещение геометрии в позиции объекта, чтобы сетка осталась ровной
+            // data.pos[1] - это центр. Мы хотим, чтобы верх был выше центра на пол-высоты.
+            // Но так как pivot теперь наверху, ставим объект в точку, где должен быть верхний край.
+            mesh.position.set(data.pos[0], data.pos[1] + (baseScale / 2), data.pos[2]);
+            
             mesh.scale.set(baseScale, baseScale, 1);
+
+            // Случайные параметры для анимации (фаза и скорость покачивания)
+            mesh.userData = { 
+                isLoaded: false,
+                randomPhase: Math.random() * Math.PI * 2,
+                swaySpeed: 0.5 + Math.random() * 0.5,
+                tiltSpeed: 0.3 + Math.random() * 0.4
+            };
             
+            // 2. ВЕРЕВОЧКА (ЛИНИЯ ВВЕРХ)
+            // Линия идет из локального (0,0,0) - это верх картинки, вертикально вверх
+            const lineGeo = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(0, 5000, 0) // Очень длинная линия вверх
+            ]);
+            const lineMat = new THREE.LineBasicMaterial({ 
+                color: 0x000000, 
+                transparent: true, 
+                opacity: 0.15, // Еле заметная
+                linewidth: 1 
+            });
+            const line = new THREE.Line(lineGeo, lineMat);
+            mesh.add(line); // Линия привязана к мешу, она будет качаться вместе с ним
+
+            // 3. ПУЛЬСИРУЮЩАЯ ТОЧКА (Loading Dot)
+            // Создаем маленький круг
+            const dotGeo = new THREE.CircleGeometry(0.03, 16); // Маленький размер относительно 1.0
+            const dotMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3 });
+            const dotMesh = new THREE.Mesh(dotGeo, dotMat);
+            // Позиция точки: т.к. геометрия сдвинута на -0.5 по Y, центр картины теперь в -0.5
+            dotMesh.position.set(0, -0.5, 0.01); 
+            mesh.add(dotMesh);
+            mesh.userData.loadingDot = dotMesh; // Ссылка для анимации
+
             group.add(mesh);
 
-            mesh.userData = { isLoaded: false };
-
+            // 4. ЗАГРУЗКА ИЗОБРАЖЕНИЯ
             queueImageLoad(data.post_id, 
                 (texture, ratio) => {
-                    // Успех
                     texture.colorSpace = THREE.SRGBColorSpace;
                     texture.minFilter = THREE.LinearFilter;
                     
                     material.map = texture;
                     material.needsUpdate = true;
                     
-                    // Адаптация пропорций
-                    if (ratio >= 1) {
-                         mesh.scale.set(baseScale, baseScale / ratio, 1);
-                    } else {
-                         mesh.scale.set(baseScale * ratio, baseScale, 1);
-                    }
+                    // Удаляем точку загрузки
+                    mesh.remove(dotMesh);
+                    dotGeo.dispose();
+                    dotMat.dispose();
 
+                    // Адаптация размера с учетом того, что pivot сверху
+                    if (ratio >= 1) {
+                        // Широкая: ширина base, высота меньше
+                        mesh.scale.set(baseScale, baseScale / ratio, 1);
+                    } else {
+                        // Высокая: ширина меньше, высота base
+                        mesh.scale.set(baseScale * ratio, baseScale, 1);
+                    }
                     mesh.userData.isLoaded = true;
                 },
                 () => {
-                    // Ошибка: делаем полупрозрачным красным или удаляем
-                    // material.color.set(0xffcccc); 
-                    // Или просто удаляем:
+                    // Ошибка: просто удаляем
+                    group.remove(mesh);
                     geometry.dispose();
                     material.dispose();
-                    group.remove(mesh);
                 }
             );
         }
@@ -223,14 +251,10 @@
             const chunk = state.chunks.get(key);
             if (chunk) {
                 scene.remove(chunk.group);
-                chunk.group.traverse((obj) => {
-                    if (obj.isMesh) {
-                        obj.geometry.dispose();
-                        if (obj.material.map && obj.material.map !== PLACEHOLDER_TEXTURE) {
-                            obj.material.map.dispose();
-                        }
-                        obj.material.dispose();
-                    }
+                // Очистка памяти (упрощенно)
+                chunk.group.traverse(o => {
+                    if (o.geometry) o.geometry.dispose();
+                    if (o.material) o.material.dispose();
                 });
                 state.chunks.delete(key);
             }
@@ -259,36 +283,38 @@
             }
         }
 
-        // --- УПРАВЛЕНИЕ (MOUSE) ---
+        // --- УПРАВЛЕНИЕ ---
         function onMove(dx, dy) {
-             const speed = 2.5;
-             state.targetPos.x -= dx * speed;
-             // ИНВЕРСИЯ ВЕРТИКАЛЬНОЙ ОСИ: теперь -= вместо +=
-             state.targetPos.y -= dy * speed; 
+            const speed = 2.5;
+            state.targetPos.x -= dx * speed;
+            // !!! ИНВЕРСИЯ ЗДЕСЬ !!!
+            // Чтобы картинки двигались вниз при движении пальца вниз,
+            // камера должна двигаться ВВЕРХ (плюс по Y).
+            state.targetPos.y += dy * speed; 
         }
 
+        // MOUSE
         window.addEventListener('mousedown', e => { 
             state.isDragging = true; 
             state.lastMouse = { x: e.clientX, y: e.clientY }; 
+            document.body.style.cursor = 'grabbing';
         });
-        window.addEventListener('mouseup', () => state.isDragging = false);
+        window.addEventListener('mouseup', () => {
+            state.isDragging = false;
+            document.body.style.cursor = 'default';
+        });
         window.addEventListener('mousemove', e => {
             if (!state.isDragging) return;
             onMove(e.clientX - state.lastMouse.x, e.clientY - state.lastMouse.y);
             state.lastMouse = { x: e.clientX, y: e.clientY };
         });
-        
-        // Колесико - зум
         window.addEventListener('wheel', e => { 
             state.targetPos.z += e.deltaY * 1.5; 
         }, { passive: true });
 
-
-        // --- УПРАВЛЕНИЕ (TOUCH - 2 Fingers) ---
+        // TOUCH
         function getDistance(t1, t2) {
-            const dx = t1.clientX - t2.clientX;
-            const dy = t1.clientY - t2.clientY;
-            return Math.sqrt(dx*dx + dy*dy);
+            return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
         }
 
         window.addEventListener('touchstart', e => {
@@ -296,15 +322,13 @@
                 state.isDragging = true;
                 state.lastMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
             } else if (e.touches.length === 2) {
-                state.isDragging = false; // Отключаем обычный драг
+                state.isDragging = false;
                 state.lastTouchDist = getDistance(e.touches[0], e.touches[1]);
             }
         }, { passive: false });
 
         window.addEventListener('touchmove', e => {
-             // Предотвращаем скролл страницы браузера
              e.preventDefault(); 
-
              if (e.touches.length === 1 && state.isDragging) {
                 const dx = e.touches[0].clientX - state.lastMouse.x;
                 const dy = e.touches[0].clientY - state.lastMouse.y;
@@ -312,43 +336,62 @@
                 onMove(dx, dy);
              } 
              else if (e.touches.length === 2) {
-                // Щипок (Pinch)
                 const dist = getDistance(e.touches[0], e.touches[1]);
                 const delta = dist - state.lastTouchDist;
-                
-                // Чувствительность зума
                 state.targetPos.z -= delta * 3.0; 
                 state.lastTouchDist = dist;
              }
         }, { passive: false });
+        window.addEventListener('touchend', () => state.isDragging = false);
 
-        window.addEventListener('touchend', () => {
-            state.isDragging = false;
-        });
-
-        // --- RENDER LOOP ---
+        // --- RENDER & ANIMATION LOOP ---
         function animate() {
             requestAnimationFrame(animate);
 
-            state.currentPos.lerp(state.targetPos, 0.08); // Чуть плавнее
+            // Плавное движение камеры
+            state.currentPos.lerp(state.targetPos, 0.08); 
             camera.position.copy(state.currentPos);
 
             updateChunks();
 
-            // Эффект тумана и видимости
+            const time = Date.now() * 0.001; // Время в секундах
+
             state.chunks.forEach(chunk => {
                 chunk.group.children.forEach(mesh => {
-                    const dist = mesh.position.clone().add(chunk.group.position).distanceTo(camera.position);
-
-                    // Если загружено - полная видимость с учетом тумана
-                    // Если не загружено (точки) - тоже видимость
+                    // 1. Анимация покачивания (Swaying)
+                    // Используем случайную фазу (userData.randomPhase), чтобы все качались по-разному
+                    const phase = mesh.userData.randomPhase;
                     
+                    // Основное качание влево-вправо (Z axis)
+                    const swayZ = Math.sin(time * mesh.userData.swaySpeed + phase) * 0.08; 
+                    
+                    // Легкий наклон вперед-назад (X axis) и поворот (Y axis) - имитация воздушных потоков
+                    const swayX = Math.sin(time * mesh.userData.tiltSpeed * 0.7 + phase) * 0.03;
+                    const swayY = Math.cos(time * 0.2 + phase) * 0.05;
+
+                    mesh.rotation.set(swayX, swayY, swayZ);
+
+                    // 2. Анимация точки загрузки
+                    if (!mesh.userData.isLoaded && mesh.userData.loadingDot) {
+                        const dot = mesh.userData.loadingDot;
+                        // Пульсация масштаба
+                        const scale = 1 + Math.sin(time * 5) * 0.3;
+                        dot.scale.set(scale, scale, 1);
+                        // Пульсация прозрачности
+                        dot.material.opacity = 0.3 + Math.sin(time * 5) * 0.2;
+                    }
+
+                    // 3. Туман (Fade distance)
+                    const dist = mesh.position.clone().add(chunk.group.position).distanceTo(camera.position);
                     let opacity = 1;
                     if (dist > FADE_DISTANCE) {
-                         opacity = 1 - Math.min((dist - FADE_DISTANCE) / 500, 1);
+                         opacity = 1 - Math.min((dist - FADE_DISTANCE) / 600, 1);
                     }
-                    
                     mesh.material.opacity = opacity;
+                    // Линии делаем еще прозрачнее
+                    if(mesh.children.length > 0 && mesh.children[0].isLine) {
+                         mesh.children[0].material.opacity = opacity * 0.15;
+                    }
                     mesh.visible = opacity > 0.05;
                 });
             });
@@ -358,7 +401,8 @@
 
         animate();
         
-        setTimeout(() => document.getElementById('loading').style.opacity = 0, 500);
+        // Скрыть надпись "Connecting" при старте
+        setTimeout(() => document.getElementById('status').style.opacity = 0, 1000);
 
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
