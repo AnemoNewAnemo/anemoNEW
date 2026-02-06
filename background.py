@@ -4,9 +4,129 @@ import os
 import logging
 from flask import render_template_string
 app = Flask(__name__, static_folder='static')  # Указываем папку для статики
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+
+if not TELEGRAM_BOT_TOKEN:
+    raise RuntimeError("TELEGRAM_BOT_TOKEN не задан в переменных окружения")
 
 
 # --- API ENDPOINTS (Точки для работы с данными) ---
+# Константа канала (из твоего запроса)
+CHANNEL_ID = "-1001479526905" 
+MAX_POST_ID = 8504
+TELEGRAM_BOT_TOKEN = "6026973561:AAEH542TDSuKUfVbIvo3LbmdeI3-Z_hMTvc"
+
+@app.route('/anemonearts')
+def anemone_arts_view():
+    """Отдает HTML страницу бесконечного холста"""
+    return send_from_directory(app.static_folder, 'anemone.html')
+
+@app.route('/api/anemone/get_chunk', methods=['GET'])
+def api_get_anemone_chunk():
+    """
+    Генерирует контент для одного куска пространства (chunk).
+    Принимает координаты чанка x, y, z.
+    Возвращает список URL картинок и их координаты внутри чанка.
+    """
+    from gpt_helper import get_telegram_file_url # Функция должна быть реализована (см. ниже)
+    
+    try:
+        cx = int(request.args.get('x', 0))
+        cy = int(request.args.get('y', 0))
+        cz = int(request.args.get('z', 0))
+    except ValueError:
+        return jsonify([])
+
+    # 1. Детерминированная случайность (Seed)
+    # Это важно! Если мы вернемся в точку X=5, Y=5, там должны быть ТЕ ЖЕ картинки.
+    # Используем координаты чанка как seed.
+    seed_str = f"{cx},{cy},{cz}"
+    # Превращаем строку в число для seed
+    seed_int = int(hashlib.sha256(seed_str.encode('utf-8')).hexdigest(), 16) % 10**8
+    random.seed(seed_int)
+
+    # 2. Генерируем объекты в этом чанке
+    # Допустим, 3-5 картин в каждом кубе пространства
+    items_count = random.randint(3, 5)
+    chunk_size = 1000 # Размер куба в условных единицах three.js
+    
+    planes = []
+    
+    for i in range(items_count):
+        # Выбираем случайный пост. 
+        # ВНИМАНИЕ: Стандартный Bot API не может проверить, есть ли в посте картинка,
+        # без предварительного сохранения file_id. 
+        # Здесь мы эмулируем процесс. В идеале у тебя должна быть БД с file_id.
+        # Если нет - мы просто генерируем рандомный ID, но картинка может не загрузиться, 
+        # если пост текстовый.
+        
+        # Для примера я буду использовать заглушки или реальный запрос, если есть file_id.
+        # Чтобы это работало "из коробки" без БД, нужен метод get_post_image_url
+        
+        # Позиция внутри чанка (локальная)
+        px = random.uniform(-chunk_size/2, chunk_size/2)
+        py = random.uniform(-chunk_size/2, chunk_size/2)
+        pz = random.uniform(-chunk_size/2, chunk_size/2)
+        
+        scale = random.uniform(100, 300) # Размер картины
+        
+        # Пытаемся получить рандомный ID поста
+        random_msg_id = random.randint(1, MAX_POST_ID)
+        
+        # ВАЖНО: Тут должен быть вызов Telegram API.
+        # Так как мы не можем делать 10 запросов к Telegram на каждый скролл (будет бан),
+        # мы возвращаем структуру, а фронтенд будет грузить картинку лениво.
+        
+        # Для демонстрации я верну структуру. 
+        # Реальный URL мы получим, только если у нас есть file_id.
+        # Т.к. у нас нет базы всех file_id, мы будем использовать "заглушку" или
+        # если ты реализуешь helper, то реальный URL.
+        
+        # Вариант "без костылей" требует базы данных file_id.
+        # Вариант "с костылем": фронтенд получает ID поста, а картинку
+        # мы проксируем через отдельный медленный запрос.
+        
+        planes.append({
+            "id": f"{cx}_{cy}_{cz}_{i}",
+            "pos": [px, py, pz], # Относительно центра чанка
+            "scale": [scale, scale * 1.5], # Пропорции (пока просто прямоугольник)
+            "post_id": random_msg_id,
+            "rotation": [random.uniform(-0.2, 0.2), random.uniform(-0.2, 0.2), 0]
+        })
+
+    return jsonify({
+        "cx": cx, "cy": cy, "cz": cz,
+        "items": planes
+    })
+
+@app.route('/api/anemone/resolve_image')
+def api_resolve_image():
+    """
+    Получает URL картинки для конкретного post_id.
+    Это позволяет не нагружать чанк-генератор.
+    """
+    post_id = request.args.get('post_id')
+    
+    # ТУТ САМАЯ СЛОЖНАЯ ЧАСТЬ:
+    # Telegram Bot API НЕ дает получить фото по ID сообщения (post_id) в канале
+    # методом getMessage (такого метода нет).
+    #
+    # РЕШЕНИЕ:
+    # 1. Либо использовать MTProto (Telethon) - это сложно внедрить в текущий Flask.
+    # 2. Либо использовать базу данных, которую ты наполнишь заранее.
+    # 3. Либо (костыль) возвращать случайную картинку из тех, что мы знаем (file_id).
+    
+    # Чтобы код работал ПРЯМО СЕЙЧАС, я сделаю заглушку с реальными картинками,
+    # но тебе нужно будет заменить это на поиск в твоей БД.
+    
+    # Пока вернем плейсхолдер или одну из известных картинок, если post_id не найден.
+    # Реализуй в gpt_helper логику "найти file_id по post_id" если она есть.
+    
+    # Пример возврата прямой ссылки Telegram (она живет 1 час):
+    # return jsonify({"url": "https://api.telegram.org/file/bot<TOKEN>/photos/file_0.jpg"})
+    
+    return jsonify({"url": f"https://picsum.photos/seed/{post_id}/400/600"})
+
 
 
 @app.route('/api/timer/get_one', methods=['GET'])
