@@ -11,6 +11,167 @@ if not TELEGRAM_BOT_TOKEN:
 
 
 # --- API ENDPOINTS (Точки для работы с данными) ---
+
+import random
+import requests
+from flask import Response, stream_with_context
+
+# --- ДОБАВЬТЕ ЭТИ ФУНКЦИИ В НАЧАЛО ФАЙЛА ИЛИ В HELPER ---
+
+def get_real_image_url_from_channel(channel_id, message_id):
+    """
+    Пытается получить URL картинки из сообщения в канале.
+    Т.к. getMessage нет, мы используем трюк: 
+    Мы (бот) пытаемся переслать сообщение в чат к самому себе (или просто получить его, если библиотека позволяет).
+    Но самый надежный способ через HTTP API без базы - это forwardMessage.
+    """
+    # 1. Пытаемся скопировать/переслать сообщение, чтобы получить его содержимое
+    # Мы пересылаем сообщение в "никуда" (в чат с самим ботом нельзя, нужен chat_id).
+    # Лучше всего использовать ID админа или лог-канала.
+    # Если бот админ канала, он может видеть сообщения, но API не дает метода getMessage.
+    # ЕДИНСТВЕННЫЙ способ получить file_id старого поста без БД - переслать его.
+    
+    # ВАЖНО: Замените YOUR_LOG_CHAT_ID на ваш ID (личка с ботом) или ID технического канала.
+    # Бот должен быть там админом или участником.
+    LOG_CHAT_ID = os.environ.get("LOG_CHAT_ID") # Или жестко пропишите ID цифрами
+    
+    if not LOG_CHAT_ID:
+        # Если нет лог-чата, возвращаем заглушку, чтобы не крашилось
+        return None 
+
+    forward_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/forwardMessage"
+    params = {
+        "chat_id": LOG_CHAT_ID,
+        "from_chat_id": channel_id,
+        "message_id": message_id,
+        "disable_notification": True
+    }
+    
+    try:
+        r = requests.post(forward_url, json=params)
+        data = r.json()
+        
+        if not data.get("ok"):
+            # Сообщение удалено или это не сообщение
+            return None
+            
+        result = data["result"]
+        
+        # Проверяем, есть ли фото
+        file_id = None
+        if "photo" in result:
+            file_id = result["photo"][-1]["file_id"] # Берем самое большое качество
+        elif "document" in result and result["document"]["mime_type"].startswith("image"):
+            file_id = result["document"]["file_id"]
+            
+        if file_id:
+            # Получаем file_path
+            path_r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}")
+            path_data = path_r.json()
+            if path_data.get("ok"):
+                file_path = path_data["result"]["file_path"]
+                return f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                
+    except Exception as e:
+        logging.error(f"Error resolving image: {e}")
+        
+    return None
+
+# --- ИСПРАВЛЕННЫЕ ЭНДПОИНТЫ ---
+
+@app.route('/api/anemone/get_chunk', methods=['GET'])
+def api_get_anemone_chunk():
+    try:
+        cx = int(request.args.get('x', 0))
+        cy = int(request.args.get('y', 0))
+        cz = int(request.args.get('z', 0))
+    except ValueError:
+        return jsonify([])
+
+    # Детерминированная случайность на основе координат
+    seed_str = f"{cx},{cy},{cz}"
+    seed_int = int(hashlib.sha256(seed_str.encode('utf-8')).hexdigest(), 16) % 10**8
+    random.seed(seed_int)
+
+    items_count = random.randint(2, 4) # Чуть меньше, чтобы не спамить API
+    chunk_size = 1000
+    
+    planes = []
+    
+    for i in range(items_count):
+        px = random.uniform(-chunk_size/2, chunk_size/2)
+        py = random.uniform(-chunk_size/2, chunk_size/2)
+        pz = random.uniform(-chunk_size/2, chunk_size/2)
+        scale = random.uniform(100, 300)
+
+        # Генерируем ID поста. Убедитесь, что MAX_POST_ID актуален.
+        # Лучше брать диапазон ближе к концу, там больше живых картинок.
+        random_msg_id = random.randint(100, MAX_POST_ID) 
+
+        planes.append({
+            "id": f"{cx}_{cy}_{cz}_{i}",
+            "pos": [px, py, pz],
+            "scale": [scale, scale * 1.5],
+            "post_id": random_msg_id,
+            "rotation": [random.uniform(-0.2, 0.2), random.uniform(-0.2, 0.2), 0]
+        })
+
+    return jsonify({
+        "cx": cx, "cy": cy, "cz": cz,
+        "items": planes
+    })
+
+@app.route('/api/anemone/resolve_image')
+def api_resolve_image():
+    post_id = request.args.get('post_id')
+    if not post_id:
+        return jsonify({"url": "https://via.placeholder.com/300"})
+
+    # 1. Пытаемся достать реальную ссылку через Telegram
+    # ВНИМАНИЕ: Это медленная операция (2 запроса к API). 
+    # В реальном проекте тут нужен кэш (Redis или словарь в памяти).
+    
+    img_url = get_real_image_url_from_channel(CHANNEL_ID, post_id)
+    
+    if img_url:
+        # ВАЖНО: Мы не отдаем прямую ссылку Telegram, потому что Three.js заблокирует её (CORS).
+        # Мы отдаем ссылку на НАШ прокси.
+        # Кодируем URL, чтобы передать параметром
+        from urllib.parse import quote
+        encoded_url = quote(img_url)
+        # Возвращаем ссылку на наш собственный прокси
+        return jsonify({"url": f"/api/proxy_image?url={encoded_url}"})
+    
+    # Если картинки нет в посте или ошибка - отдаем красивую заглушку
+    # Используем picsum, так как он поддерживает CORS
+    return jsonify({"url": f"https://picsum.photos/seed/{post_id}/400/600"})
+
+# --- ПРОКСИ ДЛЯ КАРТИНОК (РЕШЕНИЕ ПРОБЛЕМЫ CORS) ---
+@app.route('/api/proxy_image')
+def proxy_image():
+    url = request.args.get('url')
+    if not url:
+        return "No URL", 400
+        
+    try:
+        # Скачиваем картинку с Telegram/Интернета сервером
+        req = requests.get(url, stream=True)
+        
+        # Отдаем её клиенту с правильными заголовками
+        excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
+        headers = [(name, value) for (name, value) in req.raw.headers.items()
+                   if name.lower() not in excluded_headers]
+        
+        # Разрешаем CORS
+        headers.append(('Access-Control-Allow-Origin', '*'))
+
+        return Response(stream_with_context(req.iter_content(chunk_size=1024)),
+                        status=req.status_code,
+                        headers=headers,
+                        content_type=req.headers.get('content-type'))
+    except Exception as e:
+        return str(e), 500
+
 # Константа канала (из твоего запроса)
 CHANNEL_ID = "-1001479526905" 
 MAX_POST_ID = 8504
