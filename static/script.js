@@ -25,7 +25,8 @@ const CONFIG = {
 const CHUNK_SIZE = 1500;
 const RENDER_DISTANCE = 1;
 const FADE_DISTANCE = 1600;
-const MAX_CONCURRENT_LOADS = 2; 
+// ОПТИМИЗАЦИЯ: Увеличиваем с 2 до 6, так как файлы теперь загружаются быстрее
+const MAX_CONCURRENT_LOADS = 6; 
 const MAX_TEXTURE_SIZE = 512;
 // --- SHADERS (Шейдеры) ---
 
@@ -629,50 +630,65 @@ const state = {
 };
 
 // ... Функция очереди загрузки осталась прежней (сокращена для краткости) ...
-// 2. Обновленная функция обработки очереди с сортировкой
+// 2. Обновленная функция обработки очереди с жесткой приоритизацией
 function processLoadQueue() {
     if (state.activeLoads >= MAX_CONCURRENT_LOADS || state.loadQueue.length === 0) return;
 
-    // --- ЛОГИКА ПРИОРИТЕТОВ ---
-    // Обновляем Frustum камеры для проверки видимости
-    const frustum = new THREE.Frustum();
+    // --- ЛОГИКА ПРИОРИТЕТОВ (СОРТИРОВКА) ---
+    
+    // 1. Обновляем матрицы камеры, чтобы данные были актуальны
+    camera.updateMatrixWorld();
     const projScreenMatrix = new THREE.Matrix4();
     projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    const frustum = new THREE.Frustum();
     frustum.setFromProjectionMatrix(projScreenMatrix);
 
     const cameraDir = new THREE.Vector3();
-    camera.getWorldDirection(cameraDir);
+    camera.getWorldDirection(cameraDir); // Вектор направления взгляда
+    const cameraPos = camera.position;
 
-    // Сортируем очередь
-    state.loadQueue.sort((a, b) => {
-        const posA = new THREE.Vector3(a.pos[0], a.pos[1], a.pos[2]);
-        const posB = new THREE.Vector3(b.pos[0], b.pos[1], b.pos[2]);
-
-        // 1. Проверка на видимость в кадре (Frustum) - Самый высокий приоритет
-        // Создаем маленькую сферу для проверки
-        const isVisibleA = frustum.intersectsSphere(new THREE.Sphere(posA, 100));
-        const isVisibleB = frustum.intersectsSphere(new THREE.Sphere(posB, 100));
-
-        if (isVisibleA && !isVisibleB) return -1; // A важнее
-        if (!isVisibleA && isVisibleB) return 1;  // B важнее
-
-        // 2. Если оба видны или оба не видны -> Проверка: "Перед камерой" или "Сзади"
-        const dirA = new THREE.Vector3().subVectors(posA, camera.position).normalize();
-        const dirB = new THREE.Vector3().subVectors(posB, camera.position).normalize();
+    // 2. Создаем временный массив с вычисленными "весами" (Score)
+    // Это предотвращает повторные тяжелые вычисления внутри sort()
+    const mappedQueue = state.loadQueue.map((item, index) => {
+        const pos = new THREE.Vector3(item.pos[0], item.pos[1], item.pos[2]);
+        const dist = pos.distanceTo(cameraPos);
         
-        const angleA = cameraDir.dot(dirA); // 1.0 = прямо по курсу, -1.0 = сзади
-        const angleB = cameraDir.dot(dirB);
+        // ВАЖНО: Радиус 400, так как scale объектов в Python доходит до 350.
+        // Если радиус мал, объект с краем на экране будет считаться невидимым.
+        const isVisible = frustum.intersectsSphere(new THREE.Sphere(pos, 400));
+        
+        let score = 0;
 
-        // Если объект сильно спереди (> 0.5), даем ему буст
-        if (angleA > 0.5 && angleB <= 0.5) return -1;
-        if (angleB > 0.5 && angleA <= 0.5) return 1;
+        if (isVisible) {
+            // ГРУППА 1: ВИДИМЫЕ. Самый высокий приоритет.
+            // Score равен просто дистанции (чем меньше дистанция, тем быстрее загрузка).
+            score = dist;
+        } else {
+            // Проверяем, находится ли объект "впереди" (куда смотрит камера) или "сзади"
+            const dirToObj = new THREE.Vector3().subVectors(pos, cameraPos).normalize();
+            const angle = cameraDir.dot(dirToObj); // 1.0 = прямо по курсу, -1.0 = сзади
 
-        // 3. Дистанция (Ближайшие важнее)
-        const distA = posA.distanceTo(camera.position);
-        const distB = posB.distanceTo(camera.position);
+            if (angle > 0.4) { 
+                // ГРУППА 2: НЕВИДИМЫЕ, НО ВПЕРЕДИ (Зона зума).
+                // Добавляем штраф 100,000, чтобы они грузились строго ПОСЛЕ видимых.
+                score = 100000 + dist;
+            } else {
+                // ГРУППА 3: СЗАДИ ИЛИ ДАЛЕКО СБОКУ.
+                // Максимальный штраф.
+                score = 200000 + dist;
+            }
+        }
 
-        return distA - distB; // Меньшая дистанция = выше в списке
+        return { index, score };
     });
+
+    // 3. Сортируем: чем меньше Score, тем раньше загрузка
+    mappedQueue.sort((a, b) => a.score - b.score);
+
+    // 4. Перестраиваем реальную очередь согласно сортировке
+    const newQueue = mappedQueue.map(el => state.loadQueue[el.index]);
+    state.loadQueue = newQueue;
+
     // ---------------------------
 
     const task = state.loadQueue.shift();
@@ -694,10 +710,9 @@ function processLoadQueue() {
                     chanSpan.innerText = customChannel;
                     modal.style.display = 'flex';
                 }
-                // Отменяем загрузку, но не ломаем очередь
                 task.onError();
                 state.activeLoads--;
-                return; // Прерываем цепочку
+                return;
             }
 
             if (data.found && data.url) {
@@ -710,31 +725,28 @@ function processLoadQueue() {
                         const canvas = document.createElement('canvas');
                         const ctx = canvas.getContext('2d');
 
-                        // Настройки размеров
-                        const cardWidth = 512; // Фиксированная ширина карточки для четкости текста
-                        const borderSide = cardWidth * 0.05; // 5% отступы сбоку
-                        const borderTop = cardWidth * 0.05;  // 5% отступ сверху
-                        const borderBottom = cardWidth * 0.25; // 25% снизу под текст
+                        const cardWidth = 512;
+                        const borderSide = cardWidth * 0.05;
+                        const borderTop = cardWidth * 0.05; 
+                        const borderBottom = cardWidth * 0.25;
                         
-                        // Вычисляем высоту картинки, сохраняя пропорции
                         const imgRatio = image.width / image.height;
                         const drawWidth = cardWidth - (borderSide * 2);
                         const drawHeight = drawWidth / imgRatio;
 
-                        // Итоговая высота всей карточки
                         const cardHeight = borderTop + drawHeight + borderBottom;
 
                         canvas.width = cardWidth;
                         canvas.height = cardHeight;
 
-                        // 1. Рисуем белую подложку
+                        // 1. Подложка
                         ctx.fillStyle = '#ffffff';
                         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-                        // 2. Рисуем изображение
+                        // 2. Изображение
                         ctx.drawImage(image, borderSide, borderTop, drawWidth, drawHeight);
 
-                        // 3. Рисуем Дату (серым, поменьше)
+                        // 3. Дата
                         if (data.date) {
                             ctx.fillStyle = '#888888';
                             ctx.font = '500 14px "Helvetica Neue", Arial, sans-serif';
@@ -742,7 +754,7 @@ function processLoadQueue() {
                             ctx.fillText(data.date, borderSide, borderTop + drawHeight + 30);
                         }
 
-                        // 4. Рисуем Подпись (черным, с переносом строк)
+                        // 4. Подпись
                         if (data.caption) {
                             ctx.fillStyle = '#222222';
                             ctx.font = '400 16px "Helvetica Neue", Arial, sans-serif';
@@ -753,11 +765,8 @@ function processLoadQueue() {
                             const maxWidth = cardWidth - (borderSide * 2);
                             const lineHeight = 20;
 
-                            // Простой перенос слов
                             const words = data.caption.split(' ');
                             let line = '';
-                            
-                            // Ограничиваем количество строк, чтобы не вылезло (макс 3 строки)
                             let lineCount = 0;
                             const maxLines = 3;
 
@@ -771,7 +780,7 @@ function processLoadQueue() {
                                     textY += lineHeight;
                                     lineCount++;
                                     if(lineCount >= maxLines) {
-                                        line = line.trim() + '...'; // Многоточие
+                                        line = line.trim() + '...';
                                         break;
                                     }
                                 } else {
@@ -783,9 +792,7 @@ function processLoadQueue() {
                             }
                         }
 
-                        // Создаем текстуру
                         const tex = new THREE.CanvasTexture(canvas);
-                        // Вычисляем новое соотношение сторон (карточка теперь выше из-за поля для текста)
                         const totalRatio = cardWidth / cardHeight;
                         
                         task.onSuccess(tex, totalRatio);
@@ -960,28 +967,70 @@ function updateChunks() {
 }
 
 // --- УПРАВЛЕНИЕ КАМЕРОЙ ---
-window.addEventListener('mousedown', e => { state.isDragging=true; state.lastMouse={x:e.clientX, y:e.clientY}; document.body.style.cursor='grabbing'; });
-window.addEventListener('mouseup', () => { state.isDragging=false; document.body.style.cursor='default'; });
+// --- УПРАВЛЕНИЕ КАМЕРОЙ ---
+
+// Хелпер для проверки: кликнули ли мы по интерфейсу?
+function isUIInteraction(e) {
+    // Проверяем, находится ли цель клика внутри панели, кнопки или попапа цветовой палитры
+    return e.target.closest('#settings-panel') || 
+           e.target.closest('#settings-btn') || 
+           e.target.closest('.custom-picker-popover');
+}
+
+window.addEventListener('mousedown', e => { 
+    // Если клик по интерфейсу — выходим, не запуская драг
+    if (isUIInteraction(e)) return;
+
+    state.isDragging = true; 
+    state.lastMouse = { x: e.clientX, y: e.clientY }; 
+    document.body.style.cursor = 'grabbing'; 
+});
+
+window.addEventListener('mouseup', () => { 
+    state.isDragging = false; 
+    document.body.style.cursor = 'default'; 
+});
+
 window.addEventListener('mousemove', e => {
-    if(!state.isDragging) return;
+    if (!state.isDragging) return;
     const dx = e.clientX - state.lastMouse.x;
     const dy = e.clientY - state.lastMouse.y;
     state.targetPos.x -= dx * 2.5;
-    state.targetPos.y += dy * 2.5; // Инверсия Y
-    state.lastMouse = {x:e.clientX, y:e.clientY};
+    state.targetPos.y += dy * 2.5; 
+    state.lastMouse = { x: e.clientX, y: e.clientY };
 });
-window.addEventListener('wheel', e => state.targetPos.z += e.deltaY * 2.0, {passive:true});
-window.addEventListener('touchstart', e => { if(e.touches.length===1){state.isDragging=true; state.lastMouse={x:e.touches[0].clientX, y:e.touches[0].clientY}} });
+
+window.addEventListener('wheel', e => { 
+    // Если скроллим над меню настроек — камеру не зумим
+    if (isUIInteraction(e)) return;
+    
+    state.targetPos.z += e.deltaY * 2.0;
+}, { passive: false }); // passive: false позволяет при необходимости делать preventDefault, но тут не обязательно
+
+window.addEventListener('touchstart', e => { 
+    if (e.touches.length === 1) {
+        // Если тач по интерфейсу — выходим
+        if (isUIInteraction(e)) return;
+
+        state.isDragging = true; 
+        state.lastMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    } 
+});
+
 window.addEventListener('touchmove', e => { 
-    if(state.isDragging && e.touches.length===1){
-        e.preventDefault();
+    // isDragging не будет true, если touchstart попал по UI, поэтому тут доп. проверка не обязательна,
+    // но важна проверка isDragging
+    if (state.isDragging && e.touches.length === 1) {
+        e.preventDefault(); // Блокируем скролл страницы на мобильных
         const dx = e.touches[0].clientX - state.lastMouse.x;
         const dy = e.touches[0].clientY - state.lastMouse.y;
-        state.targetPos.x -= dx * 2.5; state.targetPos.y += dy * 2.5;
-        state.lastMouse={x:e.touches[0].clientX, y:e.touches[0].clientY};
+        state.targetPos.x -= dx * 2.5; 
+        state.targetPos.y += dy * 2.5;
+        state.lastMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
     }
-}, {passive:false});
-window.addEventListener('touchend', ()=>state.isDragging=false);
+}, { passive: false });
+
+window.addEventListener('touchend', () => state.isDragging = false);
 
 // --- UI INTERACTION ---
 const btn = document.getElementById('settings-btn');
