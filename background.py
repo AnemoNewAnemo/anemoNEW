@@ -18,7 +18,7 @@ from flask import Response, stream_with_context
 import random
 import hashlib
 
-DUMP_CHAT_ID = "5129048838"  
+DUMP_CHAT_ID = "-5129048838"  
 CHANNEL_ID = "-1001479526905" 
 
 MAX_POST_ID = 8504
