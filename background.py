@@ -79,7 +79,19 @@ def get_image_from_telegram(post_id, custom_channel_id=None):
         date_str = datetime.fromtimestamp(msg_date).strftime('%d.%m.%Y %H:%M') if msg_date else ""
 
         if "photo" in result:
-            photo = result["photo"][-1]
+            # ОПТИМИЗАЦИЯ: Вместо последней (самой тяжелой) картинки ищем оптимальную.
+            # Нам нужна ширина около 1024-1280px. Это уменьшит вес файла с 5МБ до ~200КБ.
+            photo = None
+            # Телеграм обычно отдает массив от меньшего к большему
+            for p in result["photo"]:
+                if p["width"] >= 1024: # Ищем первую подходящую по качеству
+                    photo = p
+                    break
+            
+            # Если все картинки меньше 1024px, берем самую качественную из доступных
+            if not photo:
+                photo = result["photo"][-1]
+
             file_id = photo["file_id"]
             width = photo["width"]
             height = photo["height"]
@@ -142,29 +154,28 @@ def api_resolve_image():
     
     return jsonify({"found": False})
 
+
 @app.route('/api/proxy_image')
 def proxy_image():
     """
     Прокси-сервер. Скачивает картинку у Telegram и отдает браузеру 
-    с разрешением CORS (Access-Control-Allow-Origin).
+    с разрешением CORS.
     """
     url = request.args.get('url')
     if not url: return "No URL", 400
     
     try:
-        # Скачиваем потоком (stream=True), чтобы не грузить оперативку сервера
         req = requests.get(url, stream=True, timeout=10)
         
-        # Фильтруем заголовки (hop-by-hop headers нельзя передавать)
         excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
         headers = [(name, value) for (name, value) in req.raw.headers.items()
                    if name.lower() not in excluded_headers]
         
-        # Разрешаем доступ отовсюду
         headers.append(('Access-Control-Allow-Origin', '*'))
-        headers.append(('Cache-Control', 'public, max-age=3600')) # Кэш браузера на час
+        headers.append(('Cache-Control', 'public, max-age=31536000')) # Кэшируем на год, так быстрее при повторном заходе
 
-        return Response(stream_with_context(req.iter_content(chunk_size=1024)),
+        # ОПТИМИЗАЦИЯ: chunk_size=65536 (64KB) работает быстрее стандартного 1024 байт
+        return Response(stream_with_context(req.iter_content(chunk_size=65536)),
                         status=req.status_code,
                         headers=headers,
                         content_type=req.headers.get('content-type'))
