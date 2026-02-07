@@ -20,5 +20,6 @@ matplotlib==3.10.1
 python-telegram-bot[job-queue]==22.2
 qrcode==8.2
 ddgs==9.9.1
+waitress==3.0.2
 
 
