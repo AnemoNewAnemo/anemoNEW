@@ -288,11 +288,11 @@ def api_get_anemone_chunk():
         t = max(min(-cz / TIME_DEPTH, 1.0), 0.0)
         
         # Инверсия: t=0 → новые, t=1 → старые
-        base_id = int(MAX_POST_ID * (1.0 - t))
+        base_id = int(DEFAULT_MAX_POST_ID * (1.0 - t))
         
         # Локальный разброс, чтобы не было "одного поста на чанк"
-        low = max(MIN_POST_ID, base_id - LOCAL_SPREAD)
-        high = min(MAX_POST_ID, base_id + LOCAL_SPREAD)
+        low = max(DEFAULT_MAX_POST_ID, base_id - LOCAL_SPREAD)
+        high = min(DEFAULT_MAX_POST_ID, base_id + LOCAL_SPREAD)
         
         random_msg_id = random.randint(low, high)
 
