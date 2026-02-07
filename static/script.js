@@ -1129,13 +1129,7 @@ const MAX_LOAD_DIST = 2000;
 function processLoadQueue() {
     // 1. ОЧИСТКА ОЧЕРЕДИ ОТ ДАЛЕКИХ ЗАДАЧ
     // Если пользователь улетел, убираем задачи из очереди ДО того, как они начнутся
-    if (state.loadQueue.length > 0) {
-        const camPos = camera.position;
-        state.loadQueue = state.loadQueue.filter(item => {
-            const pos = new THREE.Vector3(item.pos[0], item.pos[1], item.pos[2]);
-            return pos.distanceTo(camPos) < MAX_LOAD_DIST;
-        });
-    }
+
 
     if (state.activeLoads >= MAX_CONCURRENT_LOADS || state.loadQueue.length === 0) return;
 
@@ -2010,3 +2004,4 @@ window.addEventListener('resize', () => {
     fireflyMat.uniforms.uScale.value = window.innerHeight / 2.0;
     dustMat.uniforms.uScale.value = window.innerHeight / 2.0; 
 });
+
