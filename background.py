@@ -41,7 +41,7 @@ DUMP_CHAT_ID = "-5129048838"
 DEFAULT_CHANNEL_ID = "-1001479526905" 
 
 DEFAULT_MAX_POST_ID = 8504
-
+MIN_POST_ID = 1
 # Простой кэш в оперативной памяти: {post_id: "url_картинки"}
 # Сбрасывается при перезагрузке сервера, но это не страшно
 IMAGE_CACHE = {} 
