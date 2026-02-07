@@ -1311,7 +1311,7 @@ async function loadChunk(cx, cy, cz) {
         
         // Читаем channel_id (если нет, сервер использует дефолтный, но параметр можно не слать)
         // Но нам нужен max_id для генерации чисел
-        const maxId = urlParams.get('max_id') || 150; // Дефолт 150, если в ссылке нет
+        const maxId = urlParams.get('max_id') || 8506; // Дефолт 150, если в ссылке нет
 
         // 2. Передаем max_id в запрос чанка
         // Обратите внимание: channel_id тут не обязателен, 
@@ -2004,4 +2004,5 @@ window.addEventListener('resize', () => {
     fireflyMat.uniforms.uScale.value = window.innerHeight / 2.0;
     dustMat.uniforms.uScale.value = window.innerHeight / 2.0; 
 });
+
 
