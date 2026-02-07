@@ -590,7 +590,7 @@ def run():
     # Вместо app.run(...) используем serve(...)
     # threads=6 означает, что сервер сможет обрабатывать 6 запросов одновременно
     logger.info("Starting Waitress server with 6 threads...")
-    serve(app, host="0.0.0.0", port=8000, threads=6)
+    serve(app, host="0.0.0.0", port=80, threads=6)
 
 def keep_alive():
     t = Thread(target=run)
