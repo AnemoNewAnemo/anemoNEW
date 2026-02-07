@@ -152,10 +152,13 @@ def get_image_from_telegram(post_id, custom_channel_id=None):
             
             if path_data.get("ok"):
                 file_path = path_data["result"]["file_path"]
-                full_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
-                
+                full_tg_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+
+                # Оборачиваем через публичный прокси
+                # n=-1 отключает оптимизацию (чтобы не портить качество), но можно убрать
+                final_url = f"https://wsrv.nl/?url={full_tg_url}&n=-1"
                 res_obj = {
-                    "url": full_url,
+                    "url": final_url,
                     "width": width,
                     "height": height,
                     "caption": caption[:100],
