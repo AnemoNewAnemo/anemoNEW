@@ -18,10 +18,22 @@ from flask import Response, stream_with_context
 import random
 import hashlib
 
-DUMP_CHAT_ID = "-5129048838"  
-CHANNEL_ID = "-1001479526905" 
 
-MAX_POST_ID = 8504
+import logging
+import sys
+
+# Настраиваем логирование в консоль (stdout)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger(__name__)
+
+DUMP_CHAT_ID = "-5129048838"  
+DEFAULT_CHANNEL_ID = "-1001479526905" 
+
+DEFAULT_MAX_POST_ID = 8504
 
 # Простой кэш в оперативной памяти: {post_id: "url_картинки"}
 # Сбрасывается при перезагрузке сервера, но это не страшно
@@ -30,23 +42,20 @@ from datetime import datetime
 
 # --- ЗАМЕНИТЬ ФУНКЦИЮ get_image_from_telegram ---
 def get_image_from_telegram(post_id, custom_channel_id=None):
-    """
-    Возвращает данные картинки. Поддерживает кастомный канал.
-    """
     post_id = str(post_id)
-    # Используем кастомный ID если передан, иначе дефолтный
-    target_channel = custom_channel_id if custom_channel_id else CHANNEL_ID
+    target_channel = custom_channel_id if custom_channel_id else DEFAULT_CHANNEL_ID
     
-    # Ключ кэша теперь должен включать ID канала, чтобы не смешивать разные каналы
-    cache_key = f"{target_channel}_{post_id}"
+    logger.info(f" [TG START] Fetching Post: {post_id} from Channel: {target_channel}")
 
+    cache_key = f"{target_channel}_{post_id}"
     if cache_key in IMAGE_CACHE:
+        logger.info(f" [TG CACHE] Hit for {cache_key}")
         return IMAGE_CACHE[cache_key]
 
     forward_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/forwardMessage"
     params = {
         "chat_id": DUMP_CHAT_ID,
-        "from_chat_id": target_channel,
+        "from_chat_id": target_channel, 
         "message_id": post_id,
         "disable_notification": True
     }
@@ -55,47 +64,52 @@ def get_image_from_telegram(post_id, custom_channel_id=None):
         r = requests.post(forward_url, json=params)
         data = r.json()
         
-        # Обработка ошибки доступа
         if not data.get("ok"):
+            logger.error(f" [TG ERROR] Telegram Response: {data}")
             err_desc = data.get("description", "").lower()
-            # Если ошибка связана с правами или отсутствием чата
             if "chat not found" in err_desc or "admin" in err_desc or "kicked" in err_desc:
                 return {"error": "access_denied"}
-            
             IMAGE_CACHE[cache_key] = None 
             return None
             
         result = data["result"]
-        # ... (Код извлечения file_id, width, height, caption, date остается прежним) ...
-        # ВНИМАНИЕ: Скопируйте логику парсинга (file_id, width, date и т.д.) из старой функции сюда
-        # Для краткости ответа я показываю только изменившуюся логику API
         
-        # Пример сокращенного блока (восстановите полный код парсинга из вашего исходника):
+        # --- ИЗМЕНЕНИЕ 1: Реальное время поста ---
+        # forward_date - это дата создания оригинала. date - это дата пересылки (сейчас).
+        # Если forward_date нет (скрыт источник), берем date.
+        origin_date = result.get("forward_date") or result.get("date")
+        date_str = datetime.fromtimestamp(origin_date).strftime('%d.%m.%Y %H:%M') if origin_date else ""
+
+        # --- ИЗМЕНЕНИЕ 2: Ссылка на пост ---
+        post_link = ""
+        # Пытаемся взять username из пересланного сообщения
+        if "forward_from_chat" in result and "username" in result["forward_from_chat"]:
+            orig_username = result["forward_from_chat"]["username"]
+            orig_id = result.get("forward_from_message_id", post_id)
+            post_link = f"https://t.me/{orig_username}/{orig_id}"
+        # Если не вышло, пробуем собрать из того канала, который запрашивали (если это @username)
+        elif target_channel.startswith("@"):
+            clean_username = target_channel.replace("@", "")
+            post_link = f"https://t.me/{clean_username}/{post_id}"
+
         file_id = None
         width = 1
         height = 1
         caption = result.get("caption", "") or result.get("text", "")
-        msg_date = result.get("date")
-        date_str = datetime.fromtimestamp(msg_date).strftime('%d.%m.%Y %H:%M') if msg_date else ""
 
         if "photo" in result:
-            # ОПТИМИЗАЦИЯ: Вместо последней (самой тяжелой) картинки ищем оптимальную.
-            # Нам нужна ширина около 1024-1280px. Это уменьшит вес файла с 5МБ до ~200КБ.
             photo = None
-            # Телеграм обычно отдает массив от меньшего к большему
             for p in result["photo"]:
-                if p["width"] >= 1024: # Ищем первую подходящую по качеству
+                if p["width"] >= 1024:
                     photo = p
                     break
-            
-            # Если все картинки меньше 1024px, берем самую качественную из доступных
             if not photo:
                 photo = result["photo"][-1]
 
             file_id = photo["file_id"]
             width = photo["width"]
             height = photo["height"]
-        # ... (тут должна быть проверка document как в оригинале) ...
+            
         elif "document" in result and result["document"]["mime_type"].startswith("image"):
              file_id = result["document"]["file_id"]
              if "thumb" in result["document"]:
@@ -118,7 +132,8 @@ def get_image_from_telegram(post_id, custom_channel_id=None):
                 "width": width,
                 "height": height,
                 "caption": caption[:100],
-                "date": date_str
+                "date": date_str,
+                "post_link": post_link  # Добавляем ссылку в объект
             }
             IMAGE_CACHE[cache_key] = res_obj
             return res_obj
@@ -131,11 +146,10 @@ def get_image_from_telegram(post_id, custom_channel_id=None):
 @app.route('/api/anemone/resolve_image')
 def api_resolve_image():
     post_id = request.args.get('post_id')
-    channel_id = request.args.get('channel_id') # Получаем параметр
+    channel_id = request.args.get('channel_id')
     
     img_data = get_image_from_telegram(post_id, custom_channel_id=channel_id)
     
-    # Проверка на ошибку доступа
     if img_data and "error" in img_data and img_data["error"] == "access_denied":
         return jsonify({"found": False, "error": "access_denied"})
 
@@ -149,11 +163,11 @@ def api_resolve_image():
             "width": img_data['width'],
             "height": img_data['height'],
             "caption": img_data.get('caption', ''),
-            "date": img_data.get('date', '')
+            "date": img_data.get('date', ''),
+            "post_link": img_data.get('post_link', '') # Передаем ссылку
         })
     
     return jsonify({"found": False})
-
 
 @app.route('/api/proxy_image')
 def proxy_image():
@@ -197,16 +211,24 @@ def api_get_anemone_chunk():
         cx = int(request.args.get('x', 0))
         cy = int(request.args.get('y', 0))
         cz = int(request.args.get('z', 0))
+        
+        # Читаем max_id из запроса или берем дефолтный
+        # Frontend должен передавать этот параметр
+        req_max_id = request.args.get('max_id')
+        if req_max_id and req_max_id.isdigit():
+            max_limit = int(req_max_id)
+        else:
+            max_limit = DEFAULT_MAX_POST_ID
+            
     except ValueError:
         return jsonify([])
 
-    # Детерминированная случайность на основе координат
     seed_str = f"{cx},{cy},{cz}"
     seed_int = int(hashlib.sha256(seed_str.encode('utf-8')).hexdigest(), 16) % 10**8
     random.seed(seed_int)
 
-    items_count = random.randint(2, 4) # Чуть меньше, чтобы не спамить API
-    chunk_size = 1000
+    items_count = random.randint(2, 4)
+    chunk_size = 1500 # У вас в JS 1500, тут было 1000, лучше синхронизировать
     
     planes = []
     
@@ -216,9 +238,9 @@ def api_get_anemone_chunk():
         pz = random.uniform(-chunk_size/2, chunk_size/2)
         scale = random.uniform(100, 300)
 
-        # Генерируем ID поста. Убедитесь, что MAX_POST_ID актуален.
-        # Лучше брать диапазон ближе к концу, там больше живых картинок.
-        random_msg_id = random.randint(50, MAX_POST_ID) 
+        # Генерируем ID на основе переданного лимита
+        # max_limit берется из URL
+        random_msg_id = random.randint(1, max_limit) 
 
         planes.append({
             "id": f"{cx}_{cy}_{cz}_{i}",
@@ -232,6 +254,7 @@ def api_get_anemone_chunk():
         "cx": cx, "cy": cy, "cz": cz,
         "items": planes
     })
+
 
 
 
