@@ -281,7 +281,20 @@ def api_get_anemone_chunk():
 
         # Генерируем ID на основе переданного лимита
         # max_limit берется из URL
-        random_msg_id = random.randint(1, max_limit) 
+        TIME_DEPTH = 30   # сколько чанков по Z покрывают ВЕСЬ канал
+        LOCAL_SPREAD = 300  # разброс ID внутри эпохи
+        
+        # cz: 0 (новое) → -TIME_DEPTH (старое)
+        t = max(min(-cz / TIME_DEPTH, 1.0), 0.0)
+        
+        # Инверсия: t=0 → новые, t=1 → старые
+        base_id = int(MAX_POST_ID * (1.0 - t))
+        
+        # Локальный разброс, чтобы не было "одного поста на чанк"
+        low = max(MIN_POST_ID, base_id - LOCAL_SPREAD)
+        high = min(MAX_POST_ID, base_id + LOCAL_SPREAD)
+        
+        random_msg_id = random.randint(low, high)
 
         planes.append({
             "id": f"{cx}_{cy}_{cz}_{i}",
