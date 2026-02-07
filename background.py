@@ -8,7 +8,7 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 from PIL import Image  # Библиотека для обработки изображений
 if not TELEGRAM_BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN не задан в переменных окружения")
-
+from waitress import serve
 
 # --- API ENDPOINTS (Точки для работы с данными) ---
 
@@ -585,8 +585,12 @@ def serve_other_app(path):
 
 # --- SERVER STARTUP ---
 
+# --- SERVER STARTUP ---
 def run():
-    app.run(host='0.0.0.0', port=80)
+    # Вместо app.run(...) используем serve(...)
+    # threads=6 означает, что сервер сможет обрабатывать 6 запросов одновременно
+    logger.info("Starting Waitress server with 6 threads...")
+    serve(app, host="0.0.0.0", port=8000, threads=6)
 
 def keep_alive():
     t = Thread(target=run)
