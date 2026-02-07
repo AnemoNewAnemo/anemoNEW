@@ -8,17 +8,22 @@ const CONFIG = {
         top: new THREE.Color('#050814'),    
         firefly: new THREE.Color('#ffaa00') 
     },
-    wind: {
-        speed: 0.8,
-        force: 0.3
+    wind: { speed: 0.8, force: 0.3 },
+    particles: { speed: 0.5 },
+    motion: { swayAmp: 0.1, twistAmp: 0.15 },
+    // НОВЫЕ НАСТРОЙКИ
+    sky: {
+        starDensity: 15000,
+        starSize: 1.0,
+        blur: 0.0, // Эффект боке (0 - нет, 1 - макс)
+        cometFreq: 0.02,     // Быстрые кометы
+        slowCometFreq: 0.002 // Медленные фоновые кометы
     },
-    particles: {
-        speed: 0.5
-    },
-    // НОВЫЙ БЛОК: Настройки движения карточек
-    motion: {
-        swayAmp: 0.1,  // Амплитуда раскачивания (влево-вправо)
-        twistAmp: 0.15 // Амплитуда вращения (вокруг оси)
+    details: {
+        dustCount: 4000,
+        dustSize: 1.0,
+        fireflyCount: 600,
+        fireflySize: 1.0
     }
 };
 
@@ -40,7 +45,6 @@ const paperVertexShader = `
     uniform float uPhase;
     uniform float uSwaySpeed;
     
-    // Новые параметры амплитуды
     uniform float uSwayAmp;  
     uniform float uTwistAmp; 
 
@@ -48,43 +52,68 @@ const paperVertexShader = `
 
     varying vec2 vUv;
     varying float vDist;
+    varying vec3 vWorldPos;
 
     void main() {
         vUv = uv;
         vec3 pos = position; 
         
+        // Масштабирование под формат фото
         pos.xy *= uImageScale;
 
-        // 1. ФИЗИКА МАЯТНИКА (ВЛЕВО-ВПРАВО)
-        // Используем uSwayAmp вместо хардкода
+        // --- 1. ФИЗИКА МАЯТНИКА (Базовое качание) ---
         float swing = sin(uTime * uSwaySpeed + uPhase) * (uSwayAmp + uWindForce * 0.2);
-        float flutter = sin(uTime * 3.0 + uPhase * 2.0) * 0.02 * uWindForce;
+        // Добавляем "дрожание" от порывов ветра
+        float flutter = sin(uTime * 3.0 + uPhase * 2.0) * 0.05 * uWindForce;
         float totalAngle = swing + flutter;
 
         float c = cos(totalAngle);
         float s = sin(totalAngle);
 
+        // Вращение вокруг точки крепления (0,0,0) - верх карточки
         float rX = pos.x * c - pos.y * s;
         float rY = pos.x * s + pos.y * c;
-        
         pos.x = rX;
         pos.y = rY;
         
-        // 2. ПОВОРОТ ВОКРУГ ОСИ Y (TWIST/ВГЛУБЬ)
-        // Используем uTwistAmp
+        // --- 2. ПОВОРОТ ВОКРУГ ОСИ Y (Twist) ---
         float twistAngle = sin(uTime * 0.5 + uPhase) * uTwistAmp;
         float cT = cos(twistAngle);
         float sT = sin(twistAngle);
 
         float finalX = pos.x * cT - pos.z * sT;
         float finalZ = pos.x * sT + pos.z * cT;
-
         pos.x = finalX;
         pos.z = finalZ;
+
+        // --- 3. ИЗГИБ БУМАГИ (Paper Physics) ---
+        // Работает только если у геометрии достаточно сегментов.
+        // pos.y идет от 0.0 (верх) до -Height (низ).
+        // Чем ниже точка, тем сильнее влияние ветра.
+        
+        float distFromTop = abs(pos.y); // 0 -> 1+
+        
+        // Волна, бегущая по бумаге
+        float wave = sin(pos.x * 2.0 + uTime * 4.0 + pos.y * 3.0);
+        
+        // Изгиб "парусом" от ветра (центр выгибается)
+        float sail = sin(pos.x * 3.14); 
+        
+        // Комбинируем деформации Z
+        float deformation = (wave * 0.1 + sail * 0.05) * uWindForce;
+        
+        // Применяем деформацию с нарастанием к низу карточки
+        // pow(distFromTop, 1.5) делает верх жестким, а низ гибким
+        pos.z += deformation * pow(distFromTop, 1.5);
+        
+        // Немного сдвигаем X для эффекта "сжатия" бумаги при изгибе
+        pos.x += (sin(uTime * 5.0 + pos.y * 10.0) * 0.01 * uWindForce) * distFromTop;
 
         vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
         gl_Position = projectionMatrix * mvPosition;
         vDist = -mvPosition.z; 
+        
+        vWorldPos = (modelMatrix * vec4(pos, 1.0)).xyz; 
     }
 `;
 
@@ -92,19 +121,72 @@ const paperFragmentShader = `
     uniform sampler2D map;
     uniform vec3 uColor;
     uniform bool hasTexture;
-    uniform float uTime; 
+    uniform float uTime;
+    uniform float uPhase; 
+    
+    uniform vec3 uCamPos;
+    uniform vec3 uCamDir;
     
     varying vec2 vUv;
     varying float vDist;
+    varying vec3 vWorldPos;
+
+    // --- ФУНКЦИЯ РИСОВАНИЯ ЗАГРУЗОЧНОЙ ПОЛОСЫ (Плавное заполнение) ---
+    float drawProgressBar(vec2 uv, float totalTime) {
+        float result = 0.0;
+        
+        float count = 5.0;
+        float boxW = 0.04;
+        float boxH = 0.012;
+        float gap = 0.015;
+        
+        float totalWidth = (boxW * count) + (gap * (count - 1.0));
+        float startX = 0.5 - (totalWidth * 0.5) + (boxW * 0.5);
+        float posY = 0.40;
+
+        // Время на один блок (в секундах)
+        float timePerBlock = 6.0; 
+
+        for(float i = 0.0; i < 5.0; i++) {
+            vec2 center = vec2(startX + i * (boxW + gap), posY);
+            
+            // SDF для прямоугольника
+            vec2 d = abs(uv - center) - vec2(boxW * 0.5, boxH * 0.5);
+            float dist = max(d.x, d.y);
+            
+            // Контур
+            float outline = 1.0 - smoothstep(0.0, 0.0015, abs(dist));
+            
+            // Логика заполнения
+            // Вычисляем, насколько заполнен ТЕКУЩИЙ блок (от 0.0 до 1.0)
+            // totalTime идет от 0 до 30. 
+            // i=0 -> заполняется с 0 по 6 сек.
+            // i=1 -> заполняется с 6 по 12 сек.
+            float blockStart = i * timePerBlock;
+            float blockEnd = (i + 1.0) * timePerBlock;
+            
+            float progress = clamp((totalTime - blockStart) / (blockEnd - blockStart), 0.0, 1.0);
+            
+            // Маска заполнения внутри бокса (слева направо)
+            // uv.x должен быть меньше чем левый край + ширина * прогресс
+            float boxLeft = center.x - (boxW * 0.5);
+            float fillMask = step(uv.x, boxLeft + (boxW * progress));
+            
+            // Само "тело" блока (внутренность)
+            float shape = 1.0 - smoothstep(0.0, 0.002, dist);
+            
+            result += max(outline, shape * fillMask);
+        }
+        
+        return result;
+    }
 
     void main() {
-        // --- 1. ЛОГИКА ЗАТЕМНЕНИЯ (СВЕТ/ТЕНЬ) ---
         float shadowStart = 800.0;
         float shadowEnd = 1600.0;
         float lightFactor = 1.0 - smoothstep(shadowStart, shadowEnd, vDist);
         float brightness = 0.15 + (0.85 * lightFactor);
 
-        // --- 2. ЛОГИКА ПРОЗРАЧНОСТИ ---
         float opacityStart = 1500.0; 
         float opacityEnd = 2200.0;   
         float opacity = 1.0 - smoothstep(opacityStart, opacityEnd, vDist);
@@ -112,21 +194,36 @@ const paperFragmentShader = `
 
         vec3 rgbColor;
 
-        // --- 3. ПОЛУЧЕНИЕ ЦВЕТА ---
         if (hasTexture) {
-            // Текстура уже содержит фото, рамку и текст, просто отображаем её
             rgbColor = texture2D(map, vUv).rgb;
         } else {
-            // Заглушка пока грузится
-            vec3 loadingBg = vec3(0.05, 0.09, 0.18); 
-            float distToCenter = distance(vUv, vec2(0.5));
+            vec3 bg = vec3(0.05, 0.09, 0.18); 
+            
+            // Точка
+            vec2 center = vec2(0.5, 0.5);
+            float distToCenter = distance(vUv, center);
             float pulse = 0.5 + 0.5 * sin(uTime * 8.0); 
-            float dotRadius = 0.015 + 0.01 * pulse; 
-            float dot = 1.0 - smoothstep(dotRadius, dotRadius + 0.01, distToCenter);
-            rgbColor = mix(loadingBg, vec3(1.0), dot);
+            float dotRadius = 0.015 + 0.005 * pulse; 
+            float centerDot = 1.0 - smoothstep(dotRadius, dotRadius + 0.002, distToCenter);
+            
+            // Приоритет (цвет контура полосок)
+            vec3 toObj = normalize(vWorldPos - uCamPos);
+            float align = dot(toObj, uCamDir); 
+            float dist = distance(vWorldPos, uCamPos);
+
+            vec3 priorityColor = (align > 0.5 && dist < 1200.0) ? vec3(1.0) : vec3(1.0, 0.85, 0.0);
+
+            // Прогресс (Медленный цикл 30 секунд)
+            float localTime = uTime + uPhase * 5.0; // Phase сдвигает старт
+            float t = mod(localTime, 35.0); // 30 сек заполнение + 5 сек пауза полной полоски
+            
+            float barsMask = drawProgressBar(vUv, t);
+            
+            rgbColor = bg;
+            rgbColor = mix(rgbColor, vec3(1.0), centerDot); 
+            rgbColor = mix(rgbColor, priorityColor, barsMask); 
         }
 
-        // --- 4. ПРИМЕНЕНИЕ ЗАТЕМНЕНИЯ ---
         vec3 finalRgb = rgbColor * brightness;
         gl_FragColor = vec4(finalRgb, opacity);
     }
@@ -147,9 +244,9 @@ container.appendChild(renderer.domElement);
 
 
 // --- ЧАСТИЦЫ (Пыль и Светлячки) ---
-const particleCount = 4000;
-const wrapSize = 4000; // Размер области вокруг камеры
-const fireflyCount = 600; 
+const MAX_DUST = 8000;
+const MAX_FIREFLIES = 1200;
+const wrapSize = 4000; 
 
 const particleGroup = new THREE.Group();
 scene.add(particleGroup);
@@ -161,45 +258,46 @@ const infiniteParticleVertex = `
 uniform float uTime;
 uniform vec3 uCamPos;
 uniform float uSize;
-uniform float uScale;
+uniform float uScale;       // <-- Здесь uScale
+uniform float uSizeMult;    // <-- ДОБАВЛЕНО: Объявление множителя размера
 
 // Новые uniform-ы для физики
 uniform float uWindSpeed;
 uniform float uWindForce;
 uniform float uPartSpeed;
 
-attribute float size;
+attribute float size;       // <-- Здесь атрибут называется size
 varying float vAlpha;
 
 void main() {
     vec3 pos = position;
     
-    // 1. ВЕТЕР: Сдвигаем все поле частиц по X (и немного Y) со временем
-    float windOffset = uTime * uWindSpeed * 50.0; // 50.0 - множитель скорости
-    float vertOffset = uTime * uPartSpeed * 10.0; // Медленное падение/подъем
+    // 1. ВЕТЕР
+    float windOffset = uTime * uWindSpeed * 50.0;
+    float vertOffset = uTime * uPartSpeed * 10.0;
     
-    // Применяем смещение к "мировым" координатам до зацикливания
     vec3 animatedPos = pos;
     animatedPos.x += windOffset; 
     animatedPos.y -= vertOffset; 
 
-    // 2. ТУРБУЛЕНТНОСТЬ (Wobble): 
-    // Зависит от uWindForce и uPartSpeed. Чем выше скорость, тем быстрее дрожание.
+    // 2. ТУРБУЛЕНТНОСТЬ
     float wobbleFreq = uTime * uPartSpeed;
     float wobbleAmp = uWindForce * 200.0; 
     
     animatedPos.x += sin(wobbleFreq + pos.y * 0.01) * wobbleAmp;
     animatedPos.y += cos(wobbleFreq + pos.x * 0.01) * wobbleAmp * 0.5;
 
-    // 3. БЕСКОНЕЧНОЕ ЗАЦИКЛИВАНИЕ:
-    // Теперь mod применяется к уже смещенным координатам
+    // 3. БЕСКОНЕЧНОЕ ЗАЦИКЛИВАНИЕ
     vec3 localPos = mod(animatedPos - uCamPos + uSize * 0.5, uSize) - uSize * 0.5;
     vec3 finalPos = uCamPos + localPos;
 
     vec4 mvPosition = modelViewMatrix * vec4(finalPos, 1.0);
     gl_Position = projectionMatrix * mvPosition;
     
-    gl_PointSize = (size * uScale) / -mvPosition.z;
+    // ИСПРАВЛЕНИЕ ОШИБОК ИМЕНОВАНИЯ:
+    // Было: (aSize * uSizeMult * scale)
+    // Стало: (size * uSizeMult * uScale)
+    gl_PointSize = (size * uSizeMult * uScale) / -mvPosition.z;
     
     float dist = length(localPos);
     vAlpha = 1.0 - smoothstep(uSize * 0.35, uSize * 0.5, dist);
@@ -207,13 +305,15 @@ void main() {
 `;
 
 
+
 const fireflyGeo = new THREE.BufferGeometry();
 const fireflyPos = [];
 const fireflyPhase = [];
 const fireflySize = [];
-const fireflyType = []; // 1.0 = Основной светлячок, 0.0 = Мелкая искра
+const fireflyType = []; 
 
-for (let i = 0; i < fireflyCount; i++) {
+// Генерируем буфер сразу на МАКСИМАЛЬНОЕ количество
+for (let i = 0; i < MAX_FIREFLIES; i++) {
     fireflyPos.push(
         (Math.random() - 0.5) * wrapSize,
         (Math.random() - 0.5) * wrapSize, 
@@ -221,52 +321,53 @@ for (let i = 0; i < fireflyCount; i++) {
     );
     fireflyPhase.push(Math.random() * Math.PI * 2);
     
-    // 30% частиц - это крупные светлячки, остальные - мелкие искры вокруг
     const isBody = Math.random() > 0.7; 
     fireflyType.push(isBody ? 1.0 : 0.0);
-    
-    // Светлячки большие, искры крошечные
     fireflySize.push(isBody ? (15.0 + Math.random() * 10.0) : (3.0 + Math.random() * 4.0));
 }
 
 fireflyGeo.setAttribute('position', new THREE.Float32BufferAttribute(fireflyPos, 3));
 fireflyGeo.setAttribute('phase', new THREE.Float32BufferAttribute(fireflyPhase, 1));
-fireflyGeo.setAttribute('aSize', new THREE.Float32BufferAttribute(fireflySize, 1));
+// ИСПРАВЛЕНИЕ 1: Имя атрибута 'size' вместо 'aSize' для совместимости с кодом шейдера
+fireflyGeo.setAttribute('size', new THREE.Float32BufferAttribute(fireflySize, 1));
 fireflyGeo.setAttribute('type', new THREE.Float32BufferAttribute(fireflyType, 1));
 
 const fireflyMat = new THREE.ShaderMaterial({
     uniforms: {
         color: { value: CONFIG.colors.firefly },
         uTime: { value: 0 },
-        scale: { value: window.innerHeight / 2.0 },
+        // ИСПРАВЛЕНИЕ 2: Имя униформа 'uScale' вместо 'scale'
+        uScale: { value: window.innerHeight / 2.0 },
         uCamPos: { value: new THREE.Vector3() },
         uSize: { value: wrapSize },
+        uSizeMult: { value: CONFIG.details.dustSize },
         uWindSpeed: { value: CONFIG.wind.speed },
         uWindForce: { value: CONFIG.wind.force },
         uPartSpeed: { value: CONFIG.particles.speed }
     },
     vertexShader: `
         attribute float phase;
-        attribute float aSize;
+        attribute float size; // ИСПРАВЛЕНИЕ: теперь size совпадает с использованием ниже
         attribute float type;
         
         varying float vAlpha;
-        varying float vType; // Передаем тип в фрагментный шейдер
+        varying float vType; 
         
         uniform float uTime;
-        uniform float scale;
+        uniform float uScale; // ИСПРАВЛЕНИЕ: объявлен uScale
         uniform vec3 uCamPos;
         uniform float uSize;
         uniform float uWindSpeed;
         uniform float uWindForce;
         uniform float uPartSpeed;
+        uniform float uSizeMult; 
 
         void main() {
             vType = type;
             vec3 pos = position;
 
             // Движение
-            float timeScale = (type > 0.5) ? 1.0 : 2.5; // Искры двигаются быстрее
+            float timeScale = (type > 0.5) ? 1.0 : 2.5; 
             
             float windOffset = uTime * uWindSpeed * 60.0 * timeScale;
             float vertOffset = uTime * uPartSpeed * 15.0 * timeScale;
@@ -275,31 +376,27 @@ const fireflyMat = new THREE.ShaderMaterial({
             animatedPos.x += windOffset;
             animatedPos.y += vertOffset;
 
-            // Хаотичное движение (Шум)
-            // Искры (type 0) дрожат сильнее, имитируя разлет
+            // Хаотичное движение
             float wobbleSpeed = uTime * (0.5 + uPartSpeed) * timeScale;
-            float wobbleAmp = (type > 0.5) ? 50.0 : 80.0; // Амплитуда
+            float wobbleAmp = (type > 0.5) ? 50.0 : 80.0;
             
             animatedPos.x += sin(wobbleSpeed + phase) * (wobbleAmp + uWindForce * 100.0);
             animatedPos.y += cos(wobbleSpeed * 0.8 + phase) * (wobbleAmp + uWindForce * 100.0);
             animatedPos.z += sin(wobbleSpeed * 0.5 + phase) * (20.0 + uWindForce * 50.0);
 
-            // Зацикливание пространства
+            // Зацикливание
             vec3 localPos = mod(animatedPos - uCamPos + uSize * 0.5, uSize) - uSize * 0.5;
             vec4 mvPosition = modelViewMatrix * vec4(uCamPos + localPos, 1.0);
             gl_Position = projectionMatrix * mvPosition;
 
-            // Размер зависит от типа
-            gl_PointSize = (aSize * scale) / -mvPosition.z;
+            // Размер: теперь переменные size и uScale объявлены корректно
+            gl_PointSize = (size * uSizeMult * uScale) / -mvPosition.z;
             
             // Мерцание
-            float blinkSpeed = (type > 0.5) ? 3.0 : 8.0; // Искры мерцают очень быстро
+            float blinkSpeed = (type > 0.5) ? 3.0 : 8.0;
             float blink = sin(uTime * blinkSpeed + phase);
             
-            // Базовая прозрачность
             float baseAlpha = (type > 0.5) ? (0.6 + 0.4 * blink) : (0.4 + 0.6 * blink);
-
-            // Фейд у краев зоны видимости
             float dist = length(localPos);
             float fade = 1.0 - smoothstep(uSize * 0.4, uSize * 0.5, dist);
             
@@ -312,47 +409,29 @@ const fireflyMat = new THREE.ShaderMaterial({
         varying float vType;
 
         void main() {
-            // Нормализованные координаты точки (от -0.5 до 0.5)
             vec2 coord = gl_PointCoord - vec2(0.5);
             float dist = length(coord);
-            
             if(dist > 0.5) discard;
 
             vec4 finalColor;
-
             if (vType > 0.5) {
-                // --- СТИЛЬ ОСНОВНОГО СВЕТЛЯЧКА (СФЕРА + СВЕЧЕНИЕ) ---
-                
-                // 1. Плотное белое ядро (Hot Core)
                 float core = 1.0 - smoothstep(0.05, 0.25, dist);
-                
-                // 2. Внешнее мягкое свечение (Outer Glow)
-                float glow = exp(-dist * 4.0); // Экспоненциальное затухание
-                
-                // Смешиваем: Ядро белое, Свечение цветное
+                float glow = exp(-dist * 4.0);
                 vec3 coreColor = mix(color, vec3(1.0, 1.0, 0.8), core * 0.8);
-                
-                // Итоговая яркость пикселя
                 float strength = core + glow * 0.6;
-                
                 finalColor = vec4(coreColor, vAlpha * strength);
-
             } else {
-                // --- СТИЛЬ ИСКРЫ (ТОЧКА + ШЛЕЙФ) ---
-                // Просто острая точка, но яркая
                 float spark = 1.0 - pow(dist * 2.0, 0.5);
                 finalColor = vec4(color, vAlpha * spark);
             }
-
             gl_FragColor = finalColor;
         }
     `,
     transparent: true,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
-    depthTest: false // <-- ВАЖНО
+    depthTest: false 
 });
-
 const fireflySystem = new THREE.Points(fireflyGeo, fireflyMat);
 fireflySystem.frustumCulled = false;
 scene.add(fireflySystem);
@@ -363,8 +442,8 @@ fireflySystem.renderOrder = 11;
 const dustGeo = new THREE.BufferGeometry();
 const dustPos = [];
 const dustSizes = [];
-for (let i = 0; i < particleCount; i++) {
-    // Просто случайные позиции в кубе
+// Используем MAX_DUST (8000)
+for (let i = 0; i < MAX_DUST; i++) {
     dustPos.push(Math.random() * wrapSize, Math.random() * wrapSize, Math.random() * wrapSize);
     dustSizes.push(2.0 + Math.random() * 2.0);
 }
@@ -378,12 +457,14 @@ const dustMat = new THREE.ShaderMaterial({
         uSize: { value: wrapSize },
         uScale: { value: window.innerHeight / 2.0 },
         uTime: { value: 0 },
-        // Добавляем привязку к слайдерам
         uWindSpeed: { value: 0 },
         uWindForce: { value: 0 },
-        uPartSpeed: { value: 0 }
+        uPartSpeed: { value: 0 },
+        
+        // --- ДОБАВИТЬ ЭТУ СТРОКУ ---
+        uSizeMult: { value: CONFIG.details.dustSize } 
     },
-    vertexShader: infiniteParticleVertex, // Используем обновленный шейдер
+    vertexShader: infiniteParticleVertex,
     fragmentShader: `
         uniform vec3 uColor;
         varying float vAlpha;
@@ -395,7 +476,7 @@ const dustMat = new THREE.ShaderMaterial({
     `,
     transparent: true,
     depthWrite: false,
-    depthTest: false, // <-- ВАЖНО
+    depthTest: false,
     blending: THREE.AdditiveBlending
 });
 const dustSystem = new THREE.Points(dustGeo, dustMat);
@@ -406,23 +487,21 @@ dustSystem.renderOrder = 10;
 // --- REALISTIC SKY SYSTEM (Звезды и Кометы) ---
 
 // 1. Звездное поле (Разные цвета, мерцание)
-const starCount = 15000; 
+// 1. Звездное поле (Реалистичный спектр)
+const MAX_STARS = 30000; 
 const starGeo = new THREE.BufferGeometry();
 const starPos = [];
 const starColors = [];
 const starSizes = [];
 const starFlashSpeed = [];
+const starBrightness = []; 
 
-const starColorPalette = [
-    new THREE.Color('#9db4ff'), // Голубоватый
-    new THREE.Color('#ffddb4'), // Оранжеватый
-    new THREE.Color('#ffffff'), // Белый
-    new THREE.Color('#fcfcfc')  // Тусклый белый
-];
+// Вспомогательный цвет для вычислений
+const tempColor = new THREE.Color();
 
-for(let i=0; i<starCount; i++) {
-    // Распределяем звезды по огромной сфере
-    const r = 3000 + Math.random() * 2000; // Чуть расширили диапазон
+// Генерируем MAX_STARS
+for(let i=0; i<MAX_STARS; i++) {
+    const r = 3000 + Math.random() * 2000; 
     const theta = 2 * Math.PI * Math.random();
     const phi = Math.acos(2 * Math.random() - 1);
     
@@ -432,57 +511,197 @@ for(let i=0; i<starCount; i++) {
     
     starPos.push(x, y, z);
     
-    const color = starColorPalette[Math.floor(Math.random() * starColorPalette.length)];
-    starColors.push(color.r, color.g, color.b);
+    // --- ЛОГИКА ЦВЕТА И ЯРКОСТИ (Строгий реализм) ---
+    const rand = Math.random();
+    let sizeBase;
+    let brightnessBase;
+
+    // 1. ПОДАВЛЯЮЩЕЕ БОЛЬШИНСТВО (92%) - Тусклые желто-оранжевые / Белые
+    // Сделали их менее насыщенными и не такими яркими
+    if (rand < 0.92) {
+        // Hue 35-55 (Yellow-Orange), Saturation 15-40% (бледные), Lightness средняя
+        const hue = 0.1 + Math.random() * 0.05; 
+        const sat = 0.15 + Math.random() * 0.25;   
+        const light = 0.6 + Math.random() * 0.3; 
+        tempColor.setHSL(hue, sat, light);
+        
+        // Размер поменьше, чтобы не рябило
+        sizeBase = 8.0 + Math.random() * 5.0;   
+        // Яркость намеренно снижена для фона
+        brightnessBase = 0.3 + Math.random() * 0.4; 
+    }
+    // 2. Оранжевые гиганты (4%) - Яркие и насыщенные
+    else if (rand < 0.96) {
+        tempColor.setHSL(0.06 + Math.random() * 0.04, 0.9, 0.6);
+        sizeBase = 16.0 + Math.random() * 6.0; 
+        brightnessBase = 1.2 + Math.random() * 0.6; // Они будут выделяться в боке
+    }
+    // 3. Красные (2%)
+    else if (rand < 0.98) {
+        tempColor.setHSL(0.0 + Math.random() * 0.02, 0.8, 0.6); 
+        sizeBase = 14.0 + Math.random() * 4.0;
+        brightnessBase = 0.9 + Math.random() * 0.4;
+    }
+    // 4. Горячие Синие/Белые (1.5%)
+    else if (rand < 0.995) {
+        tempColor.setHSL(0.6 + Math.random() * 0.05, 0.7, 0.8);
+        sizeBase = 15.0 + Math.random() * 8.0; 
+        brightnessBase = 1.3 + Math.random() * 0.7; // Самые яркие
+    }
+    // 5. Уникальные (0.5%)
+    else {
+        tempColor.setHSL(0.45 + Math.random() * 0.1, 0.9, 0.6); 
+        sizeBase = 18.0;
+        brightnessBase = 1.5; 
+    }
+
+    starColors.push(tempColor.r, tempColor.g, tempColor.b);
+    starSizes.push(sizeBase);
+    starBrightness.push(brightnessBase);
     
-    // Увеличили минимальный размер с 0.5 до 1.5, чтобы их было видно
-    starSizes.push(20 + Math.random() * 2.5); 
-    starFlashSpeed.push(Math.random() * 3.0 + 0.2);
+    // Мерцание медленнее, чтобы было спокойнее
+    starFlashSpeed.push(Math.random() * 1.5 + 0.1);
 }
 
 starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
 starGeo.setAttribute('color', new THREE.Float32BufferAttribute(starColors, 3));
 starGeo.setAttribute('size', new THREE.Float32BufferAttribute(starSizes, 1));
 starGeo.setAttribute('speed', new THREE.Float32BufferAttribute(starFlashSpeed, 1));
+starGeo.setAttribute('brightness', new THREE.Float32BufferAttribute(starBrightness, 1));
+// --- ОБНОВЛЕННЫЙ ШЕЙДЕР ЗВЕЗД (REALISTIC VINTAGE BOKEH) ---
 
 const starMat = new THREE.ShaderMaterial({
     uniforms: {
         uTime: { value: 0 },
-        uScale: { value: window.innerHeight }
+        uScale: { value: window.innerHeight },
+        uBlur: { value: CONFIG.sky.blur },
+        uSizeMult: { value: CONFIG.sky.starSize },
+        uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
     },
     vertexShader: `
         attribute float size;
         attribute float speed;
+        attribute float brightness;
         attribute vec3 color;
+        
         varying vec3 vColor;
         varying float vAlpha;
+        varying float vSpeed;
+        varying vec2 vScreenPos;
+        varying float vBrightness; 
+
         uniform float uTime;
         uniform float uScale;
+        uniform float uSizeMult;
+        uniform float uBlur;
+
         void main() {
             vColor = color;
+            vSpeed = speed;
+            vBrightness = brightness;
+            
             vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
             gl_Position = projectionMatrix * mvPosition;
+            vScreenPos = gl_Position.xy / gl_Position.w;
             
-            // Мерцание
-            float twinkle = sin(uTime * speed + position.x);
-            vAlpha = 0.7 + 0.3 * twinkle; // Подняли базовую яркость
+            float twinkle = sin(uTime * speed + position.x * 0.5);
+            float baseAlpha = mix(0.5 + 0.5 * twinkle, 1.0, uBlur * 0.8);
             
-            gl_PointSize = size * (uScale / -mvPosition.z);
+            vAlpha = baseAlpha;
+
+            float blurExpansion = uBlur * 300.0 * (0.6 + 0.4 * speed); 
+            gl_PointSize = (size * uSizeMult + blurExpansion) * (uScale / -mvPosition.z);
         }
     `,
     fragmentShader: `
         varying vec3 vColor;
         varying float vAlpha;
+        varying float vSpeed;
+        varying vec2 vScreenPos;
+        varying float vBrightness; 
+        
+        uniform float uBlur;
+        uniform vec2 uResolution;
+
+        float hexDist(vec2 p) {
+            p = abs(p);
+            float d = max(p.x * 0.866025 + p.y * 0.5, p.y);
+            return d;
+        }
+
         void main() {
-            vec2 coord = gl_PointCoord - vec2(0.5);
-            float dist = length(coord);
-            if(dist > 0.5) discard;
+            vec2 uv = gl_PointCoord - vec2(0.5);
             
-            // Более жесткое ядро, чтобы звезда читалась как точка, а не размытое пятно
-            float strength = 1.0 - (dist * 2.0);
-            strength = pow(strength, 1.5);
+            // Расчет позиции для искажения
+            float distFromCenter = length(vScreenPos);
+            float edgeFactor = smoothstep(0.7, 1.2, distFromCenter);
             
-            gl_FragColor = vec4(vColor, vAlpha * strength);
+            // 1. ИСКАЖЕНИЕ (Линза)
+            float distortStr = edgeFactor * edgeFactor * uBlur * 1.0;
+            vec2 dirToCenter = normalize(-vScreenPos);
+            vec2 distortedUV = uv - dirToCenter * dot(uv, dirToCenter) * distortStr;
+
+            // 2. ВРАЩЕНИЕ
+            float angle = vSpeed * 10.0; 
+            float ca = cos(angle); float sa = sin(angle);
+            mat2 rot = mat2(ca, -sa, sa, ca);
+            vec2 rotUV = rot * distortedUV; 
+            
+            // 3. ФОРМА
+            float distHex = hexDist(rotUV);
+            float distCircle = length(distortedUV);
+            float shapeDist = mix(distCircle, distHex, uBlur * 1.2);
+            
+            // --- ИСПРАВЛЕНИЕ 1: Компенсация размытия по краям ---
+            // Добавляем edgeFactor в расчет мягкости, чтобы искаженные края не казались резкими
+            float edgeSoftness = 0.05 + uBlur * (0.2 + edgeFactor * 0.5); 
+            
+            float alphaShape = 1.0 - smoothstep(0.5 - edgeSoftness, 0.5, shapeDist);
+            //  --- ЦЕНТР ВЫЦВЕТАЕТ ПРИ БОЛЬШОМ BLUR ---
+            float centerFade = smoothstep(
+                0.0,
+                0.35 + uBlur * 0.15, // радиус центра
+                shapeDist
+            );
+
+            // centerFade: 0 в центре → 1 к краям
+            // усиливаем эффект только при большом blur
+            float blurCenterFactor = mix(1.0, centerFade, smoothstep(0.3, 1.0, uBlur));
+            // 4. КОМПЕНСАЦИЯ ЯРКОСТИ (Energy Conservation)
+            float energyConservation = 1.0 / (1.0 + uBlur * 2.0);
+            
+            // --- ИСПРАВЛЕНИЕ 2: Отсечение тусклых звезд (Anti-mess) ---
+            // Порог растет вместе с блюром. 
+            // 0.2 - базовый порог, 1.2 * uBlur - прирост требований к яркости
+            float cullThreshold = 0.2 + uBlur * 0.55; 
+            
+            // Плавный срез: если яркость звезды меньше порога, она уходит в 0
+            float cullFactor = smoothstep(cullThreshold, cullThreshold + 0.4, vBrightness);
+
+            // Применяем cullFactor к итоговой прозрачности
+            float finalOpacity =
+                vAlpha *
+                alphaShape *
+                blurCenterFactor *   // ← ВАЖНО
+                energyConservation *
+                vBrightness *
+                cullFactor;
+            
+            if (finalOpacity < 0.005) discard;
+
+            // 5. ЦВЕТ И RIM ЭФФЕКТ
+            vec3 finalRGB = vColor;
+            float rim = smoothstep(0.35, 0.5, shapeDist);
+            float luma = dot(finalRGB, vec3(0.299, 0.587, 0.114));
+            vec3 chroma = finalRGB / max(luma, 0.001);
+
+            finalRGB = mix(
+                finalRGB,
+                chroma * luma * (1.0 + rim * uBlur * 0.8),
+                rim
+            );
+
+            gl_FragColor = vec4(finalRGB, finalOpacity);
         }
     `,
     transparent: true,
@@ -494,26 +713,279 @@ const starSystem = new THREE.Points(starGeo, starMat);
 starSystem.renderOrder = -1; // Исправление: звезды рисуются первыми (фон)
 scene.add(starSystem);
 
+
+// --- ДОБАВИТЬ НОВЫЙ КЛАСС ---
+class SlowCometSystem {
+    constructor(scene) {
+        // Лимит комет
+        const count = 300; 
+        
+        // 1. ЛИНИИ (Хвосты)
+        const lineGeo = new THREE.BufferGeometry();
+        const linePos = new Float32Array(count * 2 * 3);
+        const lineCols = new Float32Array(count * 2 * 4); 
+
+        lineGeo.setAttribute('position', new THREE.BufferAttribute(linePos, 3));
+        lineGeo.setAttribute('color', new THREE.BufferAttribute(lineCols, 4));
+
+        this.lineMat = new THREE.LineBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            opacity: 1.0 
+        });
+
+        this.lines = new THREE.LineSegments(lineGeo, this.lineMat);
+        this.lines.renderOrder = 0; 
+        this.lines.frustumCulled = false;
+        scene.add(this.lines);
+
+        // 2. ТОЧКИ (Головы с бликами)
+        const headGeo = new THREE.BufferGeometry();
+        const headPos = new Float32Array(count * 3);
+        const headSizes = new Float32Array(count);
+        const headAngles = new Float32Array(count); // Угол наклона блика
+        const headColors = new Float32Array(count * 3);
+        const headAlphas = new Float32Array(count);
+
+        headGeo.setAttribute('position', new THREE.BufferAttribute(headPos, 3));
+        headGeo.setAttribute('size', new THREE.BufferAttribute(headSizes, 1));
+        headGeo.setAttribute('angle', new THREE.BufferAttribute(headAngles, 1));
+        headGeo.setAttribute('color', new THREE.BufferAttribute(headColors, 3));
+        headGeo.setAttribute('alpha', new THREE.BufferAttribute(headAlphas, 1));
+
+        this.headMat = new THREE.ShaderMaterial({
+            uniforms: {
+                uScale: { value: window.innerHeight },
+                uBlur: { value: 0 } // Будем обновлять
+            },
+            vertexShader: `
+                attribute float size;
+                attribute float angle;
+                attribute float alpha;
+                attribute vec3 color;
+                varying vec3 vColor;
+                varying float vAlpha;
+                varying float vAngle;
+
+                uniform float uScale;
+
+                void main() {
+                    vColor = color;
+                    vAlpha = alpha;
+                    vAngle = angle;
+                    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                    gl_Position = projectionMatrix * mvPosition;
+                    // Размер головы увеличиваем для эффекта свечения
+                    gl_PointSize = size * (uScale / -mvPosition.z);
+                }
+            `,
+            fragmentShader: `
+                varying vec3 vColor;
+                varying float vAlpha;
+                varying float vAngle;
+                uniform float uBlur;
+
+                void main() {
+                    if (vAlpha <= 0.01) discard;
+                    vec2 uv = gl_PointCoord - vec2(0.5);
+
+                    // 1. Поворот для блика (Наклон)
+                    float s = sin(vAngle);
+                    float c = cos(vAngle);
+                    mat2 rot = mat2(c, -s, s, c);
+                    vec2 rotUV = rot * uv;
+
+                    float dist = length(uv);
+
+                    // 2. Яркое ядро (Сама "звезда")
+                    float core = 1.0 - smoothstep(0.0, 0.15 + uBlur * 0.1, dist);
+                    
+                    // 3. Вытянутый мерцающий блик (Flare)
+                    // Используем степень для остроты и abs для симметрии
+                    float flareV = 0.015 / (abs(rotUV.x * 6.0) + 0.05);
+                    float flareH = 0.002 / (abs(rotUV.y * 2.0) + 0.05); // Тонкий поперечный
+                    float flare = (flareV + flareH) * (1.0 - smoothstep(0.3, 0.5, dist));
+                    
+                    // Собираем яркость
+                    float intensity = core * 2.0 + flare * 1.5;
+                    
+                    // Мягкое угасание к краям спрайта
+                    float circleFade = 1.0 - smoothstep(0.4, 0.5, dist);
+
+                    vec3 finalColor = vColor * intensity;
+                    gl_FragColor = vec4(finalColor, vAlpha * circleFade);
+                }
+            `,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+
+        this.heads = new THREE.Points(headGeo, this.headMat);
+        this.heads.renderOrder = 1; // Рисуем поверх хвостов
+        this.heads.frustumCulled = false;
+        scene.add(this.heads);
+
+
+        // 3. ДАННЫЕ
+        this.comets = [];
+        for(let i=0; i<count; i++) {
+            this.comets.push({
+                active: false,
+                pos: new THREE.Vector3(),
+                vel: new THREE.Vector3(),
+                color: new THREE.Color(),
+                life: 0,
+                maxLife: 0,
+                index: i
+            });
+        }
+        
+        this.palette = [
+            new THREE.Color('#ffaa00'), 
+            new THREE.Color('#ffffff'), 
+            new THREE.Color('#aaddff')  
+        ];
+    }
+
+    spawn() {
+        const available = this.comets.find(c => !c.active);
+        if (!available) return;
+
+        const r = 3000 + Math.random() * 2000; 
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        
+        available.pos.set(
+            r * Math.sin(phi) * Math.cos(theta),
+            r * Math.sin(phi) * Math.sin(theta),
+            r * Math.cos(phi)
+        );
+
+        const speed = 2.0 + Math.random() * 3.0; 
+        const randomDir = new THREE.Vector3(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5).normalize();
+        available.vel.crossVectors(available.pos, randomDir).normalize().multiplyScalar(speed);
+
+        available.color = this.palette[Math.floor(Math.random() * this.palette.length)];
+        available.life = 0;
+        available.maxLife = 500 + Math.random() * 300; 
+        available.active = true;
+
+        // Случайный наклон блика (например, от -45 до +45 градусов или произвольно)
+        available.angle = (Math.random() - 0.5) * Math.PI; 
+    }
+
+    update(blurLevel) {
+        // Обновляем юниформ блюра для голов
+        this.headMat.uniforms.uBlur.value = blurLevel;
+
+        const spawnChance = CONFIG.sky.slowCometFreq * 40.0;
+        if (Math.random() < spawnChance) this.spawn();
+        if (spawnChance > 1.0 && Math.random() < spawnChance * 0.5) this.spawn();
+
+        // Атрибуты линий
+        const linePosAttr = this.lines.geometry.attributes.position;
+        const lineColAttr = this.lines.geometry.attributes.color;
+        
+        // Атрибуты голов
+        const headPosAttr = this.heads.geometry.attributes.position;
+        const headSizeAttr = this.heads.geometry.attributes.size;
+        const headColAttr = this.heads.geometry.attributes.color;
+        const headAlphaAttr = this.heads.geometry.attributes.alpha;
+        const headAngleAttr = this.heads.geometry.attributes.angle;
+
+        let needsUpdate = false;
+
+        this.comets.forEach(c => {
+            const idxLine1 = c.index * 2;     
+            const idxLine2 = c.index * 2 + 1; 
+            const idxHead = c.index;
+
+            if (!c.active) {
+                // Если не активна, прячем (альфа 0)
+                if (headAlphaAttr.getX(idxHead) !== 0) { 
+                    lineColAttr.setW(idxLine1, 0); lineColAttr.setW(idxLine2, 0);
+                    headAlphaAttr.setX(idxHead, 0);
+                    needsUpdate = true;
+                }
+                return;
+            }
+
+            c.life++;
+            if (c.life > c.maxLife) {
+                c.active = false;
+                return;
+            }
+
+            c.pos.add(c.vel);
+            
+            // --- ЛИНИЯ (Хвост) ---
+            const tailLen = 300.0;
+            const tailPos = c.pos.clone().sub(c.vel.clone().normalize().multiplyScalar(tailLen));
+
+            linePosAttr.setXYZ(idxLine1, tailPos.x, tailPos.y, tailPos.z);
+            linePosAttr.setXYZ(idxLine2, c.pos.x, c.pos.y, c.pos.z);
+
+            // Альфа зависит от жизни и блюра
+            let progress = c.life / c.maxLife;
+            let baseAlpha = Math.sin(progress * Math.PI) * 1.0; 
+            
+            // Хвост при блюре исчезает сильнее
+            let lineAlpha = baseAlpha * (1.0 - blurLevel * 0.9);
+
+            lineColAttr.setXYZW(idxLine2, c.color.r, c.color.g, c.color.b, lineAlpha);
+            lineColAttr.setXYZW(idxLine1, c.color.r, c.color.g, c.color.b, 0.0);
+            
+            // --- ГОЛОВА (Точка) ---
+            headPosAttr.setXYZ(idxHead, c.pos.x, c.pos.y, c.pos.z);
+            headColAttr.setXYZ(idxHead, c.color.r, c.color.g, c.color.b);
+            headAngleAttr.setX(idxHead, c.angle);
+            
+            // Размер головы растет при блюре (эффект боке)
+            let size = 60.0 + (blurLevel * 100.0);
+            headSizeAttr.setX(idxHead, size);
+            
+            // Альфа головы чуть выше хвоста
+            headAlphaAttr.setX(idxHead, baseAlpha);
+
+            needsUpdate = true;
+        });
+
+        if (needsUpdate) {
+            linePosAttr.needsUpdate = true;
+            lineColAttr.needsUpdate = true;
+            
+            headPosAttr.needsUpdate = true;
+            headSizeAttr.needsUpdate = true;
+            headColAttr.needsUpdate = true;
+            headAlphaAttr.needsUpdate = true;
+            headAngleAttr.needsUpdate = true;
+        }
+    }
+}
+
+// Инициализация
+const slowComet = new SlowCometSystem(scene);
+
 // 2. Система Комет (Падающие звезды)
 class CometSystem {
     constructor(scene) {
-        // Комета - это линия с градиентом прозрачности (голова яркая, хвост исчезает)
         const geometry = new THREE.BufferGeometry();
-        // 2 точки: Голова и Хвост
+        // 2 точки: Хвост и Голова
         const positions = new Float32Array(6); 
-        const colors = new Float32Array([
-            1, 1, 1, 0.0, // Хвост (прозрачный)
-            1, 1, 1, 1.0  // Голова (белая)
-        ]);
+        const colors = new Float32Array(8); // r,g,b,a для 2 точек
         
         geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4)); // r,g,b,a
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
 
         this.material = new THREE.LineBasicMaterial({
             vertexColors: true,
             transparent: true,
             blending: THREE.AdditiveBlending,
-            opacity: 0
+            opacity: 0,
+            linewidth: 1 // WebGL часто игнорирует это, но оставим
         });
 
         this.mesh = new THREE.Line(geometry, this.material);
@@ -524,42 +996,65 @@ class CometSystem {
         this.velocity = new THREE.Vector3();
         this.life = 0;
         this.maxLife = 0;
+        
+        // Палитра: Белый, Желтый, Оранжевый, Голубой, Фиолетовый
+        this.palette = [
+            new THREE.Color('#ffffff'),
+            new THREE.Color('#ffcc00'), // Желтый
+            new THREE.Color('#ff6600'), // Оранжевый
+            new THREE.Color('#00ccff'), // Лазурный
+            new THREE.Color('#9933ff')  // Фиолетовый
+        ];
     }
 
     spawn(cameraPos) {
         if (this.active) return;
 
-        // Позиция спавна: высоко и случайно вокруг камеры
+        // Позиция спавна
         const offset = new THREE.Vector3(
-            (Math.random() - 0.5) * 2000,
-            800 + Math.random() * 500,
-            (Math.random() - 0.5) * 1000 - 500
+            (Math.random() - 0.5) * 2500,
+            1000 + Math.random() * 800,
+            (Math.random() - 0.5) * 1500 - 500
         );
         const startPos = new THREE.Vector3().copy(cameraPos).add(offset);
         
-        // Направление: вниз и немного в сторону
+        // Характеристики
+        const isSmall = Math.random() > 0.3; // 70% мелких, 30% крупных
+        const speedMult = isSmall ? 1.5 : 1.0;
+        
         this.velocity.set(
-            (Math.random() - 0.5) * 30, // X drift
-            -(Math.random() * 20 + 30), // Y drop (быстро вниз)
-            (Math.random() - 0.5) * 10  // Z drift
+            (Math.random() - 0.5) * 40 * speedMult, 
+            -(Math.random() * 25 + 35) * speedMult, // Быстро вниз
+            (Math.random() - 0.5) * 15
         );
 
-        // Обновляем геометрию (ставим в начало)
+        // Цвет
+        const color = this.palette[Math.floor(Math.random() * this.palette.length)];
+        const colAttr = this.mesh.geometry.attributes.color;
+        
+        // Голова яркая, хвост прозрачный того же цвета
+        // Tail (index 0)
+        colAttr.setXYZW(0, color.r, color.g, color.b, 0.0);
+        // Head (index 1)
+        colAttr.setXYZW(1, color.r, color.g, color.b, isSmall ? 0.8 : 1.0);
+        colAttr.needsUpdate = true;
+
+        // Установка начальной позиции
         const posAttr = this.mesh.geometry.attributes.position;
-        posAttr.setXYZ(0, startPos.x, startPos.y, startPos.z); // Tail
-        posAttr.setXYZ(1, startPos.x, startPos.y, startPos.z); // Head
+        posAttr.setXYZ(0, startPos.x, startPos.y, startPos.z);
+        posAttr.setXYZ(1, startPos.x, startPos.y, startPos.z);
         posAttr.needsUpdate = true;
 
         this.life = 0;
-        this.maxLife = 60 + Math.random() * 40; // Живет ~1-1.5 секунды (при 60fps)
+        this.maxLife = 50 + Math.random() * 40; 
         this.material.opacity = 1;
         this.active = true;
     }
 
     update(cameraPos) {
-        // Шанс спавна, если не активна
+        // Увеличен шанс спавна: 0.003 -> 0.02 (в ~7 раз чаще)
         if (!this.active) {
-            if (Math.random() < 0.003) { // 0.3% шанс каждый кадр
+            if (Math.random() < CONFIG.sky.cometFreq) { 
                 this.spawn(cameraPos);
             }
             return;
@@ -572,22 +1067,17 @@ class CometSystem {
             return;
         }
 
-        // Движение
         const posAttr = this.mesh.geometry.attributes.position;
-        
-        // Текущая голова
         const headX = posAttr.getX(1);
         const headY = posAttr.getY(1);
         const headZ = posAttr.getZ(1);
 
-        // Новая позиция головы
         const newHeadX = headX + this.velocity.x;
         const newHeadY = headY + this.velocity.y;
         const newHeadZ = headZ + this.velocity.z;
 
-        // Хвост следует за головой с задержкой (длина хвоста)
-        // Просто берем старую позицию головы для хвоста, но умножаем вектор
-        const tailLen = 15.0; // Длина хвоста
+        // Хвост длиннее
+        const tailLen = 20.0; 
         const tailX = newHeadX - this.velocity.x * tailLen;
         const tailY = newHeadY - this.velocity.y * tailLen;
         const tailZ = newHeadZ - this.velocity.z * tailLen;
@@ -596,9 +1086,8 @@ class CometSystem {
         posAttr.setXYZ(1, newHeadX, newHeadY, newHeadZ);
         posAttr.needsUpdate = true;
 
-        // Плавное исчезновение в конце
-        if (this.life > this.maxLife - 20) {
-            this.material.opacity = (this.maxLife - this.life) / 20;
+        if (this.life > this.maxLife - 15) {
+            this.material.opacity = (this.maxLife - this.life) / 15;
         }
     }
 }
@@ -629,17 +1118,28 @@ const state = {
     currentChunk: { x: null, y: null, z: null },
     loadQueue: [],
     activeLoads: 0,
-    occupied: [] // <--- ДОБАВИТЬ ЭТО (Хранит {x,y,z, r, chunkKey})
+    occupied: [],
+    // НОВОЕ: Карта активных контроллеров отмены { postId: AbortController }
+    activeControllers: new Map() 
 };
 
-// ... Функция очереди загрузки осталась прежней (сокращена для краткости) ...
-// 2. Обновленная функция обработки очереди с жесткой приоритизацией
+// Максимальная дистанция для загрузки (чуть больше дальности видимости)
+const MAX_LOAD_DIST = 2000;
+
 function processLoadQueue() {
+    // 1. ОЧИСТКА ОЧЕРЕДИ ОТ ДАЛЕКИХ ЗАДАЧ
+    // Если пользователь улетел, убираем задачи из очереди ДО того, как они начнутся
+    if (state.loadQueue.length > 0) {
+        const camPos = camera.position;
+        state.loadQueue = state.loadQueue.filter(item => {
+            const pos = new THREE.Vector3(item.pos[0], item.pos[1], item.pos[2]);
+            return pos.distanceTo(camPos) < MAX_LOAD_DIST;
+        });
+    }
+
     if (state.activeLoads >= MAX_CONCURRENT_LOADS || state.loadQueue.length === 0) return;
 
-    // --- ЛОГИКА ПРИОРИТЕТОВ (СОРТИРОВКА) ---
-    
-    // 1. Обновляем матрицы камеры, чтобы данные были актуальны
+    // --- ЛОГИКА ПРИОРИТЕТОВ (сохранена как была) ---
     camera.updateMatrixWorld();
     const projScreenMatrix = new THREE.Matrix4();
     projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
@@ -647,62 +1147,34 @@ function processLoadQueue() {
     frustum.setFromProjectionMatrix(projScreenMatrix);
 
     const cameraDir = new THREE.Vector3();
-    camera.getWorldDirection(cameraDir); // Вектор направления взгляда
+    camera.getWorldDirection(cameraDir); 
     const cameraPos = camera.position;
 
-    // 2. Создаем временный массив с вычисленными "весами" (Score)
-    // Это предотвращает повторные тяжелые вычисления внутри sort()
     const mappedQueue = state.loadQueue.map((item, index) => {
         const pos = new THREE.Vector3(item.pos[0], item.pos[1], item.pos[2]);
         const dist = pos.distanceTo(cameraPos);
-        
-        // ВАЖНО: Радиус 400, так как scale объектов в Python доходит до 350.
-        // Если радиус мал, объект с краем на экране будет считаться невидимым.
         const isVisible = frustum.intersectsSphere(new THREE.Sphere(pos, 400));
-        
-        let score = 0;
-
-        if (isVisible) {
-            // ГРУППА 1: ВИДИМЫЕ. Самый высокий приоритет.
-            // Score равен просто дистанции (чем меньше дистанция, тем быстрее загрузка).
-            score = dist;
-        } else {
-            // Проверяем, находится ли объект "впереди" (куда смотрит камера) или "сзади"
-            const dirToObj = new THREE.Vector3().subVectors(pos, cameraPos).normalize();
-            const angle = cameraDir.dot(dirToObj); // 1.0 = прямо по курсу, -1.0 = сзади
-
-            if (angle > 0.4) { 
-                // ГРУППА 2: НЕВИДИМЫЕ, НО ВПЕРЕДИ (Зона зума).
-                // Добавляем штраф 100,000, чтобы они грузились строго ПОСЛЕ видимых.
-                score = 100000 + dist;
-            } else {
-                // ГРУППА 3: СЗАДИ ИЛИ ДАЛЕКО СБОКУ.
-                // Максимальный штраф.
-                score = 200000 + dist;
-            }
-        }
-
+        let score = isVisible ? dist : (cameraDir.dot(new THREE.Vector3().subVectors(pos, cameraPos).normalize()) > 0.4 ? 100000 + dist : 200000 + dist);
         return { index, score };
     });
 
-    // 3. Сортируем: чем меньше Score, тем раньше загрузка
     mappedQueue.sort((a, b) => a.score - b.score);
-
-    // 4. Перестраиваем реальную очередь согласно сортировке
-    const newQueue = mappedQueue.map(el => state.loadQueue[el.index]);
-    state.loadQueue = newQueue;
-
+    state.loadQueue = mappedQueue.map(el => state.loadQueue[el.index]);
     // ---------------------------
 
     const task = state.loadQueue.shift();
     state.activeLoads++;
 
-    // Получаем ID канала из URL
+    // Создаем контроллер отмены
+    const controller = new AbortController();
+    state.activeControllers.set(task.postId, controller);
+
     const urlParams = new URLSearchParams(window.location.search);
     const customChannel = urlParams.get('channel_id');
     const channelParam = customChannel ? `&channel_id=${customChannel}` : '';
 
-    fetch(`/api/anemone/resolve_image?post_id=${task.postId}${channelParam}`)
+    // Передаем signal в fetch
+    fetch(`/api/anemone/resolve_image?post_id=${task.postId}${channelParam}`, { signal: controller.signal })
         .then(r => r.json())
         .then(data => {
             // ОБРАБОТКА ОШИБКИ ДОСТУПА
@@ -714,11 +1186,7 @@ function processLoadQueue() {
                     modal.style.display = 'flex';
                 }
                 task.onError();
-                state.activeLoads--;
-                return;
-            }
-
-            if (data.found && data.url) {
+            } else if (data.found && data.url) {
                 const loader = new THREE.ImageLoader();
                 loader.setCrossOrigin('anonymous');
                 loader.load(
@@ -797,29 +1265,32 @@ function processLoadQueue() {
 
                         const tex = new THREE.CanvasTexture(canvas);
                         const totalRatio = cardWidth / cardHeight;
-                        
                         task.onSuccess(tex, totalRatio);
-                        state.activeLoads--;
-                        processLoadQueue();
+                        cleanupTask();
                     },
                     undefined, 
-                    () => { 
-                        task.onError();
-                        state.activeLoads--;
-                        processLoadQueue();
-                    }
+                    () => { task.onError(); cleanupTask(); }
                 );
             } else {
                 task.onError();
-                state.activeLoads--;
-                processLoadQueue();
+                cleanupTask();
             }
         })
-        .catch(() => {
-            task.onError();
-            state.activeLoads--;
-            processLoadQueue();
+        .catch((err) => {
+            // Если ошибка из-за Abort, ничего не делаем, просто чистим
+            if (err.name === 'AbortError') {
+                // console.log('Download aborted for', task.postId);
+            } else {
+                task.onError();
+            }
+            cleanupTask();
         });
+
+    function cleanupTask() {
+        state.activeControllers.delete(task.postId);
+        state.activeLoads--;
+        processLoadQueue();
+    }
 }
 // 1. Изменяем queueImageLoad, чтобы принимать позицию (pos)
 function queueImageLoad(postId, pos, onSuccess, onError) {
@@ -830,30 +1301,54 @@ function queueImageLoad(postId, pos, onSuccess, onError) {
 
 
 
+// --- ОБНОВЛЕННАЯ ФУНКЦИЯ loadChunk ---
 async function loadChunk(cx, cy, cz) {
     const key = `${cx},${cy},${cz}`;
     if (state.chunks.has(key)) return;
+    
     const g = new THREE.Group();
     g.position.set(cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE);
     scene.add(g);
     state.chunks.set(key, { group: g });
+
     try {
-        const res = await fetch(`/api/anemone/get_chunk?x=${cx}&y=${cy}&z=${cz}`);
+        // 1. Получаем параметры из URL браузера
+        const urlParams = new URLSearchParams(window.location.search);
+        
+        // Читаем channel_id (если нет, сервер использует дефолтный, но параметр можно не слать)
+        // Но нам нужен max_id для генерации чисел
+        const maxId = urlParams.get('max_id') || 150; // Дефолт 150, если в ссылке нет
+
+        // 2. Передаем max_id в запрос чанка
+        // Обратите внимание: channel_id тут не обязателен, 
+        // так как чанк просто генерирует числа. Channel нужен при resolve_image.
+        const res = await fetch(`/api/anemone/get_chunk?x=${cx}&y=${cy}&z=${cz}&max_id=${maxId}`);
         const data = await res.json();
-        // ПЕРЕДАЕМ key третьим аргументом
+        
         if (data.items) data.items.forEach(item => createHangingArt(g, item, key));
-    } catch (e) {}
+    } catch (e) {
+        console.error(e);
+    }
 }
 
 
 // --- ОПТИМИЗАЦИЯ: ОБЩИЕ РЕСУРСЫ ---
-// 1. Общая геометрия для всех карточек (во избежание создания тысяч копий)
-const commonPaperGeometry = new THREE.PlaneGeometry(1, 1); 
-commonPaperGeometry.translate(0, -0.5, 0); // Сдвиг pivot point
 
-// Расширяем границы обсчета
-commonPaperGeometry.computeBoundingSphere();
-commonPaperGeometry.boundingSphere.radius = 3.0;
+// 1. Настройка геометрии
+// High Poly: 12x12 сегментов для красивого изгиба
+const realisticPaperGeometry = new THREE.PlaneGeometry(1, 1, 12, 12);
+realisticPaperGeometry.translate(0, -0.5, 0);
+realisticPaperGeometry.computeBoundingSphere();
+realisticPaperGeometry.boundingSphere.radius = 3.0;
+
+// Low Poly: 1x1 сегмент (всего 2 треугольника) для производительности
+const simplePaperGeometry = new THREE.PlaneGeometry(1, 1);
+simplePaperGeometry.translate(0, -0.5, 0);
+simplePaperGeometry.computeBoundingSphere();
+simplePaperGeometry.boundingSphere.radius = 3.0;
+
+// Текущая активная геометрия (по умолчанию реалистичная)
+let currentPaperGeometry = realisticPaperGeometry;
 
 // 2. Общая геометрия для веревки
 const commonLineGeometry = new THREE.BufferGeometry().setFromPoints([
@@ -861,60 +1356,69 @@ const commonLineGeometry = new THREE.BufferGeometry().setFromPoints([
     new THREE.Vector3(0, 3000, 0)
 ]);
 
-// 3. Общие Uniforms (время и ветер обновляются централизованно)
+// 3. Общие Uniforms (Добавлены uCamPos и uCamDir)
 const globalUniforms = {
     uTime: { value: 0 },
     uWindSpeed: { value: CONFIG.wind.speed },
     uWindForce: { value: CONFIG.wind.force },
-    // Новые uniform-ы
     uSwayAmp: { value: CONFIG.motion.swayAmp },
-    uTwistAmp: { value: CONFIG.motion.twistAmp }
+    uTwistAmp: { value: CONFIG.motion.twistAmp },
+    uCamPos: { value: new THREE.Vector3() }, // <--- НОВОЕ
+    uCamDir: { value: new THREE.Vector3() }  // <--- НОВОЕ
 };
 
-function createHangingArt(group, data, chunkKey) { // <--- Добавлен аргумент chunkKey
+function createHangingArt(group, data, chunkKey) {
     const baseScale = data.scale[0] * 1.5; 
-    const geometry = commonPaperGeometry;
+    const geometry = currentPaperGeometry;
     const phase = Math.random() * 10;
     const swaySpeed = 0.5 + Math.random() * 0.5;
 
-    // --- ЛОГИКА ПРЕДОТВРАЩЕНИЯ НАЛОЖЕНИЯ ---
-    // Создаем временный вектор позиции
+    // --- УЛУЧШЕННАЯ ЛОГИКА ПРЕДОТВРАЩЕНИЯ НАЛОЖЕНИЯ ---
+    // Вектор текущей позиции
     const pos = new THREE.Vector3(data.pos[0], data.pos[1] + (baseScale / 2), data.pos[2]);
-    const radius = baseScale * 0.9; // Радиус карточки (чуть меньше реального)
-    const minZGap = 40; // Минимальное расстояние по Z (чтобы не слипались слои)
+    // Увеличили радиус для проверки (чтобы карточки отталкивались сильнее)
+    const radius = baseScale * 1.2; 
+    const minZGap = 60; // Увеличили зазор по глубине
 
-    // Пытаемся найти свободное место (макс. 5 попыток сдвига)
-    for (let i = 0; i < 5; i++) {
+    // Пытаемся найти свободное место (макс. 8 попыток)
+    for (let i = 0; i < 8; i++) {
         let collision = false;
         for (const item of state.occupied) {
-            // Быстрая проверка: если объект слишком далеко, пропускаем
-            if (Math.abs(item.x - pos.x) > radius * 2) continue;
-            if (Math.abs(item.y - pos.y) > radius * 2) continue;
+            // Быстрый отсев далеких
+            if (Math.abs(item.x - pos.x) > radius * 2.5) continue;
+            if (Math.abs(item.y - pos.y) > radius * 2.5) continue;
 
-            // Точная проверка расстояний
             const dx = pos.x - item.x;
             const dy = pos.y - item.y;
             const dz = pos.z - item.z;
             const distXY = Math.sqrt(dx*dx + dy*dy);
 
-            // Если карточки перекрываются визуально (XY) И слишком близки по глубине (Z)
-            if (distXY < (radius + item.r) * 0.8 && Math.abs(dz) < minZGap) {
+            // Если есть пересечение
+            if (distXY < (radius + item.r) && Math.abs(dz) < minZGap) {
                 collision = true;
                 
-                // РЕАКЦИЯ: Сдвигаем текущую карточку
-                // 1. Сильно толкаем по Z (чтобы разнести слои)
-                pos.z += (dz >= 0 ? minZGap : -minZGap) * 1.5; 
+                // Векторное отталкивание: толкаем ОТ центра соседней карточки
+                // Если позиции совпадают идеально, добавляем случайность
+                let angle = Math.atan2(dy, dx);
+                if (distXY < 1.0) angle = Math.random() * Math.PI * 2;
+
+                const pushDist = (radius + item.r) - distXY + 20; // Выталкиваем + буфер
                 
-                // 2. Немного сдвигаем в сторону (рандомно), чтобы разбить "стопку"
-                pos.x += (Math.random() - 0.5) * 50;
-                pos.y += (Math.random() - 0.5) * 50;
-                break; // Выходим из внутреннего цикла и проверяем новую позицию
+                pos.x += Math.cos(angle) * pushDist;
+                pos.y += Math.sin(angle) * pushDist;
+                
+                // И немного двигаем по Z, чтобы разнести слои
+                pos.z += (dz >= 0 ? 1 : -1) * 30;
+                
+                // Добавляем микро-шум, чтобы не выстраивались в идеальные линии
+                pos.x += (Math.random() - 0.5) * 10;
+                pos.y += (Math.random() - 0.5) * 10;
+                break; 
             }
         }
-        if (!collision) break; // Если коллизий нет, позиция утверждена
+        if (!collision) break; 
     }
 
-    // Сохраняем занятую позицию
     state.occupied.push({ x: pos.x, y: pos.y, z: pos.z, r: radius, chunkKey: chunkKey });
     // ----------------------------------------
 
@@ -926,6 +1430,7 @@ function createHangingArt(group, data, chunkKey) { // <--- Добавлен ар
             map: { value: PLACEHOLDER_TEXTURE },
             hasTexture: { value: false },
             uColor: { value: new THREE.Color(0xffffff) },
+            uSizeMult: { value: CONFIG.details.fireflySize }, // <--- ДОБАВИТЬ            
             uAspectRatio: { value: 1.0 },
             uPhase: { value: phase },
             uSwaySpeed: { value: swaySpeed },
@@ -938,13 +1443,8 @@ function createHangingArt(group, data, chunkKey) { // <--- Добавлен ар
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.renderOrder = 5;
-    // Используем обновленный pos
     mesh.position.copy(pos);
-    
-    // ВАЖНО: Делаем масштаб равномерным по всем осям!
-    // Это предотвращает сплющивание при вращении
     mesh.scale.set(baseScale, baseScale, baseScale); 
-    
     mesh.frustumCulled = true; 
 
     const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.3 });
@@ -953,35 +1453,23 @@ function createHangingArt(group, data, chunkKey) { // <--- Добавлен ар
 
     group.add(mesh);
 
-queueImageLoad(data.post_id, data.pos, (tex, ratio) => {
+    queueImageLoad(data.post_id, data.pos, (tex, ratio) => {
         tex.minFilter = THREE.LinearFilter;
         tex.generateMipmaps = false;
-        
-        // --- ИСПРАВЛЕНИЕ ФРИЗОВ ---
-        // Принудительно отправляем текстуру на GPU прямо сейчас, 
-        // чтобы рендер не "споткнулся" об нее в следующем кадре.
         renderer.initTexture(tex); 
         
         material.uniforms.map.value = tex;
         material.uniforms.hasTexture.value = true;
-        material.uniforms.uAspectRatio.value = ratio; // Для рамки полароида в frag shader
+        material.uniforms.uAspectRatio.value = ratio; 
 
-        // ВМЕСТО изменения mesh.scale, меняем uniform внутри шейдера
         let scaleX = 1;
         let scaleY = 1;
-
         if (ratio > 1) { 
             scaleX = ratio;
-            scaleY = 1;
         } else {
-            scaleX = 1;
             scaleY = 1 / ratio;
         }
-
-        // Передаем "геометрические" размеры в шейдер
         material.uniforms.uImageScale.value.set(scaleX, scaleY);
-        
-        // mesh.scale трогать не нужно, он остается равномерным (baseScale, baseScale, baseScale)
         
     }, () => { 
         group.remove(mesh); 
@@ -1158,9 +1646,18 @@ window.addEventListener('touchend', () => state.isDragging = false);
 const btn = document.getElementById('settings-btn');
 const panel = document.getElementById('settings-panel');
 let panelOpen = false;
+
 btn.addEventListener('click', () => {
     panelOpen = !panelOpen;
     panel.classList.toggle('active', panelOpen);
+    btn.classList.toggle('active', panelOpen);
+    
+    // Меняем иконку: Меню <-> Крестик
+    if (panelOpen) {
+        btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+    } else {
+        btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+    }
 });
 
 // Привязка инпутов
@@ -1177,7 +1674,46 @@ function updateBackgroundGradient() {
     // Обновляем туман, чтобы горизонт сливался с новым цветом
     scene.fog.color.set(CONFIG.colors.bottom);
 }
+// --- НОВЫЕ СЛУШАТЕЛИ СОБЫТИЙ ---
+// --- ЛОГИКА ПЕРЕКЛЮЧЕНИЯ ФИЗИКИ БУМАГИ ---
+const physicsToggle = document.getElementById('physics-toggle');
 
+if (physicsToggle) {
+    physicsToggle.addEventListener('change', (e) => {
+        const isHighQuality = e.target.checked;
+        
+        // 1. Меняем глобальную ссылку на геометрию для НОВЫХ объектов
+        currentPaperGeometry = isHighQuality ? realisticPaperGeometry : simplePaperGeometry;
+        
+        // 2. Обновляем ВСЕ УЖЕ СУЩЕСТВУЮЩИЕ карточки на сцене
+        state.chunks.forEach(chunk => {
+            chunk.group.traverse(obj => {
+                // Ищем меши карточек (они имеют specific shader material)
+                if (obj.isMesh && obj.material && obj.material.uniforms && obj.material.uniforms.uImageScale) {
+                    obj.geometry = currentPaperGeometry;
+                }
+            });
+        });
+        
+        console.log(`Physics Mode: ${isHighQuality ? 'High (Segmented)' : 'Low (Simple)'}`);
+    });
+}
+// Небо
+document.getElementById('star-density').addEventListener('input', e => CONFIG.sky.starDensity = parseInt(e.target.value));
+document.getElementById('star-size').addEventListener('input', e => CONFIG.sky.starSize = parseFloat(e.target.value));
+document.getElementById('sky-blur').addEventListener('input', e => CONFIG.sky.blur = parseFloat(e.target.value));
+
+// Кометы
+document.getElementById('comet-freq').addEventListener('input', e => CONFIG.sky.cometFreq = parseFloat(e.target.value));
+document.getElementById('slow-comet-freq').addEventListener('input', e => CONFIG.sky.slowCometFreq = parseFloat(e.target.value));
+
+// Частицы
+document.getElementById('dust-count').addEventListener('input', e => CONFIG.details.dustCount = parseInt(e.target.value));
+document.getElementById('dust-size').addEventListener('input', e => CONFIG.details.dustSize = parseFloat(e.target.value));
+
+// Светлячки
+document.getElementById('firefly-count').addEventListener('input', e => CONFIG.details.fireflyCount = parseInt(e.target.value));
+document.getElementById('firefly-size').addEventListener('input', e => CONFIG.details.fireflySize = parseFloat(e.target.value));
 // Привязка инпутов
 document.getElementById('col-bot').addEventListener('input', (e) => { 
     CONFIG.colors.bottom.set(e.target.value); 
@@ -1320,14 +1856,72 @@ function setupColorPickers() {
 // Вызовите это один раз при старте
 setupColorPickers();
 
+// --- FILM GRAIN GENERATOR ---
+function generateNoiseTexture() {
+    const canvas = document.createElement('canvas');
+    const size = 512;
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    
+    // Заливаем прозрачным
+    ctx.clearRect(0, 0, size, size);
+    
+    // Генерируем цветной шум (более кинематографично, чем ч/б)
+    const imgData = ctx.createImageData(size, size);
+    const data = imgData.data;
+    
+    for (let i = 0; i < data.length; i += 4) {
+        // Серый шум с легким цветовым отклонением
+        const gray = Math.random() * 255;
+        data[i] = gray + (Math.random() - 0.5) * 20;     // R
+        data[i+1] = gray + (Math.random() - 0.5) * 20;   // G
+        data[i+2] = gray + (Math.random() - 0.5) * 20;   // B
+        data[i+3] = 100 + Math.random() * 100;           // Alpha (100-200)
+    }
+    
+    ctx.putImageData(imgData, 0, 0);
+    return canvas.toDataURL();
+}
+
+// Инициализация шума
+const grainEl = document.getElementById('film-grain');
+if (grainEl) {
+    grainEl.style.backgroundImage = `url(${generateNoiseTexture()})`;
+}
+
+// Слушатели событий для шума
+const grainToggle = document.getElementById('grain-toggle');
+const grainOpacity = document.getElementById('grain-opacity');
+
+if (grainToggle && grainEl) {
+    grainToggle.addEventListener('change', (e) => {
+        grainEl.style.display = e.target.checked ? 'block' : 'none';
+    });
+}
+
+if (grainOpacity && grainEl) {
+    grainOpacity.addEventListener('input', (e) => {
+        grainEl.style.opacity = e.target.value;
+    });
+}
 
 
-
-// --- ANIMATION ---
 const clock = new THREE.Clock();
+let frameCount = 0; // <--- 1. ОБЪЯВЛЯЕМ ПЕРЕМЕННУЮ ЗДЕСЬ
 
 function animate() {
     requestAnimationFrame(animate);
+    
+    frameCount++; // <--- 2. УВЕЛИЧИВАЕМ СЧЕТЧИК КАДРОВ
+
+    // НОВОЕ: Проверка активных загрузок на дальность
+    if (state.activeLoads > 0 && frameCount % 30 === 0) { // Теперь frameCount существует
+        const camPos = camera.position;
+        // Логика очистки (если нужна)
+    }
+
+    // УДАЛЕНО: Второй вызов requestAnimationFrame(animate); (он был лишним и вызывал бы лаги)
     
     const dt = clock.getDelta();
     const time = clock.getElapsedTime();
@@ -1338,15 +1932,35 @@ function animate() {
     
     // Обновление чанков (загрузка/выгрузка)
     updateChunks();
-
+    starSystem.geometry.setDrawRange(0, CONFIG.sky.starDensity);
+    starMat.uniforms.uBlur.value = CONFIG.sky.blur;
+    starMat.uniforms.uSizeMult.value = CONFIG.sky.starSize;
     // --- ОБНОВЛЕНИЕ ЗВЕЗД И КОМЕТ ---
-    starMat.uniforms.uTime.value = time;       // <--- Анимация мерцания звезд
-    starSystem.position.copy(camera.position); // <--- Звезды всегда вокруг игрока
-    comet.update(camera.position);             // <--- Логика комет
+    starMat.uniforms.uTime.value = time;       
+    
+    // ПРИВЯЗКА К КАМЕРЕ (Эффект бесконечности)
+    starSystem.position.copy(camera.position); 
+    
+    // Привязываем фоновые кометы к камере, чтобы не было параллакса
+    slowComet.lines.position.copy(camera.position);
+    slowComet.heads.position.copy(camera.position);
+    
+    // Логика обычных падающих комет (они остаются в мире, параллакс нужен)
+    comet.update(camera.position);             
 
+    // Обновление фоновых комет (убрали cameraPos из аргументов)
+    slowComet.update(CONFIG.sky.blur);
     // Обновление глобальных Uniforms
     dustMat.uniforms.uCamPos.value.copy(camera.position);
     dustMat.uniforms.uTime.value = time;
+
+    // 3. Частицы и Светлячки: Обновляем кол-во и размер
+    dustSystem.geometry.setDrawRange(0, CONFIG.details.dustCount);
+    dustMat.uniforms.uSizeMult.value = CONFIG.details.dustSize;
+
+    fireflySystem.geometry.setDrawRange(0, CONFIG.details.fireflyCount);
+    fireflyMat.uniforms.uSizeMult.value = CONFIG.details.fireflySize;
+
 
     fireflyMat.uniforms.uCamPos.value.copy(camera.position);
     fireflyMat.uniforms.uTime.value = time;
@@ -1354,10 +1968,19 @@ function animate() {
     globalUniforms.uTime.value = time;
     globalUniforms.uWindSpeed.value = CONFIG.wind.speed;
     globalUniforms.uWindForce.value = CONFIG.wind.force;
+    
+    // --- НОВОЕ: Обновляем данные камеры для шейдеров ---
+    // Это позволяет менять цвет процентов в реальном времени при повороте камеры
+    globalUniforms.uCamPos.value.copy(camera.position);
+    
+    // Получаем направление взгляда камеры
+    const camDir = new THREE.Vector3();
+    camera.getWorldDirection(camDir);
+    globalUniforms.uCamDir.value.copy(camDir);
 
-    // --- ДОБАВИТЬ ЭТОТ БЛОК ---
-    // Передача значений слайдеров в частицы (Пыль)
+    // --- ДОБАВИТЬ ЭТОТ БЛОК (для частиц - без изменений, просто контекст) ---
     dustMat.uniforms.uCamPos.value.copy(camera.position);
+
     dustMat.uniforms.uTime.value = time;
     dustMat.uniforms.uWindSpeed.value = CONFIG.wind.speed;
     dustMat.uniforms.uWindForce.value = CONFIG.wind.force;
@@ -1380,5 +2003,10 @@ window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth/window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
-    fireflyMat.uniforms.scale.value = window.innerHeight / 2.0;
+    
+    // --- ДОБАВИТЬ ЭТУ СТРОКУ ---
+    starMat.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
+    
+    fireflyMat.uniforms.uScale.value = window.innerHeight / 2.0;
+    dustMat.uniforms.uScale.value = window.innerHeight / 2.0; 
 });
