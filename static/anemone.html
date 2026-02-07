@@ -5,14 +5,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Atmospheric Gallery</title>
     <style>
+        :root {
+            --glass-bg: rgba(20, 20, 25, 0.75);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --accent: #ffffff;
+            --text-main: #eeeeee;
+            --text-dim: #888888;
+            --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
         body { 
             margin: 0; 
             overflow: hidden; 
-            font-family: 'Helvetica Neue', sans-serif; 
+            font-family: var(--font-ui);
             touch-action: none; 
             /* Статичный фон убираем, он будет динамическим */
             background-color: #050814;
             background-image: linear-gradient(to top, #143835 0%, #0a1821 40%, #04060a 100%);
+            color: var(--text-main);
             background-repeat: no-repeat;
             background-attachment: fixed;
         }
@@ -20,41 +30,149 @@
         
         /* Индикатор загрузки */
         #status { 
-            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
-            font-size: 10px; color: rgba(255, 255, 255, 0.5); letter-spacing: 3px; pointer-events: none; 
-            opacity: 1; transition: opacity 0.8s; text-transform: uppercase; z-index: 2;
+            position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
+            font-size: 11px; font-weight: 500; color: rgba(255, 255, 255, 0.4); 
+            letter-spacing: 2px; pointer-events: none; opacity: 1; transition: opacity 0.8s; 
+            text-transform: uppercase; z-index: 2;
         }
 
         /* Кнопка настроек */
         #settings-btn {
-            position: absolute; top: 20px; right: 20px; z-index: 10;
-            width: 40px; height: 40px; border-radius: 50%;
-            background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(5px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            position: absolute; top: 24px; right: 24px; z-index: 100;
+            width: 44px; height: 44px; border-radius: 12px;
+            background: var(--glass-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
             cursor: pointer; display: flex; align-items: center; justify-content: center;
-            transition: transform 0.3s, background 0.3s;
+            transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
         }
-        #settings-btn:hover { background: rgba(255, 255, 255, 0.2); transform: rotate(90deg); }
-        #settings-btn svg { fill: white; width: 20px; height: 20px; }
+        #settings-btn:hover { background: rgba(40, 40, 45, 0.9); transform: scale(1.05); }
+        #settings-btn svg { fill: var(--text-main); width: 20px; height: 20px; transition: transform 0.5s ease; }
+        #settings-btn.active svg { transform: rotate(90deg); }
 
         /* Панель настроек */
         #settings-panel {
-            position: absolute; top: 70px; right: 20px; width: 280px;
-            background: rgba(15, 15, 20, 0.85); backdrop-filter: blur(15px);
-            border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 20px; color: #eee; z-index: 10;
-            transform: translateX(120%); transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-            max-height: 80vh; overflow-y: auto;
+            position: absolute; top: 80px; right: 24px; width: 300px;
+            background: var(--glass-bg); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+            border-radius: 16px; border: 1px solid var(--glass-border);
+            padding: 8px; z-index: 99;
+            transform: translateX(120%); opacity: 0;
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            max-height: calc(100vh - 100px); overflow-y: auto;
+            scrollbar-width: thin; scrollbar-color: #444 transparent;
         }
-        #settings-panel.active { transform: translateX(0); }
+        #settings-panel.active { transform: translateX(0); opacity: 1; }
+        #film-grain {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+            opacity: 0.12; /* Базовая прозрачность */
+            mix-blend-mode: overlay; /* Режим наложения для "рельефности" */
+            background-image: url(''); /* Будет сгенерирован в JS */
+            background-size: 512px 512px; /* Размер тайла шума */
+            animation: grainAnimation 0.8s steps(4) infinite; /* Дерганая анимация как в кино */
+        }
+
+        /* Анимация смещения шума */
+        @keyframes grainAnimation {
+            0% { background-position: 0 0; }
+            25% { background-position: -100px 50px; }
+            50% { background-position: 40px -80px; }
+            75% { background-position: -30px 20px; }
+            100% { background-position: 0 0; }
+        }
+        /* Заголовки и секции */
+        .panel-header {
+            padding: 16px 16px 8px 16px;
+            font-size: 13px; font-weight: 600; letter-spacing: 0.5px;
+            text-transform: uppercase; color: var(--text-dim); opacity: 0.8;
+        }
+
+        details {
+            background: rgba(255,255,255,0.02);
+            border-radius: 12px;
+            margin-bottom: 8px;
+            overflow: hidden;
+            transition: background 0.2s;
+        }
+        details:hover { background: rgba(255,255,255,0.04); }
+        details[open] { background: rgba(255,255,255,0.05); }
+
+        summary {
+            list-style: none; padding: 14px 16px; cursor: pointer;
+            font-size: 14px; font-weight: 500; color: var(--text-main);
+            display: flex; justify-content: space-between; align-items: center;
+            user-select: none;
+        }
+        summary::-webkit-details-marker { display: none; }
+        summary::after {
+            content: ''; width: 10px; height: 10px;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.6)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+            background-size: contain; background-repeat: no-repeat;
+            transition: transform 0.3s; opacity: 0.7;
+        }
+        details[open] summary::after { transform: rotate(180deg); }
+
+        .group-content { padding: 0 16px 16px 16px; animation: slideDown 0.3s ease; }
+        @keyframes slideDown { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* Контролы */
+        .control-group { margin-bottom: 16px; }
+        .control-group:last-child { margin-bottom: 0; }
         
-        .control-group { margin-bottom: 15px; }
-        .control-group label { display: block; font-size: 11px; text-transform: uppercase; color: #888; margin-bottom: 5px; letter-spacing: 1px;}
-        .control-group input[type="color"] { width: 100%; height: 30px; border: none; cursor: pointer; background: none; }
-        .control-group input[type="range"] { width: 100%; cursor: pointer; accent-color: #fff; }
+        .label-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+        .label-row label { font-size: 12px; color: var(--text-dim); font-weight: 500; }
         
-        h3 { margin: 0 0 15px 0; font-weight: 300; font-size: 16px; letter-spacing: 1px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; }
+        /* Кастомный Range Input */
+        input[type="range"] {
+            -webkit-appearance: none; width: 100%; background: transparent; cursor: pointer; height: 20px; margin: 0;
+        }
+        input[type="range"]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%;
+            background: #fff; margin-top: -6px; box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            transition: transform 0.1s;
+        }
+        input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.1); }
+        
+        /* Firefox styles for range */
+        input[type="range"]::-moz-range-track { width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; }
+        input[type="range"]::-moz-range-thumb { height: 16px; width: 16px; border: none; border-radius: 50%; background: #fff; }
+
+        /* Color Input (скрытый) */
+        input[type="color"] { width: 0; height: 0; opacity: 0; }
+
+        /* Поповеры и модалки */
+        .custom-picker-popover {
+            position: fixed; background: #1a1a1f; border: 1px solid #333;
+            border-radius: 12px; padding: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+            z-index: 200; display: none;
+        }
+        .custom-picker-popover.active { display: block; animation: popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
+        @keyframes popIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+
+        #error-modal {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); z-index: 1000; backdrop-filter: blur(5px);
+            justify-content: center; align-items: center;
+        }
+        .error-content {
+            background: #222; border: 1px solid #333; padding: 30px;
+            border-radius: 16px; max-width: 350px; text-align: center; color: #fff;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }
+        .error-content button {
+            margin-top: 20px; padding: 10px 24px; background: #fff; border: none; border-radius: 8px;
+            color: #000; font-weight: 600; cursor: pointer; transition: opacity 0.2s;
+        }
+        .error-content button:hover { opacity: 0.9; }
     </style>
     <script type="importmap">
         {
@@ -93,60 +211,147 @@
         }
     </style>
 
-    
+
 </head>
 <body>
     <div id="status">Connecting to Universe...</div>
     
     <!-- UI -->
-    <div id="settings-btn" title="Settings">
-        <svg viewBox="0 0 24 24"><path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/></svg>
+    <div id="settings-btn" title="Open Settings">
+        <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     </div>
 
+    <!-- Панель -->
     <div id="settings-panel">
-        <h3>Atmosphere</h3>
-        <div class="control-group">
-            <label>Horizon Color</label>
-            <input type="color" id="col-bot" value="#2b1a38">
+        <div class="panel-header">Settings</div>
+        <div class="control-group" style="background: rgba(255, 170, 0, 0.1); padding: 10px; border-radius: 8px; border: 1px solid rgba(255, 170, 0, 0.3); margin-bottom: 16px;">
+            <div class="label-row" style="margin-bottom: 4px;">
+                <label style="color: #ffaa00; font-weight: bold;">High Quality Paper</label>
+                <input type="checkbox" id="physics-toggle" checked>
+            </div>
+            <div style="font-size: 10px; color: #aaa; line-height: 1.2;">
+                Disable to boost performance (+FPS). <br>Enables complex wind simulation.
+            </div>
         </div>
-        <div class="control-group">
-            <label>Mid Sky Color</label>
-            <input type="color" id="col-mid" value="#203a4c">
-        </div>
-        <div class="control-group">
-            <label>Zenith Color</label>
-            <input type="color" id="col-top" value="#050814">
-        </div>
-        
-        <h3>Physics & Wind</h3>
-        <div class="control-group">
-            <label>Wind Speed</label>
-            <input type="range" id="wind-speed" min="0" max="2" step="0.1" value="0.8">
-        </div>
-        <div class="control-group">
-            <label>Turbulence</label>
-            <input type="range" id="wind-force" min="0" max="1" step="0.05" value="0.3">
-        </div>
-        <h3>Motion</h3>
-        <div class="control-group">
-            <label>Sway Amplitude (L/R)</label>
-            <input type="range" id="sway-amp" min="0" max="0.5" step="0.01" value="0.1">
-        </div>
-        <div class="control-group">
-            <label>Twist Amplitude (Depth)</label>
-            <input type="range" id="twist-amp" min="0" max="0.5" step="0.01" value="0.15">
-        </div>
-        <h3>Particles</h3>
-        <div class="control-group">
-            <label>Firefly Color</label>
-            <input type="color" id="col-fire" value="#ffaa00">
-        </div>
-        <div class="control-group">
-            <label>Particle Speed</label>
-            <input type="range" id="part-speed" min="0" max="2" step="0.1" value="0.5">
-        </div>
-    </div>
+        <!-- ЦВЕТА -->
+        <details open>
+            <summary>Colors</summary>
+            <div class="group-content">
+                <div class="control-group">
+                    <div class="label-row"><label>Horizon</label></div>
+                    <input type="text" id="col-bot" value="#2b1a38">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Atmosphere</label></div>
+                    <input type="text" id="col-mid" value="#203a4c">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Zenith</label></div>
+                    <input type="text" id="col-top" value="#050814">
+                </div>
+            </div>
+        </details>
+        <details>
+            <summary>Camera Effects</summary>
+            <div class="group-content">
+                <div class="control-group">
+                    <div class="label-row"><label>Film Grain</label></div>
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <span style="font-size: 11px; color: #888;">Enable</span>
+                        <input type="checkbox" id="grain-toggle" checked style="width: auto; height: auto;">
+                    </div>
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Grain Opacity</label></div>
+                    <input type="range" id="grain-opacity" min="0" max="0.3" step="0.01" value="0.12">
+                </div>
+            </div>
+        </details>
+        <!-- НЕБО -->
+        <details>
+            <summary>Sky & Space</summary>
+            <div class="group-content">
+                <div class="control-group">
+                    <div class="label-row"><label>Star Density</label></div>
+                    <input type="range" id="star-density" min="0" max="30000" step="100" value="15000">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Star Size</label></div>
+                    <input type="range" id="star-size" min="0.5" max="3.0" step="0.1" value="1.0">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Bokeh Blur</label></div>
+                    <input type="range" id="sky-blur" min="0" max="1" step="0.01" value="0">
+                </div>
+                <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 12px 0;"></div>
+                <div class="control-group">
+                    <div class="label-row"><label>Falling Stars</label></div>
+                    <input type="range" id="comet-freq" min="0" max="0.05" step="0.001" value="0.02">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Background Comets</label></div>
+                    <!-- Увеличил max value для наглядности -->
+                    <input type="range" id="slow-comet-freq" min="0" max="0.1" step="0.001" value="0.01">
+                </div>
+            </div>
+        </details>
 
+        <!-- ЧАСТИЦЫ -->
+        <details>
+            <summary>Particles</summary>
+            <div class="group-content">
+                <div class="control-group">
+                    <div class="label-row"><label>Dust Density</label></div>
+                    <input type="range" id="dust-count" min="0" max="8000" step="100" value="4000">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Dust Size</label></div>
+                    <input type="range" id="dust-size" min="0.1" max="3.0" step="0.1" value="1.0">
+                </div>
+                <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 12px 0;"></div>
+                <div class="control-group">
+                    <div class="label-row"><label>Fireflies</label></div>
+                    <input type="range" id="firefly-count" min="0" max="1200" step="10" value="600">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Firefly Size</label></div>
+                    <input type="range" id="firefly-size" min="0.5" max="2.0" step="0.1" value="1.0">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Firefly Color</label></div>
+                    <input type="text" id="col-fire" value="#ffaa00">
+                </div>
+            </div>
+        </details>
+
+        <!-- ВЕТЕР -->
+        <details>
+            <summary>Motion</summary>
+            <div class="group-content">
+                <div class="control-group">
+                    <div class="label-row"><label>Wind Speed</label></div>
+                    <input type="range" id="wind-speed" min="0" max="2" step="0.1" value="0.8">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Turbulence</label></div>
+                    <input type="range" id="wind-force" min="0" max="1" step="0.05" value="0.3">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Drift Speed</label></div>
+                    <input type="range" id="part-speed" min="0" max="2" step="0.1" value="0.5">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Sway Amount</label></div>
+                    <input type="range" id="sway-amp" min="0" max="0.5" step="0.01" value="0.1">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Twist Amount</label></div>
+                    <input type="range" id="twist-amp" min="0" max="0.5" step="0.01" value="0.15">
+                </div>
+            </div>
+        </details>
+    </div>
+    <div id="film-grain"></div>
     <div id="canvas-container"></div>
 
     <div id="error-modal">
