@@ -18,6 +18,8 @@ from flask import Response, stream_with_context
 import random
 import hashlib
 
+import time  # <--- ДОБАВЛЕНО
+
 
 import logging
 import sys
@@ -29,6 +31,11 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
+# Создаем сессию для ускорения запросов (keep-alive)
+requests_session = requests.Session()
+requests_session.headers.update({
+    "User-Agent": "AnemoneBot/1.0"
+})
 
 DUMP_CHAT_ID = "-5129048838"  
 DEFAULT_CHANNEL_ID = "-1001479526905" 
@@ -45,12 +52,22 @@ def get_image_from_telegram(post_id, custom_channel_id=None):
     post_id = str(post_id)
     target_channel = custom_channel_id if custom_channel_id else DEFAULT_CHANNEL_ID
     
-    logger.info(f" [TG START] Fetching Post: {post_id} from Channel: {target_channel}")
-
     cache_key = f"{target_channel}_{post_id}"
+    current_time = time.time()
+
+    # 1. ПРОВЕРКА КЭША С УЧЕТОМ ВРЕМЕНИ ЖИЗНИ (ССЫЛКИ ЖИВУТ 1 ЧАС)
     if cache_key in IMAGE_CACHE:
-        logger.info(f" [TG CACHE] Hit for {cache_key}")
-        return IMAGE_CACHE[cache_key]
+        cached_item = IMAGE_CACHE[cache_key]
+        # Если записано None (предыдущая ошибка) — удаляем и пробуем снова
+        if cached_item is None:
+            del IMAGE_CACHE[cache_key]
+        # Если ссылка старше 55 минут (3300 сек) — удаляем и обновляем, иначе она вернет 404
+        elif (current_time - cached_item.get("cached_at", 0)) > 3300:
+            logger.info(f" [TG CACHE] Expired for {cache_key}, refreshing...")
+            del IMAGE_CACHE[cache_key]
+        else:
+            # logger.info(f" [TG CACHE] Hit for {cache_key}") # Можно раскомментировать для дебага
+            return cached_item
 
     forward_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/forwardMessage"
     params = {
@@ -60,87 +77,102 @@ def get_image_from_telegram(post_id, custom_channel_id=None):
         "disable_notification": True
     }
     
-    try:
-        r = requests.post(forward_url, json=params)
-        data = r.json()
-        
-        if not data.get("ok"):
-            logger.error(f" [TG ERROR] Telegram Response: {data}")
-            err_desc = data.get("description", "").lower()
-            if "chat not found" in err_desc or "admin" in err_desc or "kicked" in err_desc:
-                return {"error": "access_denied"}
-            IMAGE_CACHE[cache_key] = None 
-            return None
+    # 2. ЦИКЛ ПОВТОРНЫХ ПОПЫТОК (RETRY LOOP)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            # Используем session для скорости
+            r = requests_session.post(forward_url, json=params, timeout=10)
+            data = r.json()
             
-        result = data["result"]
-        
-        # --- ИЗМЕНЕНИЕ 1: Реальное время поста ---
-        # forward_date - это дата создания оригинала. date - это дата пересылки (сейчас).
-        # Если forward_date нет (скрыт источник), берем date.
-        origin_date = result.get("forward_date") or result.get("date")
-        date_str = datetime.fromtimestamp(origin_date).strftime('%d.%m.%Y %H:%M') if origin_date else ""
+            # ОБРАБОТКА ОГРАНИЧЕНИЙ TELEGRAM (429 Too Many Requests)
+            if not data.get("ok"):
+                error_code = data.get("error_code")
+                desc = data.get("description", "")
 
-        # --- ИЗМЕНЕНИЕ 2: Ссылка на пост ---
-        post_link = ""
-        # Пытаемся взять username из пересланного сообщения
-        if "forward_from_chat" in result and "username" in result["forward_from_chat"]:
-            orig_username = result["forward_from_chat"]["username"]
-            orig_id = result.get("forward_from_message_id", post_id)
-            post_link = f"https://t.me/{orig_username}/{orig_id}"
-        # Если не вышло, пробуем собрать из того канала, который запрашивали (если это @username)
-        elif target_channel.startswith("@"):
-            clean_username = target_channel.replace("@", "")
-            post_link = f"https://t.me/{clean_username}/{post_id}"
-
-        file_id = None
-        width = 1
-        height = 1
-        caption = result.get("caption", "") or result.get("text", "")
-
-        if "photo" in result:
-            photo = None
-            for p in result["photo"]:
-                if p["width"] >= 1024:
-                    photo = p
-                    break
-            if not photo:
-                photo = result["photo"][-1]
-
-            file_id = photo["file_id"]
-            width = photo["width"]
-            height = photo["height"]
+                if error_code == 429:
+                    # Telegram часто пишет "Retry in X seconds"
+                    retry_after = data.get("parameters", {}).get("retry_after", 1)
+                    # Если sleep слишком долгий, лучше прервать, чтобы не висел поток
+                    if retry_after > 5: 
+                        logger.warning(f" [TG RATE LIMIT] Too long wait ({retry_after}s) for {post_id}")
+                        break 
+                    
+                    time.sleep(retry_after + 0.5) # Ждем и пробуем снова
+                    continue
+                
+                # Если ошибки доступа - возвращаем сразу
+                if "chat not found" in desc.lower() or "kicked" in desc.lower():
+                    return {"error": "access_denied"}
+                
+                logger.error(f" [TG ERROR] {desc} (Post: {post_id})")
+                return None
+                
+            result = data["result"]
             
-        elif "document" in result and result["document"]["mime_type"].startswith("image"):
-             file_id = result["document"]["file_id"]
-             if "thumb" in result["document"]:
-                 width = result["document"]["thumb"]["width"]
-                 height = result["document"]["thumb"]["height"]
+            # --- СБОР ДАННЫХ (Ваш код логики даты/ссылок) ---
+            origin_date = result.get("forward_date") or result.get("date")
+            date_str = datetime.fromtimestamp(origin_date).strftime('%d.%m.%Y %H:%M') if origin_date else ""
 
-        if not file_id:
-            IMAGE_CACHE[cache_key] = None
-            return None
+            post_link = ""
+            if "forward_from_chat" in result and "username" in result["forward_from_chat"]:
+                orig_username = result["forward_from_chat"]["username"]
+                orig_id = result.get("forward_from_message_id", post_id)
+                post_link = f"https://t.me/{orig_username}/{orig_id}"
+            elif target_channel.startswith("@"):
+                clean_username = target_channel.replace("@", "")
+                post_link = f"https://t.me/{clean_username}/{post_id}"
 
-        path_r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}")
-        path_data = path_r.json()
-        
-        if path_data.get("ok"):
-            file_path = path_data["result"]["file_path"]
-            full_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+            # Поиск фото или документа
+            file_id = None
+            width = 1
+            height = 1
+            caption = result.get("caption", "") or result.get("text", "")
+
+            if "photo" in result:
+                photo = sorted(result["photo"], key=lambda x: x["width"])[-1] # Берем самое большое
+                if photo["width"] > 100: # Отсекаем миниатюры если есть выбор
+                    file_id = photo["file_id"]
+                    width = photo["width"]
+                    height = photo["height"]
+            elif "document" in result and result["document"]["mime_type"].startswith("image"):
+                 file_id = result["document"]["file_id"]
+                 if "thumb" in result["document"]:
+                     width = result["document"]["thumb"]["width"]
+                     height = result["document"]["thumb"]["height"]
+
+            if not file_id:
+                # Сообщение есть, но картинки нет - кэшируем пустоту, чтобы не долбить API
+                # IMAGE_CACHE[cache_key] = None # Лучше не кэшировать None, пусть пробует потом
+                return None
+
+            # 3. ПОЛУЧЕНИЕ ПУТИ ФАЙЛА (GetFile)
+            path_r = requests_session.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}", timeout=10)
+            path_data = path_r.json()
             
-            res_obj = {
-                "url": full_url,
-                "width": width,
-                "height": height,
-                "caption": caption[:100],
-                "date": date_str,
-                "post_link": post_link  # Добавляем ссылку в объект
-            }
-            IMAGE_CACHE[cache_key] = res_obj
-            return res_obj
-            
-    except Exception as e:
-        logging.error(f"Telegram Forward Error: {e}")
-        
+            if path_data.get("ok"):
+                file_path = path_data["result"]["file_path"]
+                full_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                
+                res_obj = {
+                    "url": full_url,
+                    "width": width,
+                    "height": height,
+                    "caption": caption[:100],
+                    "date": date_str,
+                    "post_link": post_link,
+                    "cached_at": time.time() # <--- ВАЖНО: Запоминаем время создания ссылки
+                }
+                IMAGE_CACHE[cache_key] = res_obj
+                return res_obj
+            else:
+                 # Если getFile упал (редко), тоже можно retry, но пока просто break
+                 break
+                 
+        except Exception as e:
+            logger.error(f"Telegram Fetch Error ({post_id}): {e}")
+            time.sleep(1) # Короткая пауза перед повтором при сетевой ошибке
+
     return None
 
 @app.route('/api/anemone/resolve_image')
@@ -179,16 +211,22 @@ def proxy_image():
     if not url: return "No URL", 400
     
     try:
-        req = requests.get(url, stream=True, timeout=10)
+        # Используем глобальную сессию и таймаут
+        req = requests_session.get(url, stream=True, timeout=15)
         
+        # Если ссылка протухла (Telegram вернул 404), прокси упадет,
+        # и фронтенд увидит ошибку. (В идеале нужно чистить кэш тут, но это сложнее)
+        if req.status_code != 200:
+             return f"Telegram Error {req.status_code}", req.status_code
+
         excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
         headers = [(name, value) for (name, value) in req.raw.headers.items()
                    if name.lower() not in excluded_headers]
         
         headers.append(('Access-Control-Allow-Origin', '*'))
-        headers.append(('Cache-Control', 'public, max-age=31536000')) # Кэшируем на год, так быстрее при повторном заходе
+        # Кэшируем в браузере на 55 минут (чуть меньше жизни ссылки TG)
+        headers.append(('Cache-Control', 'public, max-age=3300')) 
 
-        # ОПТИМИЗАЦИЯ: chunk_size=65536 (64KB) работает быстрее стандартного 1024 байт
         return Response(stream_with_context(req.iter_content(chunk_size=65536)),
                         status=req.status_code,
                         headers=headers,
