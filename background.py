@@ -44,149 +44,171 @@ DEFAULT_MAX_POST_ID = 8504
 
 # Простой кэш в оперативной памяти: {post_id: "url_картинки"}
 # Сбрасывается при перезагрузке сервера, но это не страшно
-IMAGE_CACHE = {} 
-from datetime import datetime
 
-# --- ЗАМЕНА ФУНКЦИИ get_image_from_telegram ---
+import threading
+from datetime import datetime
+import sqlite3
+# Простой кэш в оперативной памяти: {post_id: "url_картинки"}
+# Сбрасывается при перезагрузке сервера, но это не страшно
+# Глобальная блокировка для БД
+DB_LOCK = threading.Lock()
+# Семафор, чтобы не делать больше 1 запроса к API Телеграма одновременно
+TG_API_LIMITER = threading.BoundedSemaphore(value=1)
+
+def init_db():
+    with DB_LOCK:
+        conn = sqlite3.connect('anemone.db', check_same_thread=False)
+        c = conn.cursor()
+        # Создаем таблицу. Ключ: channel_id + post_id
+        c.execute('''CREATE TABLE IF NOT EXISTS posts
+                     (id TEXT PRIMARY KEY, 
+                      url TEXT, 
+                      width INTEGER, 
+                      height INTEGER, 
+                      caption TEXT, 
+                      date TEXT, 
+                      post_link TEXT,
+                      timestamp REAL)''')
+        conn.commit()
+        conn.close()
+
+init_db()
+
+# Хелперы для БД
+def get_cached_post(channel_id, post_id):
+    key = f"{channel_id}_{post_id}"
+    with DB_LOCK:
+        conn = sqlite3.connect('anemone.db', check_same_thread=False)
+        c = conn.cursor()
+        c.execute("SELECT * FROM posts WHERE id=?", (key,))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            return {
+                "url": row[1], "width": row[2], "height": row[3],
+                "caption": row[4], "date": row[5], "post_link": row[6]
+            }
+    return None
+
+def save_cached_post(channel_id, post_id, data):
+    key = f"{channel_id}_{post_id}"
+    with DB_LOCK:
+        conn = sqlite3.connect('anemone.db', check_same_thread=False)
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO posts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  (key, data['url'], data['width'], data['height'], 
+                   data['caption'], data['date'], data['post_link'], time.time()))
+        conn.commit()
+        conn.close()
+
+
 def get_image_from_telegram(post_id, custom_channel_id=None, req_id="Unknown"):
     t_start = time.time()
     post_id = str(post_id)
     target_channel = custom_channel_id if custom_channel_id else DEFAULT_CHANNEL_ID
     
-    cache_key = f"{target_channel}_{post_id}"
-    
-    # 1. ЛОГИРОВАНИЕ КЭША
-    if cache_key in IMAGE_CACHE:
-        cached_item = IMAGE_CACHE[cache_key]
-        if cached_item is None:
-            logger.warning(f"[{req_id}] Cache HIT (None value) for {post_id}. Removing invalid cache.")
-            del IMAGE_CACHE[cache_key]
-        elif (time.time() - cached_item.get("cached_at", 0)) > 3300:
-            logger.info(f"[{req_id}] Cache EXPIRED for {post_id} (Age: {int(time.time() - cached_item.get('cached_at', 0))}s). Refreshing...")
-            del IMAGE_CACHE[cache_key]
-        else:
-            logger.info(f"[{req_id}] Cache HIT for {post_id}. Took {time.time() - t_start:.4f}s")
-            return cached_item
+    # --- 1. ПРОВЕРКА КЭША (Самый важный шаг) ---
+    cached = get_cached_post(target_channel, post_id)
+    if cached:
+        logger.info(f"[{req_id}] DB HIT: {post_id}. Date: {cached['date']}")
+        return cached
 
-    # Подготовка запроса
-    forward_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/forwardMessage"
-    params = {
-        "chat_id": DUMP_CHAT_ID,
-        "from_chat_id": target_channel, 
-        "message_id": post_id,
-        "disable_notification": True
-    }
-    
-    max_retries = 3
-    for attempt in range(max_retries):
+    # --- 2. СЕТЕВОЙ ЗАПРОС С ОГРАНИЧЕНИЕМ ---
+    # Блокируем поток, если другой поток сейчас общается с Телеграмом.
+    # Это предотвращает "взрыв" запросов.
+    with TG_API_LIMITER:
+        # Искусственная задержка (Jitter), чтобы не выглядеть как робот
+        time.sleep(random.uniform(0.3, 0.7))
+        
+        forward_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/forwardMessage"
+        params = {
+            "chat_id": DUMP_CHAT_ID,
+            "from_chat_id": target_channel, 
+            "message_id": post_id,
+            "disable_notification": True
+        }
+        
+        forwarded_msg_id = None # ID сообщения в дамп-чате, чтобы потом удалить
+
         try:
-            logger.info(f"[{req_id}] Attempt {attempt+1}/{max_retries}: Forwarding msg {post_id}...")
-            
-            t_req = time.time()
-            # 2. ЗАМЕР ЗАПРОСА forwardMessage
+            logger.info(f"[{req_id}] API Request: Forwarding {post_id}...")
             r = requests_session.post(forward_url, json=params, timeout=10)
-            dur = time.time() - t_req
-            
-            logger.info(f"[{req_id}] Forward API took {dur:.3f}s. Status: {r.status_code}")
-
             data = r.json()
-            
+
+            # Обработка 429 (Too Many Requests)
             if not data.get("ok"):
-                error_code = data.get("error_code")
-                desc = data.get("description", "")
-
-                if error_code == 429:
-                    retry_after = data.get("parameters", {}).get("retry_after", 1)
-                    logger.warning(f"[{req_id}] RATE LIMIT (429). TG asks to wait {retry_after}s.")
-                    
-                    if retry_after > 5: 
-                        logger.error(f"[{req_id}] Aborting: Wait time too long ({retry_after}s).")
-                        break 
-                    
-                    time.sleep(retry_after + 0.5)
-                    continue 
+                if data.get("error_code") == 429:
+                    retry = data.get("parameters", {}).get("retry_after", 5)
+                    logger.warning(f"[{req_id}] RATELIMIT! TG said wait {retry}s")
+                    # Если просят ждать — лучше просто вернуть ошибку сейчас, чем вешать сервер
+                    return None
                 
-                if "chat not found" in desc.lower() or "kicked" in desc.lower():
-                    logger.error(f"[{req_id}] Access Denied: {desc}")
-                    return {"error": "access_denied"}
-                
-                logger.error(f"[{req_id}] TG API Error: {desc}")
+                logger.error(f"[{req_id}] TG Error: {data.get('description')}")
+                # Если сообщение удалено или не найдено - запомним это как ошибку, чтобы не долбить снова
+                # (Можно добавить запись в БД с пометкой 'deleted', но пока просто return)
                 return None
-                
+
             result = data["result"]
-            
-            # Логика поиска file_id (сокращена для ясности, оставьте вашу логику парсинга)
-            # ... (ВАШ КОД ПАРСИНГА ОСТАЕТСЯ ТЕМ ЖЕ) ...
-            # Но добавьте логирование, если файл не найден:
-            
-            # --- Вставьте сюда ваш блок поиска file_id, width, height ---
-            # Для примера:
-            file_id = None
-            width = 1
-            height = 1
-            caption = result.get("caption", "") or result.get("text", "")
-            
-            # (Скопируйте вашу логику поиска photo/document сюда)
-            if "photo" in result:
-                photo = sorted(result["photo"], key=lambda x: x["width"])[-1]
-                file_id = photo["file_id"]
-                width = photo["width"]
-                height = photo["height"]
-            elif "document" in result and result["document"]["mime_type"].startswith("image"):
-                 file_id = result["document"]["file_id"]
-                 if "thumb" in result["document"]:
-                     width = result["document"]["thumb"]["width"]
-                     height = result["document"]["thumb"]["height"]
-            # -----------------------------------------------------------
+            forwarded_msg_id = result["message_id"] # Запоминаем ID копии
 
-            if not file_id:
-                logger.warning(f"[{req_id}] No image found in message {post_id}.")
+            # --- 3. ИЗВЛЕЧЕНИЕ ДАННЫХ ---
+            
+            # А) ДАТА (То, ради чего всё затевалось)
+            # forward_date — дата оригинала. date — дата пересылки.
+            origin_ts = result.get("forward_date") or result.get("date")
+            date_str = datetime.fromtimestamp(origin_ts).strftime('%d.%m.%Y %H:%M') if origin_ts else ""
+
+            # Б) ФОТО
+            if "photo" not in result:
+                logger.info(f"[{req_id}] No photo in message.")
                 return None
 
-            # 3. ЗАМЕР ЗАПРОСА getFile
-            logger.info(f"[{req_id}] Getting File Path for {file_id[:10]}...")
-            t_path = time.time()
-            path_r = requests_session.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}", timeout=10)
-            logger.info(f"[{req_id}] getFile API took {time.time() - t_path:.3f}s")
+            # Берем лучшее качество
+            best_photo = sorted(result["photo"], key=lambda x: x["width"])[-1]
+            file_id = best_photo["file_id"]
             
-            path_data = path_r.json()
+            # В) ОПИСАНИЕ
+            caption = result.get("caption") or result.get("text") or ""
             
-            if path_data.get("ok"):
-                file_path = path_data["result"]["file_path"]
+            # --- 4. ПОЛУЧЕНИЕ ССЫЛКИ (getFile) ---
+            # getFile лимитируется отдельно и мягче, можно без жестких пауз
+            file_r = requests_session.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}", timeout=10)
+            file_data = file_r.json()
+            
+            if file_data.get("ok"):
+                file_path = file_data["result"]["file_path"]
+                # Формируем ссылку через прокси
                 full_tg_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
-
-                # Оборачиваем через публичный прокси
-                # n=-1 отключает оптимизацию (чтобы не портить качество), но можно убрать
                 final_url = f"https://wsrv.nl/?url={full_tg_url}&n=-1"
-                
-                # ... формирование даты и ссылок (ваш код) ...
-                origin_date = result.get("forward_date") or result.get("date")
-                date_str = datetime.fromtimestamp(origin_date).strftime('%d.%m.%Y %H:%M') if origin_date else ""
-                
+
                 res_obj = {
                     "url": final_url,
-                    "width": width,
-                    "height": height,
-                    "caption": caption[:100],
+                    "width": best_photo["width"],
+                    "height": best_photo["height"],
+                    "caption": caption[:200], # Обрезаем слишком длинные
                     "date": date_str,
-                    "post_link": f"https://t.me/{target_channel.replace('@', '')}/{post_id}",
-                    "cached_at": time.time()
+                    "post_link": f"https://t.me/{target_channel.replace('@', '')}/{post_id}"
                 }
-                IMAGE_CACHE[cache_key] = res_obj
-                
-                total_time = time.time() - t_start
-                logger.info(f"[{req_id}] SUCCESS. Total resolve time: {total_time:.3f}s")
-                return res_obj
-            else:
-                 logger.error(f"[{req_id}] getFile Failed: {path_data}")
-                 break
-                 
-        except Exception as e:
-            logger.error(f"[{req_id}] EXCEPTION in attempt {attempt}: {e}")
-            time.sleep(1)
 
-    logger.error(f"[{req_id}] FAILED after retries. Time: {time.time() - t_start:.3f}s")
+                # --- 5. СОХРАНЕНИЕ В ВЕЧНЫЙ КЭШ ---
+                save_cached_post(target_channel, post_id, res_obj)
+                
+                # --- 6. ЧИСТКА (Удаляем пересланное сообщение из дампа) ---
+                # Это хорошая практика, чтобы не засорять чат и не привлекать внимание алгоритмов
+                try:
+                    del_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteMessage"
+                    requests_session.post(del_url, json={"chat_id": DUMP_CHAT_ID, "message_id": forwarded_msg_id})
+                except:
+                    pass # Не критично, если не удалилось
+
+                return res_obj
+
+        except Exception as e:
+            logger.error(f"[{req_id}] Error: {e}")
+            return None
+            
     return None
+
 
 
 
