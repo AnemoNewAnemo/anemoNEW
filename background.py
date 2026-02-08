@@ -11,7 +11,7 @@ if not TELEGRAM_BOT_TOKEN:
 from waitress import serve
 import math
 # --- API ENDPOINTS (Точки для работы с данными) ---
-
+import uuid
 import random
 import requests
 from flask import Response, stream_with_context
