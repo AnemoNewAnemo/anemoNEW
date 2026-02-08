@@ -295,7 +295,30 @@ def api_get_anemone_chunk():
         "cx": cx, "cy": cy, "cz": cz,
         "items": planes
     })
+@app.route('/api/anemone/add_comment', methods=['POST'])
+def api_add_comment():
+    from gpt_helper import add_anemone_comment
+    data = request.json
+    
+    # channel_id передается с фронта (из URL)
+    res = add_anemone_comment(
+        data.get('channel_id'),
+        data.get('text'),
+        data.get('x'),
+        data.get('y'),
+        data.get('z')
+    )
+    
+    if res:
+        return jsonify({"status": "success", "data": res})
+    return jsonify({"status": "error"}), 500
 
+@app.route('/api/anemone/get_comments', methods=['GET'])
+def api_get_comments():
+    from gpt_helper import get_anemone_comments
+    channel_id = request.args.get('channel_id')
+    comments = get_anemone_comments(channel_id)
+    return jsonify(comments)
 
 
 
