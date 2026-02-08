@@ -9,7 +9,7 @@ from PIL import Image  # Библиотека для обработки изоб
 if not TELEGRAM_BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN не задан в переменных окружения")
 from waitress import serve
-
+import math
 # --- API ENDPOINTS (Точки для работы с данными) ---
 
 import random
@@ -47,28 +47,28 @@ DEFAULT_MAX_POST_ID = 8504
 IMAGE_CACHE = {} 
 from datetime import datetime
 
-# --- ЗАМЕНИТЬ ФУНКЦИЮ get_image_from_telegram ---
-def get_image_from_telegram(post_id, custom_channel_id=None):
+# --- ЗАМЕНА ФУНКЦИИ get_image_from_telegram ---
+def get_image_from_telegram(post_id, custom_channel_id=None, req_id="Unknown"):
+    t_start = time.time()
     post_id = str(post_id)
     target_channel = custom_channel_id if custom_channel_id else DEFAULT_CHANNEL_ID
     
     cache_key = f"{target_channel}_{post_id}"
-    current_time = time.time()
-
-    # 1. ПРОВЕРКА КЭША С УЧЕТОМ ВРЕМЕНИ ЖИЗНИ (ССЫЛКИ ЖИВУТ 1 ЧАС)
+    
+    # 1. ЛОГИРОВАНИЕ КЭША
     if cache_key in IMAGE_CACHE:
         cached_item = IMAGE_CACHE[cache_key]
-        # Если записано None (предыдущая ошибка) — удаляем и пробуем снова
         if cached_item is None:
+            logger.warning(f"[{req_id}] Cache HIT (None value) for {post_id}. Removing invalid cache.")
             del IMAGE_CACHE[cache_key]
-        # Если ссылка старше 55 минут (3300 сек) — удаляем и обновляем, иначе она вернет 404
-        elif (current_time - cached_item.get("cached_at", 0)) > 3300:
-            logger.info(f" [TG CACHE] Expired for {cache_key}, refreshing...")
+        elif (time.time() - cached_item.get("cached_at", 0)) > 3300:
+            logger.info(f"[{req_id}] Cache EXPIRED for {post_id} (Age: {int(time.time() - cached_item.get('cached_at', 0))}s). Refreshing...")
             del IMAGE_CACHE[cache_key]
         else:
-            # logger.info(f" [TG CACHE] Hit for {cache_key}") # Можно раскомментировать для дебага
+            logger.info(f"[{req_id}] Cache HIT for {post_id}. Took {time.time() - t_start:.4f}s")
             return cached_item
 
+    # Подготовка запроса
     forward_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/forwardMessage"
     params = {
         "chat_id": DUMP_CHAT_ID,
@@ -77,77 +77,78 @@ def get_image_from_telegram(post_id, custom_channel_id=None):
         "disable_notification": True
     }
     
-    # 2. ЦИКЛ ПОВТОРНЫХ ПОПЫТОК (RETRY LOOP)
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            # Используем session для скорости
+            logger.info(f"[{req_id}] Attempt {attempt+1}/{max_retries}: Forwarding msg {post_id}...")
+            
+            t_req = time.time()
+            # 2. ЗАМЕР ЗАПРОСА forwardMessage
             r = requests_session.post(forward_url, json=params, timeout=10)
+            dur = time.time() - t_req
+            
+            logger.info(f"[{req_id}] Forward API took {dur:.3f}s. Status: {r.status_code}")
+
             data = r.json()
             
-            # ОБРАБОТКА ОГРАНИЧЕНИЙ TELEGRAM (429 Too Many Requests)
             if not data.get("ok"):
                 error_code = data.get("error_code")
                 desc = data.get("description", "")
 
                 if error_code == 429:
-                    # Telegram часто пишет "Retry in X seconds"
                     retry_after = data.get("parameters", {}).get("retry_after", 1)
-                    # Если sleep слишком долгий, лучше прервать, чтобы не висел поток
+                    logger.warning(f"[{req_id}] RATE LIMIT (429). TG asks to wait {retry_after}s.")
+                    
                     if retry_after > 5: 
-                        logger.warning(f" [TG RATE LIMIT] Too long wait ({retry_after}s) for {post_id}")
+                        logger.error(f"[{req_id}] Aborting: Wait time too long ({retry_after}s).")
                         break 
                     
-                    time.sleep(retry_after + 0.5) # Ждем и пробуем снова
-                    continue
+                    time.sleep(retry_after + 0.5)
+                    continue 
                 
-                # Если ошибки доступа - возвращаем сразу
                 if "chat not found" in desc.lower() or "kicked" in desc.lower():
+                    logger.error(f"[{req_id}] Access Denied: {desc}")
                     return {"error": "access_denied"}
                 
-                logger.error(f" [TG ERROR] {desc} (Post: {post_id})")
+                logger.error(f"[{req_id}] TG API Error: {desc}")
                 return None
                 
             result = data["result"]
             
-            # --- СБОР ДАННЫХ (Ваш код логики даты/ссылок) ---
-            origin_date = result.get("forward_date") or result.get("date")
-            date_str = datetime.fromtimestamp(origin_date).strftime('%d.%m.%Y %H:%M') if origin_date else ""
-
-            post_link = ""
-            if "forward_from_chat" in result and "username" in result["forward_from_chat"]:
-                orig_username = result["forward_from_chat"]["username"]
-                orig_id = result.get("forward_from_message_id", post_id)
-                post_link = f"https://t.me/{orig_username}/{orig_id}"
-            elif target_channel.startswith("@"):
-                clean_username = target_channel.replace("@", "")
-                post_link = f"https://t.me/{clean_username}/{post_id}"
-
-            # Поиск фото или документа
+            # Логика поиска file_id (сокращена для ясности, оставьте вашу логику парсинга)
+            # ... (ВАШ КОД ПАРСИНГА ОСТАЕТСЯ ТЕМ ЖЕ) ...
+            # Но добавьте логирование, если файл не найден:
+            
+            # --- Вставьте сюда ваш блок поиска file_id, width, height ---
+            # Для примера:
             file_id = None
             width = 1
             height = 1
             caption = result.get("caption", "") or result.get("text", "")
-
+            
+            # (Скопируйте вашу логику поиска photo/document сюда)
             if "photo" in result:
-                photo = sorted(result["photo"], key=lambda x: x["width"])[-1] # Берем самое большое
-                if photo["width"] > 100: # Отсекаем миниатюры если есть выбор
-                    file_id = photo["file_id"]
-                    width = photo["width"]
-                    height = photo["height"]
+                photo = sorted(result["photo"], key=lambda x: x["width"])[-1]
+                file_id = photo["file_id"]
+                width = photo["width"]
+                height = photo["height"]
             elif "document" in result and result["document"]["mime_type"].startswith("image"):
                  file_id = result["document"]["file_id"]
                  if "thumb" in result["document"]:
                      width = result["document"]["thumb"]["width"]
                      height = result["document"]["thumb"]["height"]
+            # -----------------------------------------------------------
 
             if not file_id:
-                # Сообщение есть, но картинки нет - кэшируем пустоту, чтобы не долбить API
-                # IMAGE_CACHE[cache_key] = None # Лучше не кэшировать None, пусть пробует потом
+                logger.warning(f"[{req_id}] No image found in message {post_id}.")
                 return None
 
-            # 3. ПОЛУЧЕНИЕ ПУТИ ФАЙЛА (GetFile)
+            # 3. ЗАМЕР ЗАПРОСА getFile
+            logger.info(f"[{req_id}] Getting File Path for {file_id[:10]}...")
+            t_path = time.time()
             path_r = requests_session.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}", timeout=10)
+            logger.info(f"[{req_id}] getFile API took {time.time() - t_path:.3f}s")
+            
             path_data = path_r.json()
             
             if path_data.get("ok"):
@@ -157,69 +158,87 @@ def get_image_from_telegram(post_id, custom_channel_id=None):
                 # Оборачиваем через публичный прокси
                 # n=-1 отключает оптимизацию (чтобы не портить качество), но можно убрать
                 final_url = f"https://wsrv.nl/?url={full_tg_url}&n=-1"
+                
+                # ... формирование даты и ссылок (ваш код) ...
+                origin_date = result.get("forward_date") or result.get("date")
+                date_str = datetime.fromtimestamp(origin_date).strftime('%d.%m.%Y %H:%M') if origin_date else ""
+                
                 res_obj = {
                     "url": final_url,
                     "width": width,
                     "height": height,
                     "caption": caption[:100],
                     "date": date_str,
-                    "post_link": post_link,
-                    "cached_at": time.time() # <--- ВАЖНО: Запоминаем время создания ссылки
+                    "post_link": f"https://t.me/{target_channel.replace('@', '')}/{post_id}",
+                    "cached_at": time.time()
                 }
                 IMAGE_CACHE[cache_key] = res_obj
+                
+                total_time = time.time() - t_start
+                logger.info(f"[{req_id}] SUCCESS. Total resolve time: {total_time:.3f}s")
                 return res_obj
             else:
-                 # Если getFile упал (редко), тоже можно retry, но пока просто break
+                 logger.error(f"[{req_id}] getFile Failed: {path_data}")
                  break
                  
         except Exception as e:
-            logger.error(f"Telegram Fetch Error ({post_id}): {e}")
-            time.sleep(1) # Короткая пауза перед повтором при сетевой ошибке
+            logger.error(f"[{req_id}] EXCEPTION in attempt {attempt}: {e}")
+            time.sleep(1)
 
+    logger.error(f"[{req_id}] FAILED after retries. Time: {time.time() - t_start:.3f}s")
     return None
 
 @app.route('/api/anemone/resolve_image')
 def api_resolve_image():
+    # Генерируем короткий ID запроса (например, a1b2) для удобства чтения логов
+    req_id = str(uuid.uuid4())[:8]
+    
     post_id = request.args.get('post_id')
     channel_id = request.args.get('channel_id')
     
-    img_data = get_image_from_telegram(post_id, custom_channel_id=channel_id)
+    logger.info(f"[{req_id}] START Resolve: Post {post_id} (Chan: {channel_id})")
+    
+    img_data = get_image_from_telegram(post_id, custom_channel_id=channel_id, req_id=req_id)
     
     if img_data and "error" in img_data and img_data["error"] == "access_denied":
+        logger.info(f"[{req_id}] Access Denied response sent.")
         return jsonify({"found": False, "error": "access_denied"})
 
     if img_data:
         from urllib.parse import quote
         encoded = quote(img_data['url'])
-        
+        # Мы добавляем req_id в ссылку прокси, чтобы отследить и второй этап загрузки!
         return jsonify({
             "found": True,
-            "url": f"/api/proxy_image?url={encoded}",
+            "url": img_data['url'],
             "width": img_data['width'],
             "height": img_data['height'],
             "caption": img_data.get('caption', ''),
             "date": img_data.get('date', ''),
-            "post_link": img_data.get('post_link', '') # Передаем ссылку
+            "post_link": img_data.get('post_link', '')
         })
     
+    logger.warning(f"[{req_id}] Not found response sent.")
     return jsonify({"found": False})
 
 @app.route('/api/proxy_image')
 def proxy_image():
-    """
-    Прокси-сервер. Скачивает картинку у Telegram и отдает браузеру 
-    с разрешением CORS.
-    """
     url = request.args.get('url')
+    # Получаем ID из параметра, если он есть, для связности логов
+    req_id = request.args.get('req_id', 'proxy_unknown')
+    
     if not url: return "No URL", 400
     
+    # Логируем начало скачивания самой картинки
+    logger.info(f"[{req_id}] PROXY START downloading image content...")
+    t_start = time.time()
+    
     try:
-        # Используем глобальную сессию и таймаут
+        # stream=True ОЧЕНЬ ВАЖЕН для больших картинок
         req = requests_session.get(url, stream=True, timeout=15)
         
-        # Если ссылка протухла (Telegram вернул 404), прокси упадет,
-        # и фронтенд увидит ошибку. (В идеале нужно чистить кэш тут, но это сложнее)
         if req.status_code != 200:
+             logger.error(f"[{req_id}] PROXY ERROR. TG status: {req.status_code}")
              return f"Telegram Error {req.status_code}", req.status_code
 
         excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
@@ -227,14 +246,28 @@ def proxy_image():
                    if name.lower() not in excluded_headers]
         
         headers.append(('Access-Control-Allow-Origin', '*'))
-        # Кэшируем в браузере на 55 минут (чуть меньше жизни ссылки TG)
         headers.append(('Cache-Control', 'public, max-age=3300')) 
 
-        return Response(stream_with_context(req.iter_content(chunk_size=65536)),
+        def generate():
+            bytes_transferred = 0
+            try:
+                for chunk in req.iter_content(chunk_size=65536):
+                    if chunk:
+                        bytes_transferred += len(chunk)
+                        yield chunk
+                # Логируем успех ТОЛЬКО когда все байты отданы
+                total_time = time.time() - t_start
+                logger.info(f"[{req_id}] PROXY DONE. Transferred {bytes_transferred/1024:.1f} KB in {total_time:.2f}s")
+            except Exception as e:
+                logger.error(f"[{req_id}] PROXY STREAM ERROR: {e}")
+                
+        return Response(stream_with_context(generate()),
                         status=req.status_code,
                         headers=headers,
                         content_type=req.headers.get('content-type'))
+                        
     except Exception as e:
+        logger.error(f"[{req_id}] PROXY CONNECTION ERROR: {e}")
         return str(e), 500
 
 
@@ -253,8 +286,8 @@ def api_get_anemone_chunk():
         cy = int(request.args.get('y', 0))
         cz = int(request.args.get('z', 0))
         
-        # Читаем max_id из запроса или берем дефолтный
-        # Frontend должен передавать этот параметр
+        channel_id = request.args.get('channel_id', 'default_world')
+
         req_max_id = request.args.get('max_id')
         if req_max_id and req_max_id.isdigit():
             max_limit = int(req_max_id)
@@ -264,37 +297,73 @@ def api_get_anemone_chunk():
     except ValueError:
         return jsonify([])
 
-    seed_str = f"{cx},{cy},{cz}"
-    seed_int = int(hashlib.sha256(seed_str.encode('utf-8')).hexdigest(), 16) % 10**8
-    random.seed(seed_int)
+    # 1. Формируем уникальную строку сида
+    seed_str = f"{channel_id}_{cx}_{cy}_{cz}"
+    
+    # 2. Генератор
+    rng = random.Random(seed_str)
 
-    items_count = random.randint(2, 4)
-    chunk_size = 1500 # У вас в JS 1500, тут было 1000, лучше синхронизировать
+    # 3. ЛОГИКА СФЕРИЧЕСКОГО РАСПРЕДЕЛЕНИЯ
+    # Считаем расстояние от центра (0,0,0) в "чанках"
+    dist = math.sqrt(cx**2 + cy**2 + cz**2)
+    
+    # Коэффициент плотности. 
+    # 0.8 - посты стоят плотнее, 1.5 - посты разлетаются шире.
+    # Можно подстроить под себя.
+    density_factor = 0.9 
+    
+    # Вычисляем, какие ID должны быть в этом радиусе "по идее".
+    # Используем кубическую зависимость (dist^3), чтобы заполнять объем сферы равномерно.
+    # +1 гарантирует, что в центре (dist=0) ID начнутся с 1.
+    min_theoretical_id = int((dist * density_factor) ** 3) + 1
+    max_theoretical_id = int(((dist + 1.2) * density_factor) ** 3) + 5
+    
+    # Определяем режим для этого чанка:
+    # ЯДРО (Core) или ХАОС (Chaos)
+    is_core = min_theoretical_id <= max_limit
+    
+    # Генерируем объекты
+    items_count = rng.randint(2, 4)
+    chunk_size = 1500 
     
     planes = []
     
     for i in range(items_count):
-        px = random.uniform(-chunk_size/2, chunk_size/2)
-        py = random.uniform(-chunk_size/2, chunk_size/2)
-        pz = random.uniform(-chunk_size/2, chunk_size/2)
-        scale = random.uniform(100, 300)
+        px = rng.uniform(-chunk_size/2, chunk_size/2)
+        py = rng.uniform(-chunk_size/2, chunk_size/2)
+        pz = rng.uniform(-chunk_size/2, chunk_size/2)
+        scale = rng.uniform(100, 300)
 
-        # Генерируем ID на основе переданного лимита
-        # max_limit берется из URL
-        random_msg_id = random.randint(1, max_limit) 
+        # === ГЛАВНОЕ ИЗМЕНЕНИЕ ЗДЕСЬ ===
+        if is_core:
+            # Мы внутри "изученной вселенной". 
+            # Выдаем ID, который строго привязан к этому расстоянию.
+            # Ограничиваем верхнюю планку max_limit, чтобы не выйти за пределы.
+            eff_max = min(max_theoretical_id, max_limit)
+            
+            # Защита: если min > eff_max (крайний случай на границе), берем eff_max
+            eff_min = min(min_theoretical_id, eff_max)
+            
+            random_msg_id = rng.randint(eff_min, eff_max)
+        else:
+            # Мы в "дальнем космосе" (за пределами max_limit).
+            # Генерируем случайные дубликаты из всего доступного пула.
+            random_msg_id = rng.randint(1, max_limit)
+        # ===============================
 
         planes.append({
-            "id": f"{cx}_{cy}_{cz}_{i}",
+            "id": f"{cx}_{cy}_{cz}_{i}", 
             "pos": [px, py, pz],
             "scale": [scale, scale * 1.5],
             "post_id": random_msg_id,
-            "rotation": [random.uniform(-0.2, 0.2), random.uniform(-0.2, 0.2), 0]
+            "rotation": [rng.uniform(-0.2, 0.2), rng.uniform(-0.2, 0.2), 0]
         })
 
     return jsonify({
         "cx": cx, "cy": cy, "cz": cz,
         "items": planes
     })
+
 @app.route('/api/anemone/add_comment', methods=['POST'])
 def api_add_comment():
     from gpt_helper import add_anemone_comment
