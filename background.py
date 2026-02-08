@@ -115,32 +115,46 @@ def get_image_from_telegram(post_id, custom_channel_id=None, req_id="Unknown"):
                 
             result = data["result"]
             
-            # Логика поиска file_id (сокращена для ясности, оставьте вашу логику парсинга)
-            # ... (ВАШ КОД ПАРСИНГА ОСТАЕТСЯ ТЕМ ЖЕ) ...
-            # Но добавьте логирование, если файл не найден:
-            
-            # --- Вставьте сюда ваш блок поиска file_id, width, height ---
-            # Для примера:
+            # --- НАЧАЛО ИЗМЕНЕНИЙ: СТРОГАЯ ФИЛЬТРАЦИЯ ---
             file_id = None
             width = 1
             height = 1
             caption = result.get("caption", "") or result.get("text", "")
             
-            # (Скопируйте вашу логику поиска photo/document сюда)
+            # 1. Игнорируем документы полностью
+            if "document" in result:
+                logger.info(f"[{req_id}] Ignored: Message is a document.")
+                return None
+
+            # 2. Обрабатываем только Photo
             if "photo" in result:
-                photo = sorted(result["photo"], key=lambda x: x["width"])[-1]
-                file_id = photo["file_id"]
-                width = photo["width"]
-                height = photo["height"]
-            elif "document" in result and result["document"]["mime_type"].startswith("image"):
-                 file_id = result["document"]["file_id"]
-                 if "thumb" in result["document"]:
-                     width = result["document"]["thumb"]["width"]
-                     height = result["document"]["thumb"]["height"]
-            # -----------------------------------------------------------
+                # 1.4 MB в байтах
+                MAX_SIZE_BYTES = 1.4 * 1024 * 1024 
+                
+                # Получаем все варианты размеров фото
+                all_photos = result["photo"]
+                
+                # Фильтруем: оставляем только те, что меньше лимита
+                valid_photos = [p for p in all_photos if p.get("file_size", 0) < MAX_SIZE_BYTES]
+                
+                if not valid_photos:
+                    logger.warning(f"[{req_id}] Ignored: Image is too big (all sizes > 1.4MB).")
+                    return None
+                
+                # Берем самое качественное из прошедших проверку (обычно последнее в списке)
+                best_photo = sorted(valid_photos, key=lambda x: x["width"])[-1]
+                
+                file_id = best_photo["file_id"]
+                width = best_photo["width"]
+                height = best_photo["height"]
+            else:
+                # Если фото нет (текст, видео, стикер и т.д.)
+                logger.info(f"[{req_id}] Ignored: Not a photo object.")
+                return None
+            # --- КОНЕЦ ИЗМЕНЕНИЙ ---
 
             if not file_id:
-                logger.warning(f"[{req_id}] No image found in message {post_id}.")
+                logger.warning(f"[{req_id}] No suitable image found in message {post_id}.")
                 return None
 
             # 3. ЗАМЕР ЗАПРОСА getFile
@@ -156,10 +170,8 @@ def get_image_from_telegram(post_id, custom_channel_id=None, req_id="Unknown"):
                 full_tg_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
 
                 # Оборачиваем через публичный прокси
-                # n=-1 отключает оптимизацию (чтобы не портить качество), но можно убрать
                 final_url = f"https://wsrv.nl/?url={full_tg_url}&n=-1"
                 
-                # ... формирование даты и ссылок (ваш код) ...
                 origin_date = result.get("forward_date") or result.get("date")
                 date_str = datetime.fromtimestamp(origin_date).strftime('%d.%m.%Y %H:%M') if origin_date else ""
                 
@@ -187,6 +199,7 @@ def get_image_from_telegram(post_id, custom_channel_id=None, req_id="Unknown"):
 
     logger.error(f"[{req_id}] FAILED after retries. Time: {time.time() - t_start:.3f}s")
     return None
+
 
 @app.route('/api/anemone/resolve_image')
 def api_resolve_image():
