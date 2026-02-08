@@ -24,9 +24,52 @@ const CONFIG = {
         dustSize: 1.0,
         fireflyCount: 600,
         fireflySize: 1.0
+    },
+    ui: {
+        showDistance: true,
+        showChaos: false
+    },
+    chaos: {
+        radius: 4000 
+    },
+    // ОБНОВЛЕННАЯ СЕКЦИЯ СОЗВЕЗДИЙ
+    constellation: {
+        color: new THREE.Color('#ff5e00'), // Насыщенно оранжевый
+        dotSize: 4.0,                      // Близко к максимуму
+        lineWidth: 0.5,                    // Минимальный
+        glowStr: 0.0                       // Свечение выключено по умолчанию
     }
 };
 
+
+
+
+
+
+function seededRandom(seed) {
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+// Хелпер для получения числового сида из строки (для ID объекта)
+function cyrb128(str) {
+    let h1 = 1779033703, h2 = 3144134277,
+        h3 = 1013904242, h4 = 2773480762;
+    for (let i = 0, k; i < str.length; i++) {
+        k = str.charCodeAt(i);
+        h1 = h2 ^ Math.imul(h1 ^ k, 597399067);
+        h2 = h3 ^ Math.imul(h2 ^ k, 2869860233);
+        h3 = h4 ^ Math.imul(h3 ^ k, 951274213);
+        h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
+    }
+    h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067);
+    h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233);
+    h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213);
+    h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
+    return (h1^h2^h3^h4) >>> 0;
+}
 const CHUNK_SIZE = 1500;
 const RENDER_DISTANCE = 1;
 const FADE_DISTANCE = 1600;
@@ -231,6 +274,17 @@ const paperFragmentShader = `
 // --- SCENE SETUP ---
 const container = document.getElementById('canvas-container');
 const scene = new THREE.Scene();
+const chaosGeo = new THREE.SphereGeometry(CONFIG.chaos.radius, 32, 16); 
+const chaosMat = new THREE.MeshBasicMaterial({ 
+    color: 0x334455, 
+    wireframe: true, 
+    transparent: true, 
+    opacity: 0.15,
+    blending: THREE.AdditiveBlending
+});
+const chaosSphere = new THREE.Mesh(chaosGeo, chaosMat);
+chaosSphere.visible = false; // По умолчанию скрыто
+scene.add(chaosSphere);
 
 // --- ОБЛАЧНЫЕ КОММЕНТАРИИ И ИНТЕРАКТИВ ---
 const commentsGroup = new THREE.Group();
@@ -238,72 +292,419 @@ scene.add(commentsGroup);
 let commentsData = []; // Хранит данные для списка
 let navigationTarget = null; // Текущая цель (Vector3)
 
-// 1. Создание текстуры текста (Canvas)
+// --- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ДЛЯ СОЗВЕЗДИЙ ---
+const selectedComments = new Set(); // Хранит ID выбранных комментариев
+let constellationGroup = new THREE.Group();
+scene.add(constellationGroup);
+
+
+// 1. Шейдер для Точек (Светящаяся звезда с белым ядром)
+const constellationDotMat = new THREE.ShaderMaterial({
+    uniforms: {
+        uColor: { value: CONFIG.constellation.color },
+        uSize: { value: CONFIG.constellation.dotSize * 30.0 },
+        uGlowStr: { value: 1.0 },
+        uScale: { value: window.innerHeight }
+    },
+    vertexShader: `
+        uniform float uSize;
+        uniform float uScale;
+        void main() {
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            gl_Position = projectionMatrix * mvPosition;
+            gl_PointSize = uSize * (uScale / -mvPosition.z);
+        }
+    `,
+    fragmentShader: `
+        uniform vec3 uColor;
+        uniform float uGlowStr;
+        void main() {
+            vec2 uv = gl_PointCoord - vec2(0.5);
+            float dist = length(uv);
+            if (dist > 0.5) discard;
+
+            // Мягкое падение яркости для гало
+            float strength = 1.0 - (dist * 2.0);
+            strength = pow(strength, 2.0); // Делаем край более резким для "неонового" вида
+
+            // Белое ядро (core) теперь меньше и добавляется, а не замещает цвет
+            float core = smoothstep(0.0, 0.15, strength);
+            
+            // Основной цвет умножаем (overdrive), чтобы он "горел"
+            vec3 finalColor = uColor * 1.5; 
+            
+            // Добавляем белое ядро поверх (аддитивно)
+            finalColor += vec3(1.0) * core * 0.6;
+
+            gl_FragColor = vec4(finalColor, strength * uGlowStr);
+        }
+    `,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthTest: false,
+    depthWrite: false
+});
+// 2. Материал для Линий
+// Примечание: Толщина линий > 1px в WebGL на Windows не поддерживается нативно.
+// Чтобы линии были ярче, мы используем AdditiveBlending и opacity.
+const constellationTubeMat = new THREE.ShaderMaterial({
+    uniforms: {
+        uColor: { value: CONFIG.constellation.color },
+        uOpacity: { value: 0.8 },
+        uGlowStr: { value: CONFIG.constellation.glowStr } // Управляется слайдером "Свечение линий"
+    },
+    vertexShader: `
+        varying vec3 vNormal;
+        varying vec3 vViewDir;
+        
+        void main() {
+            vNormal = normalize(normalMatrix * normal);
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            vViewDir = normalize(-mvPosition.xyz);
+            gl_Position = projectionMatrix * mvPosition;
+        }
+    `,
+    fragmentShader: `
+        uniform vec3 uColor;
+        uniform float uOpacity;
+        uniform float uGlowStr;
+        
+        varying vec3 vNormal;
+        varying vec3 vViewDir;
+
+        void main() {
+            // Расчет Френеля (1.0 в центре линии, 0.0 на краях)
+            float fresnel = dot(vNormal, vViewDir);
+            fresnel = clamp(fresnel, 0.0, 1.0);
+
+            // 1. ЯДРО (Белая горячая линия внутри)
+            // Чем выше степень, тем тоньше белый центр
+            float core = pow(fresnel, 6.0);
+            vec3 coreColor = vec3(1.0) * core * 0.8;
+
+            // 2. СВЕЧЕНИЕ (Ореол)
+            // Инвертируем френель: свечение идет по краям трубки
+            float glowFactor = 1.0 - fresnel;
+            // Делаем спад мягким
+            glowFactor = pow(glowFactor, 2.0);
+            
+            // Итоговый цвет: Цвет линии + Белое ядро + Дополнительное свечение от слайдера
+            vec3 finalColor = (uColor * fresnel * uOpacity) + coreColor;
+            finalColor += uColor * glowFactor * uGlowStr * 5.0; // * 5.0 для усиления эффекта
+
+            // Альфа: Прозрачность зависит от угла обзора и силы свечения
+            float alpha = (uOpacity * fresnel) + (glowFactor * uGlowStr);
+
+            gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 1.0));
+        }
+    `,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide
+});
+// ФУНКЦИЯ ОТРИСОВКИ СОЗВЕЗДИЙ
+function updateConstellationVisuals() {
+    // 1. Очистка старой геометрии
+    while(constellationGroup.children.length > 0){ 
+        const obj = constellationGroup.children[0];
+        if(obj.geometry) obj.geometry.dispose();
+        constellationGroup.remove(obj); 
+    }
+
+    if (selectedComments.size === 0) return;
+
+    // 2. Сбор позиций выбранных комментариев
+    const selectedPoints = [];
+    commentsData.forEach(c => {
+        if (selectedComments.has(c.id)) {
+            selectedPoints.push(new THREE.Vector3(c.pos.x, c.pos.y, c.pos.z));
+        }
+    });
+
+    if (selectedPoints.length === 0) return;
+
+    // 3. Рисуем точки (звёзды)
+    const dotGeo = new THREE.BufferGeometry().setFromPoints(selectedPoints);
+    const dots = new THREE.Points(dotGeo, constellationDotMat);
+    dots.renderOrder = 999;
+    constellationGroup.add(dots);
+
+    // 4. Рисуем прямые трубки (если точек больше 1)
+    if (selectedPoints.length > 1) {
+        // ИСПОЛЬЗУЕМ CurvePath ДЛЯ ПРЯМЫХ ЛИНИЙ
+        const path = new THREE.CurvePath();
+        
+        for (let i = 0; i < selectedPoints.length; i++) {
+            // Соединяем текущую точку со следующей.
+            // (i + 1) % length обеспечивает замыкание последней точки с первой
+            const startPoint = selectedPoints[i];
+            const endPoint = selectedPoints[(i + 1) % selectedPoints.length];
+            
+            // Добавляем ПРЯМОЙ отрезок (LineCurve3) в путь
+            path.add(new THREE.LineCurve3(startPoint, endPoint));
+        }
+        
+        // Параметры: path, segments (кол-во сегментов), radius (толщина), radialSegments (округлость), closed
+        const radius = CONFIG.constellation.lineWidth * 2.0; 
+        
+        // segments = selectedPoints.length * 2 достаточно для прямых углов
+        const tubeGeo = new THREE.TubeGeometry(path, selectedPoints.length * 4, radius, 8, true);
+        
+        const tube = new THREE.Mesh(tubeGeo, constellationTubeMat);
+        tube.renderOrder = 998;
+        constellationGroup.add(tube);
+    }
+}
 function createTextTexture(text) {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
-    const fontSize = 40; // Высокое разрешение для четкости
-    ctx.font = `bold ${fontSize}px "Courier New", monospace`;
-    
-    // Вычисляем размер
-    const lines = text.split('\n');
-    let maxWidth = 0;
-    lines.forEach(line => maxWidth = Math.max(maxWidth, ctx.measureText(line).width));
-    
-    const padding = 20;
-    canvas.width = maxWidth + padding * 2;
-    canvas.height = (fontSize * 1.2 * lines.length) + padding * 2;
-    
-    // Рисуем "облачко" (фон)
-    ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
-    ctx.strokeStyle = "rgba(0,0,0,0.5)";
-    ctx.lineWidth = 4;
-    
-    // Закругленный прямоугольник
-    ctx.beginPath();
-    ctx.roundRect(0, 0, canvas.width, canvas.height, 20);
-    ctx.fill();
-    ctx.stroke();
 
-    // Рисуем текст
-    ctx.fillStyle = "#000000";
-    ctx.font = `bold ${fontSize}px "Courier New", monospace`;
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
+    /* ================== 1. НАСТРОЙКИ ================== */
+    const fontSize = 32; 
+    const font = `bold ${fontSize}px "Courier New", monospace`;
+    const lineHeight = fontSize * 1.15; // Межстрочный интервал
     
+    // --- НАСТРОЙКА ОТСТУПОВ ---
+    // Было 30, стало 45 (горизонталь) и 55 (вертикаль). 
+    // Это ~1.5 ширины символа, что дает комфортный "воздух".
+    const paddingX = 85; 
+    const paddingY = 105;
+    
+    // Размеры оригинального SVG (для пропорций ушей)
+    const originalW = 430;
+    const originalH = 308;
+    const earHeight = 73; // Высота зоны ушей
+    const bottomCurveH = 72; // Высота нижнего скругления
+    
+    // Минимальная ширина, чтобы уши не наехали друг на друга
+    const leftEarWidth = 117; 
+    const rightEarWidth = 110;
+    const minBodyWidth = leftEarWidth + rightEarWidth + 20;
+
+    ctx.font = font;
+
+    /* ================== 2. РАСЧЕТ РАЗМЕРОВ ================== */
+    const lines = text.split('\n');
+    let maxTextWidth = 0;
+    
+    // Ищем самую широкую строку
+    for (const line of lines) {
+        const metrics = ctx.measureText(line);
+        maxTextWidth = Math.max(maxTextWidth, Math.ceil(metrics.width));
+    }
+
+    // 1. Считаем ширину контента (Текст + Отступы слева и справа)
+    let contentWidth = maxTextWidth + (paddingX * 2);
+    // Если текст слишком короткий, расширяем до минимума для ушей
+    if (contentWidth < minBodyWidth) {
+        contentWidth = minBodyWidth;
+    }
+
+    // 2. Считаем высоту контента (Блок текста + Отступы сверху и снизу)
+    const textBlockHeight = lines.length * lineHeight;
+    // Высота "тела" (белой части без ушей)
+    let bodyHeight = textBlockHeight + (paddingY * 2);
+    
+    // Минимальная высота тела (чтобы не было сплюснутым, если 1 строка)
+    const minBodyHeight = originalH - earHeight;
+    if (bodyHeight < minBodyHeight) {
+        bodyHeight = minBodyHeight;
+    }
+
+    // Итоговые размеры канваса
+    const W = Math.ceil(contentWidth);
+    const H = Math.ceil(bodyHeight + earHeight);
+
+    canvas.width = W;
+    canvas.height = H;
+    
+    // Восстанавливаем шрифт после ресайза канваса
+    ctx.font = font; 
+
+    /* ================== 3. РИСОВАНИЕ ПУЗЫРЯ ================== */
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
+    
+    ctx.beginPath();
+
+    // -- Левая сторона --
+    ctx.moveTo(0, H - bottomCurveH); 
+    ctx.lineTo(0, 143.1); 
+
+    // -- Левое ухо --
+    ctx.bezierCurveTo(2.31, 86.8, 31.18, -8.54, 56, 0.1);
+    ctx.bezierCurveTo(60.66, 2.79, 68.43, 8.52, 81.60, 25.86);
+    ctx.bezierCurveTo(90.84, 38.01, 106.96, 61.95, 116.1, 73.1);
+
+    // -- Верхняя линия (соединение ушей) --
+    // Рисуем линию до начала правого уха
+    const rightEarStart = W - 110; 
+    ctx.lineTo(rightEarStart, 72.1);
+
+    // -- Правое ухо (адаптивное) --
+    // Координаты смещены относительно правого края W
+    ctx.bezierCurveTo(W-99, 72.1, W-88, 38.1, W-80, 24);
+    ctx.bezierCurveTo(W-68, 6.6, W-62, -1.7, W-46, 2);
+    ctx.bezierCurveTo(W-20, 8.0, W-0.1, 116.1, W, 131.9);
+    ctx.bezierCurveTo(W, 135.8, W, 139.9, W, 143.1);
+
+    // -- Правая сторона --
+    ctx.lineTo(W, H - bottomCurveH);
+
+    // -- Нижний правый угол --
+    ctx.bezierCurveTo(W, H - 32.3, W - 31.3, H, W - 71, H);
+
+    // -- Нижняя линия --
+    ctx.lineTo(71.1, H);
+
+    // -- Нижний левый угол --
+    ctx.bezierCurveTo(32.2, H, 0, H - 32.3, 0, H - bottomCurveH);
+
+    ctx.closePath();
+    ctx.fill();
+
+    /* ================== 4. ОТРИСОВКА ТЕКСТА ================== */
+    ctx.fillStyle = "#000";
+    
+    // Left align важен для ASCII, чтобы вертикальные линии рисунка совпадали
+    ctx.textAlign = "left"; 
+    ctx.textBaseline = "top"; 
+
+    // --- Центрирование блока текста ---
+    
+    // 1. По вертикали:
+    // Берем высоту тела (H - earHeight) и центрируем блок текста внутри него
+    // startY начинается ПОСЛЕ ушей
+    const bodyCenterY = earHeight + (bodyHeight / 2);
+    const textStartY = bodyCenterY - (textBlockHeight / 2);
+
+    // 2. По горизонтали:
+    // (Ширина холста - Ширина самой длинной строки) / 2 = Отступ слева
+    const textStartX = (W - maxTextWidth) / 2;
+
     lines.forEach((line, i) => {
-        ctx.fillText(line, padding, padding + (i * fontSize * 1.2));
+        // Отрисовываем каждую строку с вычисленным отступом
+        ctx.fillText(line, textStartX, textStartY + (i * lineHeight));
     });
 
-    const tex = new THREE.CanvasTexture(canvas);
-    // Важно для pixel-art стиля или четкости, но тут лучше Linear
-    tex.minFilter = THREE.LinearFilter; 
-    return { texture: tex, ratio: canvas.width / canvas.height };
-}
+    /* ================== 5. ЭКСПОРТ И ГЛАЗА ================== */
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter; 
+    texture.magFilter = THREE.LinearFilter; 
+    texture.needsUpdate = true;
 
-// 2. Добавление объекта на сцену
+    // Расчет UV для глаз
+    // Глаза должны быть по центру белого "тела" по вертикали
+    const uvY = 1.0 - (bodyCenterY / H);
+    
+    // По горизонтали фиксированный отступ от краев
+    const eyeOffsetX = 65; 
+
+    return {
+        texture,
+        aspect: W / H,
+        leftEyeUV: new THREE.Vector2(eyeOffsetX / W, uvY),
+        rightEyeUV: new THREE.Vector2((W - eyeOffsetX) / W, uvY)
+    };
+}
+// 2. Добавление объекта на сцену (Кот с моргающими глазами)
 function spawnCommentObject(id, text, x, y, z) {
-    const { texture, ratio } = createTextTexture(text);
-    const material = new THREE.SpriteMaterial({ 
-        map: texture, 
+    // Получаем текстуру и точные координаты глаз
+    const { texture, aspect, leftEyeUV, rightEyeUV } = createTextTexture(text);
+    
+    const randomOffset = Math.random() * 100.0;
+
+    const material = new THREE.ShaderMaterial({
+        uniforms: {
+            map: { value: texture },
+            uAspect: { value: aspect }, // Аспект для правильной формы круга глаза
+            uTime: globalUniforms.uTime,
+            uOffset: { value: randomOffset },
+            uLeftEye: { value: leftEyeUV },   // <--- Новое
+            uRightEye: { value: rightEyeUV }, // <--- Новое
+            uFogColor: { value: CONFIG.colors.bottom },
+            uFogDensity: { value: 0.0015 }
+        },
+        vertexShader: `
+            varying vec2 vUv;
+            varying float vDist;
+            void main() {
+                vUv = uv;
+                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                vDist = length(mvPosition.xyz);
+                gl_Position = projectionMatrix * mvPosition;
+            }
+        `,
+        fragmentShader: `
+            uniform sampler2D map;
+            uniform float uAspect;
+            uniform float uTime;
+            uniform float uOffset;
+            uniform vec2 uLeftEye;  // Координаты центра левого глаза
+            uniform vec2 uRightEye; // Координаты центра правого глаза
+            
+            uniform vec3 uFogColor;
+            uniform float uFogDensity;
+            
+            varying vec2 vUv;
+            varying float vDist;
+
+            float eyeShape(vec2 uv, vec2 center, float radius) {
+                vec2 d = uv - center;
+                d.x *= uAspect; // Коррекция на соотношение сторон, чтобы круг был кругом
+                return 1.0 - smoothstep(radius - 0.005, radius + 0.005, length(d));
+            }
+
+            void main() {
+                vec4 texColor = texture2D(map, vUv);
+                if (texColor.a < 0.1) discard;
+
+                // Логика моргания
+                float cycle = 15.0; // Длительность цикла (сек)
+                float t = mod(uTime + uOffset, cycle);
+                
+                float eyesOpen = 0.0; // По умолчанию закрыты (спит)
+
+                // Открывает глаза только на первые 3 секунды цикла
+                if (t < 3.0) {
+                    eyesOpen = 1.0; 
+                    // Короткое моргание пока бодрствует (для живости)
+                    if (t > 1.5 && t < 1.65) eyesOpen = 0.0; 
+                }
+
+                float eyeRadius = 0.025; // Размер глаза
+
+                float left = eyeShape(vUv, uLeftEye, eyeRadius);
+                float right = eyeShape(vUv, uRightEye, eyeRadius);
+                
+                float eyes = (left + right) * eyesOpen;
+
+                // Рисуем глаза черным цветом (mix с исходным цветом)
+                vec3 finalColor = mix(texColor.rgb, vec3(0.0), eyes);
+
+                // Туман
+                float fogFactor = 1.0 - exp( - vDist * vDist * uFogDensity * uFogDensity );
+                gl_FragColor = vec4(mix(finalColor, uFogColor, fogFactor), texColor.a);
+            }
+        `,
         transparent: true,
-        depthWrite: false, // Чтобы не перекрывало некорректно прозрачность
-        fog: true
+        depthWrite: false
     });
     
     const sprite = new THREE.Sprite(material);
-    // Масштабируем: высота 50 юнитов, ширина по ратио
-    const baseHeight = 50;
-    sprite.scale.set(baseHeight * ratio, baseHeight, 1);
-    sprite.position.set(x, y, z);
+    const baseHeight = 60; // Немного увеличим базовый размер, так как текст мелкий
     
-    // Сохраняем ID для поиска
+    sprite.scale.set(baseHeight * aspect, baseHeight, 1);
+    sprite.position.set(x, y, z);
+    sprite.renderOrder = 5; 
+    
     sprite.userData = { id: id, text: text };
     
     commentsGroup.add(sprite);
     return sprite;
 }
-
 // 3. Загрузка комментариев при старте
 function loadComments() {
     const urlParams = new URLSearchParams(window.location.search);
@@ -342,7 +743,7 @@ document.getElementById('submit-comment').addEventListener('click', () => {
     if (!text.trim()) return;
 
     // Рассчитываем позицию: 100 юнитов (1 метр условно) перед камерой
-    const spawnDist = 100;
+    const spawnDist = 300;
     const direction = new THREE.Vector3();
     camera.getWorldDirection(direction);
     
@@ -390,19 +791,51 @@ function updateSearchList() {
         return;
     }
 
-    commentsData.forEach(item => {
+    // ИЗМЕНЕНИЕ: .slice().reverse() переворачивает копию массива (новые вверху)
+    commentsData.slice().reverse().forEach(item => {
         const div = document.createElement('div');
         div.className = 'search-item';
-        // Обрезаем текст до 20 символов
-        const shortText = item.text.length > 20 ? item.text.substring(0, 20) + '...' : item.text;
-        div.innerText = shortText;
+
+        // Текстовая часть (клик - навигация)
+        const textSpan = document.createElement('span');
+        textSpan.className = 'search-text';
+        const shortText = item.text.length > 25 ? item.text.substring(0, 25) + '...' : item.text;
+        textSpan.innerText = shortText;
         
-        div.addEventListener('click', () => {
-            // Устанавливаем цель навигации
-            navigationTarget = new THREE.Vector3(item.pos.x, item.pos.y, item.pos.z);
-            searchPanel.style.display = 'none'; // Закрываем список
+        // Чекбокс (клик - созвездие)
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'search-checkbox';
+        checkbox.checked = selectedComments.has(item.id);
+        
+        // ЛОГИКА НАВИГАЦИИ (Повторный клик сбрасывает)
+        textSpan.addEventListener('click', (e) => {
+            e.stopPropagation(); // Чтобы не триггерить чекбокс, если вдруг вложенность изменится
+            
+            const targetVec = new THREE.Vector3(item.pos.x, item.pos.y, item.pos.z);
+            
+            // Если цель уже установлена и совпадает с текущей - сбрасываем
+            if (navigationTarget && navigationTarget.equals(targetVec)) {
+                navigationTarget = null;
+                // Визуально можно показать, что сброшено (опционально)
+            } else {
+                navigationTarget = targetVec;
+                searchPanel.style.display = 'none'; // Закрываем список при выборе
+            }
         });
-        
+
+        // ЛОГИКА СОЗВЕЗДИЙ
+        checkbox.addEventListener('change', (e) => {
+            if (e.target.checked) {
+                selectedComments.add(item.id);
+            } else {
+                selectedComments.delete(item.id);
+            }
+            updateConstellationVisuals();
+        });
+
+        div.appendChild(textSpan);
+        div.appendChild(checkbox);
         list.appendChild(div);
     });
 }
@@ -411,71 +844,169 @@ function updateSearchList() {
 const hudArrow = document.getElementById('target-arrow');
 const hudCrosshair = document.getElementById('target-crosshair');
 const screenCenter = new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2);
-
+// --- ВСТАВИТЬ ПОСЛЕ КОНФИГУРАЦИИ ---
+// Добавляем стиль для текстовой подписи внутри стрелки навигации
+const navStyle = document.createElement('style');
+navStyle.innerHTML = `
+    #target-arrow span {
+        position: absolute;
+        top: 50%;
+        right: 40px; /* Выносим текст за пределы стрелки (влево) */
+        transform: translateY(-50%) rotate(0deg) !important;
+        color: white;
+        font-family: monospace;
+        font-size: 12px;
+        text-shadow: 0 0 2px black;
+        white-space: nowrap;
+        pointer-events: none;
+    }
+    .arrow-back { filter: drop-shadow(0 0 5px red); border-bottom-color: #ff3333 !important; }
+`;
+document.head.appendChild(navStyle);
 function updateNavigationHUD() {
+    const label = document.getElementById('target-label');
+    const hudArrow = document.getElementById('target-arrow');
+    const hudCrosshair = document.getElementById('target-crosshair');
+    
+    // Скрываем всё, если цели нет
     if (!navigationTarget) {
         hudArrow.style.display = 'none';
         hudCrosshair.style.display = 'none';
+        label.style.display = 'none';
         return;
     }
 
-    // Проецируем 3D точку на 2D экран
-    const targetClone = navigationTarget.clone();
-    targetClone.project(camera); // x, y в диапазоне [-1, 1]
-
-    const isBehind = targetClone.z > 1; // Если z > 1, точка за камерой (в WebGL project() z идет в depth)
+    // --- 1. Математика ---
+    const camPos = camera.position;
+    const camDir = new THREE.Vector3();
+    camera.getWorldDirection(camDir);
     
-    const x = (targetClone.x * 0.5 + 0.5) * window.innerWidth;
-    const y = (-targetClone.y * 0.5 + 0.5) * window.innerHeight;
+    const toTarget = new THREE.Vector3().subVectors(navigationTarget, camPos);
+    const distMeters = Math.round(toTarget.length());
+    const dirToTargetNorm = toTarget.clone().normalize();
+    
+    // Проекция цели на экран
+    const targetClone = navigationTarget.clone();
+    targetClone.project(camera);
+    
+    const halfW = window.innerWidth / 2;
+    const halfH = window.innerHeight / 2;
+    const screenX = (targetClone.x * 0.5 + 0.5) * window.innerWidth;
+    const screenY = (-targetClone.y * 0.5 + 0.5) * window.innerHeight;
 
-    // Проверяем, в кадре ли точка (с небольшим запасом)
-    const padding = 40;
-    const isOnScreen = !isBehind && 
-                       x > padding && x < window.innerWidth - padding && 
-                       y > padding && y < window.innerHeight - padding;
+    // --- 2. Логика состояний ---
+    
+    // Угол между взглядом и целью. Если > 0, цель спереди. Если < 0, цель сзади.
+    const isFront = camDir.dot(dirToTargetNorm) > 0;
+    
+    // Цель на экране (с отступом)?
+    const padding = 50;
+    const isOnScreen = isFront && 
+                       screenX > padding && screenX < window.innerWidth - padding && 
+                       screenY > padding && screenY < window.innerHeight - padding;
 
-    if (isOnScreen) {
-        // Показываем прицел на объекте
-        hudArrow.style.display = 'none';
+    // Форматирование текста
+    let distText = distMeters + 'm';
+    if (distMeters >= 1000) distText = (distMeters / 1000).toFixed(1) + 'km';
+
+    // Вектор от центра экрана к проекции цели (для вращения стрелки)
+    let dirX = screenX - halfW;
+    let dirY = screenY - halfH;
+
+    // --- 3. Рендер сценариев ---
+
+    // === СЦЕНАРИЙ А: ЦЕЛЬ СЗАДИ (Красное перекрестие + Красная стрелка) ===
+    if (!isFront) {
+        // 1. Показываем КРАСНОЕ перекрестие по центру
         hudCrosshair.style.display = 'block';
-        hudCrosshair.style.left = x + 'px';
-        hudCrosshair.style.top = y + 'px';
-    } else {
-        // Показываем стрелку
-        hudCrosshair.style.display = 'none';
+        hudCrosshair.className = 'crosshair-red';
+        hudCrosshair.style.left = halfW + 'px';
+        hudCrosshair.style.top = halfH + 'px';
+        
+        // Лейбл под перекрестием не показываем (он будет у стрелки)
+        label.style.display = 'none';
+
+        // 2. Показываем КРАСНУЮ стрелку
         hudArrow.style.display = 'block';
+        hudArrow.className = 'arrow-red';
+        
+        // Инвертируем вектор (так как цель сзади, стрелка должна показывать "поворачивай туда")
+        // Если цель сзади-справа, проекция может вести себя странно, поэтому просто инвертируем экранный вектор
+        dirX = -dirX;
+        dirY = -dirY;
 
-        // Вычисляем угол к цели от центра экрана
-        let dirX, dirY;
+        // Позиционируем стрелку по кругу
+        positionArrow(hudArrow, dirX, dirY, halfW, halfH, distText);
+    }
+    
+    // === СЦЕНАРИЙ Б: ЦЕЛЬ СПЕРЕДИ, НО ЗА ЭКРАНОМ (Желтая стрелка) ===
+    else if (!isOnScreen) {
+        // Скрываем перекрестие
+        hudCrosshair.style.display = 'none';
+        label.style.display = 'none';
 
-        if (isBehind) {
-            // Если сзади, инвертируем координаты, чтобы стрелка вела через край экрана
-            dirX = -targetClone.x;
-            dirY = -targetClone.y; // Y у project инвертирован, но нам нужен вектор
-        } else {
-            dirX = targetClone.x;
-            dirY = targetClone.y;
-        }
+        // Показываем ЖЕЛТУЮ стрелку
+        hudArrow.style.display = 'block';
+        hudArrow.className = 'arrow-yellow';
 
-        // Нормализуем вектор направления
-        const len = Math.sqrt(dirX*dirX + dirY*dirY);
-        if (len < 0.001) { dirX = 1; dirY = 0; } // Защита от 0
-        else { dirX /= len; dirY /= len; }
+        // Позиционируем стрелку
+        positionArrow(hudArrow, dirX, dirY, halfW, halfH, distText);
+    }
+    
+    // === СЦЕНАРИЙ В: ЦЕЛЬ СПЕРЕДИ И НА ЭКРАНЕ (Желтое перекрестие) ===
+    else {
+        // Скрываем стрелку
+        hudArrow.style.display = 'none';
 
-        // Позиционируем стрелку на краю экрана
-        // Простая математика: движемся от центра на половину ширины/высоты по вектору
-        const radius = Math.min(window.innerWidth, window.innerHeight) / 2 - 60;
-        const arrowX = window.innerWidth / 2 + dirX * radius;
-        const arrowY = window.innerHeight / 2 - dirY * radius; // Минус, т.к. Y в CSS сверху вниз
+        // Показываем ЖЕЛТОЕ перекрестие
+        hudCrosshair.style.display = 'block';
+        hudCrosshair.className = 'crosshair-yellow';
+        
+        // Двигаем перекрестие за целью
+        hudCrosshair.style.left = screenX + 'px';
+        hudCrosshair.style.top = screenY + 'px';
 
-        hudArrow.style.left = arrowX + 'px';
-        hudArrow.style.top = arrowY + 'px';
-
-        // Вращаем стрелку
-        const angle = Math.atan2(-dirY, dirX) * (180 / Math.PI) + 90; // +90 т.к. стрелка смотрит вниз по дефолту
-        hudArrow.style.transform = `translate(-50%, -50%) rotate(${angle}deg)`;
+        // Показываем отдельный лейбл под перекрестием
+        label.style.display = 'block';
+        label.innerText = distText;
+        label.style.left = screenX + 'px';
+        label.style.top = (screenY + 30) + 'px';
+        label.style.transform = 'translate(-50%, 0)'; // Центрируем текст
     }
 }
+
+// Вспомогательная функция для расчета позиции и вращения стрелки
+function positionArrow(arrowEl, dx, dy, hw, hh, text) {
+    const angle = Math.atan2(dy, dx);
+    const radius = Math.min(hw, hh) - 80; // Отступ от края
+    
+    const arrowX = hw + Math.cos(angle) * radius;
+    const arrowY = hh + Math.sin(angle) * radius;
+
+    arrowEl.style.left = arrowX + 'px';
+    arrowEl.style.top = arrowY + 'px';
+    
+    // Вращение: +90deg, т.к. CSS-стрелка смотрит вверх (border-bottom), 
+    // а угол 0 - это вправо. Нужно согласовать.
+    // Если CSS стрелка смотрит ВВЕРХ (border-bottom colored), то при угле 0 (вправо) она должна быть повернута на 90deg.
+    const rotDeg = angle * (180 / Math.PI) + 90;
+    
+    arrowEl.style.transform = `translate(-50%, -50%) rotate(${rotDeg}deg)`;
+    
+    // Обновляем текст внутри стрелки
+    // Мы ищем span внутри элемента arrowEl (в HTML это должно быть <div id="target-arrow"><span></span></div>)
+    let span = arrowEl.querySelector('span');
+    if (!span) {
+        span = document.createElement('span');
+        arrowEl.appendChild(span);
+    }
+    span.innerText = text;
+    
+    // Поворачиваем текст обратно, чтобы он всегда был горизонтально
+    // Если сама стрелка повернута на X, текст поворачиваем на -X
+    span.style.transform = `translateY(-50%) rotate(${-rotDeg}deg)`;
+}
+
 // ФОГ (Туман) настраиваем под цвета неба, чтобы горизонт растворялся
 scene.fog = new THREE.FogExp2(CONFIG.colors.bottom, 0.0015);
 
@@ -1376,7 +1907,12 @@ function processLoadQueue() {
     // Если пользователь улетел, убираем задачи из очереди ДО того, как они начнутся
 
 
-    if (state.activeLoads >= MAX_CONCURRENT_LOADS || state.loadQueue.length === 0) return;
+    if (state.activeLoads >= MAX_CONCURRENT_LOADS || state.loadQueue.length === 0) {
+        if (state.loadQueue.length > 0 && state.activeLoads >= MAX_CONCURRENT_LOADS) {
+            console.warn(`[QUEUE] STALLED? Active limit reached. Active: ${state.activeLoads}, Queue: ${state.loadQueue.length}`);
+        }
+        return;
+    }
 
     // --- ЛОГИКА ПРИОРИТЕТОВ (сохранена как была) ---
     camera.updateMatrixWorld();
@@ -1403,8 +1939,10 @@ function processLoadQueue() {
 
     const task = state.loadQueue.shift();
     state.activeLoads++;
+    
+    const taskId = task.postId; // Для логов
+    console.log(`[QUEUE] START Task ${taskId} | Active: ${state.activeLoads}`);
 
-    // Создаем контроллер отмены
     const controller = new AbortController();
     state.activeControllers.set(task.postId, controller);
 
@@ -1413,11 +1951,11 @@ function processLoadQueue() {
     const channelParam = customChannel ? `&channel_id=${customChannel}` : '';
 
     // Передаем signal в fetch
-    fetch(`/api/anemone/resolve_image?post_id=${task.postId}${channelParam}`, { signal: controller.signal })
+fetch(`/api/anemone/resolve_image?post_id=${task.postId}${channelParam}`, { signal: controller.signal })
         .then(r => r.json())
         .then(data => {
-            // ОБРАБОТКА ОШИБКИ ДОСТУПА
             if (data.error === 'access_denied') {
+                console.error(`[QUEUE] ERROR Access Denied for ${taskId}`);
                 const modal = document.getElementById('error-modal');
                 const chanSpan = document.getElementById('err-channel');
                 if(modal && chanSpan) {
@@ -1425,12 +1963,15 @@ function processLoadQueue() {
                     modal.style.display = 'flex';
                 }
                 task.onError();
+                cleanupTask(); // <--- ОБЯЗАТЕЛЬНО ДОБАВИТЬ ЭТО!
+                return; // Желательно выйти из функции
             } else if (data.found && data.url) {
                 const loader = new THREE.ImageLoader();
                 loader.setCrossOrigin('anonymous');
                 loader.load(
                     data.url,
                     (image) => {
+                        console.log(`[QUEUE] IMG LOADED ${taskId}`);
                         // --- ГЕНЕРАЦИЯ ПОЛАРОИДА С ТЕКСТОМ ---
                         const canvas = document.createElement('canvas');
                         const ctx = canvas.getContext('2d');
@@ -1507,27 +2048,41 @@ function processLoadQueue() {
                         task.onSuccess(tex, totalRatio);
                         cleanupTask();
                     },
-                    undefined, 
-                    () => { task.onError(); cleanupTask(); }
+                    undefined,
+                    (err) => { 
+                        console.error(`[QUEUE] IMG ERROR ${taskId}`, err);
+                        task.onError(); 
+                        cleanupTask(); 
+                    }
                 );
             } else {
+                console.warn(`[QUEUE] NOT FOUND ${taskId}`);
                 task.onError();
                 cleanupTask();
             }
         })
         .catch((err) => {
-            // Если ошибка из-за Abort, ничего не делаем, просто чистим
             if (err.name === 'AbortError') {
-                // console.log('Download aborted for', task.postId);
+                console.log(`[QUEUE] ABORTED ${taskId}`);
             } else {
+                console.error(`[QUEUE] FETCH ERROR ${taskId}`, err);
                 task.onError();
             }
             cleanupTask();
         });
 
     function cleanupTask() {
+        console.log(`[QUEUE] FINISH Task ${taskId} | Active BEFORE: ${state.activeLoads}`);
         state.activeControllers.delete(task.postId);
         state.activeLoads--;
+        console.log(`[QUEUE] FINISH Task ${taskId} | Active AFTER: ${state.activeLoads}`);
+        
+        // Защита от ухода в минус (на всякий случай)
+        if (state.activeLoads < 0) {
+             console.error('[QUEUE] CRITICAL: Active loads negative!');
+             state.activeLoads = 0;
+        }
+        
         processLoadQueue();
     }
 }
@@ -1556,7 +2111,7 @@ async function loadChunk(cx, cy, cz) {
         
         // Читаем channel_id (если нет, сервер использует дефолтный, но параметр можно не слать)
         // Но нам нужен max_id для генерации чисел
-        const maxId = urlParams.get('max_id') || 8506; // Дефолт 150, если в ссылке нет
+        const maxId = urlParams.get('max_id') || 8509; // Дефолт 8509, если в ссылке нет
 
         // 2. Передаем max_id в запрос чанка
         // Обратите внимание: channel_id тут не обязателен, 
@@ -1609,21 +2164,25 @@ const globalUniforms = {
 function createHangingArt(group, data, chunkKey) {
     const baseScale = data.scale[0] * 1.5; 
     const geometry = currentPaperGeometry;
-    const phase = Math.random() * 10;
-    const swaySpeed = 0.5 + Math.random() * 0.5;
 
-    // --- УЛУЧШЕННАЯ ЛОГИКА ПРЕДОТВРАЩЕНИЯ НАЛОЖЕНИЯ ---
+    // --- ИЗМЕНЕНИЕ 1: Генерируем уникальный сид для этого объекта ---
+    // data.id приходит с сервера (вида "x_y_z_i"), он всегда одинаковый для объекта
+    const objSeed = cyrb128(data.id || Math.random().toString()); 
+    
+    // Используем seededRandom вместо Math.random()
+    const phase = seededRandom(objSeed) * 10;
+    const swaySpeed = 0.5 + seededRandom(objSeed + 1) * 0.5; // +1 чтобы число отличалось от phase
+
     // Вектор текущей позиции
     const pos = new THREE.Vector3(data.pos[0], data.pos[1] + (baseScale / 2), data.pos[2]);
-    // Увеличили радиус для проверки (чтобы карточки отталкивались сильнее)
     const radius = baseScale * 1.2; 
-    const minZGap = 60; // Увеличили зазор по глубине
+    const minZGap = 60; 
 
-    // Пытаемся найти свободное место (макс. 8 попыток)
+    // Логика коллизий
     for (let i = 0; i < 8; i++) {
         let collision = false;
         for (const item of state.occupied) {
-            // Быстрый отсев далеких
+            // ... (код проверки дистанции тот же) ...
             if (Math.abs(item.x - pos.x) > radius * 2.5) continue;
             if (Math.abs(item.y - pos.y) > radius * 2.5) continue;
 
@@ -1632,26 +2191,23 @@ function createHangingArt(group, data, chunkKey) {
             const dz = pos.z - item.z;
             const distXY = Math.sqrt(dx*dx + dy*dy);
 
-            // Если есть пересечение
             if (distXY < (radius + item.r) && Math.abs(dz) < minZGap) {
                 collision = true;
                 
-                // Векторное отталкивание: толкаем ОТ центра соседней карточки
-                // Если позиции совпадают идеально, добавляем случайность
                 let angle = Math.atan2(dy, dx);
-                if (distXY < 1.0) angle = Math.random() * Math.PI * 2;
+                // --- ИЗМЕНЕНИЕ 2: Детерминированный угол ---
+                if (distXY < 1.0) angle = seededRandom(objSeed + i * 100) * Math.PI * 2;
 
-                const pushDist = (radius + item.r) - distXY + 20; // Выталкиваем + буфер
+                const pushDist = (radius + item.r) - distXY + 20; 
                 
                 pos.x += Math.cos(angle) * pushDist;
                 pos.y += Math.sin(angle) * pushDist;
-                
-                // И немного двигаем по Z, чтобы разнести слои
                 pos.z += (dz >= 0 ? 1 : -1) * 30;
                 
-                // Добавляем микро-шум, чтобы не выстраивались в идеальные линии
-                pos.x += (Math.random() - 0.5) * 10;
-                pos.y += (Math.random() - 0.5) * 10;
+                // --- ИЗМЕНЕНИЕ 3: Детерминированный микро-шум ---
+                // Используем i в сиде, чтобы на каждой итерации цикла шум был разным, но повторяемым
+                pos.x += (seededRandom(objSeed + i * 10) - 0.5) * 10;
+                pos.y += (seededRandom(objSeed + i * 20) - 0.5) * 10;
                 break; 
             }
         }
@@ -1659,7 +2215,6 @@ function createHangingArt(group, data, chunkKey) {
     }
 
     state.occupied.push({ x: pos.x, y: pos.y, z: pos.z, r: radius, chunkKey: chunkKey });
-    // ----------------------------------------
 
     const material = new THREE.ShaderMaterial({
         vertexShader: paperVertexShader,
@@ -1984,7 +2539,63 @@ document.getElementById('wind-speed').addEventListener('input', (e) => CONFIG.wi
 document.getElementById('wind-force').addEventListener('input', (e) => CONFIG.wind.force = parseFloat(e.target.value));
 document.getElementById('part-speed').addEventListener('input', (e) => CONFIG.particles.speed = parseFloat(e.target.value));
 
+// 1. Цвет (Обновляем оба материала)
+document.getElementById('col-constellation').addEventListener('input', (e) => {
+    const val = e.target.value;
+    const col = new THREE.Color(val);
+    CONFIG.constellation.color.set(col);
+    
+    // Обновляем униформы
+    constellationDotMat.uniforms.uColor.value.copy(col);
+    constellationTubeMat.uniforms.uColor.value.copy(col); // <-- Новое имя материала
+});
 
+// 2. Размер точек
+document.getElementById('const-dot-size').addEventListener('input', (e) => {
+    const val = parseFloat(e.target.value);
+    CONFIG.constellation.dotSize = val;
+    constellationDotMat.uniforms.uSize.value = val * 60.0; 
+});
+
+// 3. Толщина линий (теперь перестраивает геометрию трубки)
+document.getElementById('const-line-width').addEventListener('input', (e) => {
+    const val = parseFloat(e.target.value);
+    CONFIG.constellation.lineWidth = val;
+    
+    // Просто вызываем перерисовку, чтобы TubeGeometry пересоздалась с новым радиусом
+    updateConstellationVisuals();
+});
+// Слушатель для слайдера свечения
+document.getElementById('const-glow-str').addEventListener('input', (e) => {
+    const val = parseFloat(e.target.value);
+    CONFIG.constellation.glowStr = val;
+    // Обновляем униформу материала
+    if (constellationTubeMat.uniforms.uGlowStr) {
+        constellationTubeMat.uniforms.uGlowStr.value = val;
+    }
+});
+
+// Слушатель для кнопки возврата домой
+document.getElementById('home-btn').addEventListener('click', () => {
+    // Сбрасываем цель камеры на стартовую позицию (0, 0, 1000)
+    // или ту, которая установлена в state.targetPos при инициализации
+    state.targetPos.set(0, 0, 1000);
+    
+    // Опционально: сбросить навигационную цель
+    navigationTarget = null;
+    updateNavigationHUD(); // Обновить интерфейс, чтобы убрать стрелку
+});
+
+
+// UI Settings Listeners
+document.getElementById('ui-dist-toggle').addEventListener('change', (e) => {
+    CONFIG.ui.showDistance = e.target.checked;
+});
+
+document.getElementById('ui-chaos-toggle').addEventListener('change', (e) => {
+    CONFIG.ui.showChaos = e.target.checked;
+    chaosSphere.visible = e.target.checked;
+});
 // --- ИНТЕГРАЦИЯ COLOR PICKER ---
 import { HexColorPicker } from 'https://unpkg.com/vanilla-colorful?module';
 
@@ -1993,7 +2604,11 @@ function setupColorPickers() {
         { id: 'col-bot', target: CONFIG.colors.bottom, cb: updateBackgroundGradient },
         { id: 'col-mid', target: CONFIG.colors.mid, cb: updateBackgroundGradient },
         { id: 'col-top', target: CONFIG.colors.top, cb: updateBackgroundGradient },
-        { id: 'col-fire', target: null, cb: (hex) => fireflyMat.uniforms.color.value.set(hex) }
+        { id: 'col-fire', target: null, cb: (hex) => fireflyMat.uniforms.color.value.set(hex) },
+        { id: 'col-constellation', target: CONFIG.constellation.color, cb: (hex) => {
+            constellationTubeMat.color.set(hex);
+            constellationDotMat.color.set(hex);
+        }},        
     ];
 
     inputs.forEach(conf => {
@@ -2205,6 +2820,12 @@ function animate() {
     fireflyMat.uniforms.uTime.value = time;
 
     globalUniforms.uTime.value = time;
+    if (constellationTubeMat) {
+        const pulse = 0.7 + 0.3 * Math.sin(time * 3.0);
+        constellationTubeMat.opacity = pulse;
+        // Можно также слегка менять цвет, делая его ярче в пике (если нужно)
+    }
+
     globalUniforms.uWindSpeed.value = CONFIG.wind.speed;
     globalUniforms.uWindForce.value = CONFIG.wind.force;
     
@@ -2232,7 +2853,6 @@ function animate() {
     fireflyMat.uniforms.uWindForce.value = CONFIG.wind.force;
     fireflyMat.uniforms.uPartSpeed.value = CONFIG.particles.speed;
 
-    // Рендер
     // Добавляем вызов навигации
     updateNavigationHUD();
 
@@ -2245,13 +2865,10 @@ window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth/window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
-    
+    constellationDotMat.uniforms.uScale.value = window.innerHeight;    
     // --- ДОБАВИТЬ ЭТУ СТРОКУ ---
     starMat.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
     
     fireflyMat.uniforms.uScale.value = window.innerHeight / 2.0;
     dustMat.uniforms.uScale.value = window.innerHeight / 2.0; 
 });
-
-
-
