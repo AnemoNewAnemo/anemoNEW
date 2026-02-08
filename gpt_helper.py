@@ -102,7 +102,48 @@ key_manager = ApiKeyManager(api_keys=API_KEYS)
 
 
 import uuid
+def add_anemone_comment(channel_id, text, x, y, z):
+    """
+    Сохраняет комментарий в Firebase с привязкой к каналу и координатам.
+    """
+    try:
+        # Если channel_id не передан, используем 'public' или дефолтный
+        target = channel_id if channel_id else "default_world"
+        ref = db.reference(f'anemone_comments/{target}')
+        new_comment = ref.push()
+        
+        data = {
+            "text": text,
+            "pos": {"x": x, "y": y, "z": z},
+            "created_at": {".sv": "timestamp"}
+        }
+        new_comment.set(data)
+        return {"id": new_comment.key, **data}
+    except Exception as e:
+        logging.error(f"Error adding comment: {e}")
+        return None
 
+def get_anemone_comments(channel_id):
+    """
+    Загружает все комментарии для мира.
+    """
+    try:
+        target = channel_id if channel_id else "default_world"
+        ref = db.reference(f'anemone_comments/{target}')
+        # Ограничиваем количество, если нужно, но пока грузим всё
+        data = ref.get()
+        if not data:
+            return []
+        
+        # Преобразуем dict в list
+        result = []
+        for key, val in data.items():
+            val['id'] = key
+            result.append(val)
+        return result
+    except Exception as e:
+        logging.error(f"Error getting comments: {e}")
+        return []
 # ... (Ваш код инициализации firebase и другие функции) ...
 
 def get_single_media(user_id, media_id):
