@@ -231,6 +231,251 @@ const paperFragmentShader = `
 // --- SCENE SETUP ---
 const container = document.getElementById('canvas-container');
 const scene = new THREE.Scene();
+
+// --- ОБЛАЧНЫЕ КОММЕНТАРИИ И ИНТЕРАКТИВ ---
+const commentsGroup = new THREE.Group();
+scene.add(commentsGroup);
+let commentsData = []; // Хранит данные для списка
+let navigationTarget = null; // Текущая цель (Vector3)
+
+// 1. Создание текстуры текста (Canvas)
+function createTextTexture(text) {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const fontSize = 40; // Высокое разрешение для четкости
+    ctx.font = `bold ${fontSize}px "Courier New", monospace`;
+    
+    // Вычисляем размер
+    const lines = text.split('\n');
+    let maxWidth = 0;
+    lines.forEach(line => maxWidth = Math.max(maxWidth, ctx.measureText(line).width));
+    
+    const padding = 20;
+    canvas.width = maxWidth + padding * 2;
+    canvas.height = (fontSize * 1.2 * lines.length) + padding * 2;
+    
+    // Рисуем "облачко" (фон)
+    ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
+    ctx.lineWidth = 4;
+    
+    // Закругленный прямоугольник
+    ctx.beginPath();
+    ctx.roundRect(0, 0, canvas.width, canvas.height, 20);
+    ctx.fill();
+    ctx.stroke();
+
+    // Рисуем текст
+    ctx.fillStyle = "#000000";
+    ctx.font = `bold ${fontSize}px "Courier New", monospace`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    
+    lines.forEach((line, i) => {
+        ctx.fillText(line, padding, padding + (i * fontSize * 1.2));
+    });
+
+    const tex = new THREE.CanvasTexture(canvas);
+    // Важно для pixel-art стиля или четкости, но тут лучше Linear
+    tex.minFilter = THREE.LinearFilter; 
+    return { texture: tex, ratio: canvas.width / canvas.height };
+}
+
+// 2. Добавление объекта на сцену
+function spawnCommentObject(id, text, x, y, z) {
+    const { texture, ratio } = createTextTexture(text);
+    const material = new THREE.SpriteMaterial({ 
+        map: texture, 
+        transparent: true,
+        depthWrite: false, // Чтобы не перекрывало некорректно прозрачность
+        fog: true
+    });
+    
+    const sprite = new THREE.Sprite(material);
+    // Масштабируем: высота 50 юнитов, ширина по ратио
+    const baseHeight = 50;
+    sprite.scale.set(baseHeight * ratio, baseHeight, 1);
+    sprite.position.set(x, y, z);
+    
+    // Сохраняем ID для поиска
+    sprite.userData = { id: id, text: text };
+    
+    commentsGroup.add(sprite);
+    return sprite;
+}
+
+// 3. Загрузка комментариев при старте
+function loadComments() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const channelId = urlParams.get('channel_id') || 'default_world';
+
+    fetch(`/api/anemone/get_comments?channel_id=${channelId}`)
+        .then(r => r.json())
+        .then(data => {
+            commentsData = data;
+            data.forEach(c => {
+                spawnCommentObject(c.id, c.text, c.pos.x, c.pos.y, c.pos.z);
+            });
+            updateSearchList();
+        })
+        .catch(console.error);
+}
+
+// Запускаем загрузку сразу
+loadComments();
+
+// --- UI ЛОГИКА ---
+
+// Открытие модалки создания
+document.getElementById('add-btn').addEventListener('click', () => {
+    document.getElementById('comment-modal').style.display = 'flex';
+    document.getElementById('comment-text').focus();
+});
+
+document.getElementById('cancel-comment').addEventListener('click', () => {
+    document.getElementById('comment-modal').style.display = 'none';
+});
+
+// Отправка нового комментария
+document.getElementById('submit-comment').addEventListener('click', () => {
+    const text = document.getElementById('comment-text').value;
+    if (!text.trim()) return;
+
+    // Рассчитываем позицию: 100 юнитов (1 метр условно) перед камерой
+    const spawnDist = 100;
+    const direction = new THREE.Vector3();
+    camera.getWorldDirection(direction);
+    
+    const spawnPos = new THREE.Vector3().copy(camera.position).add(direction.multiplyScalar(spawnDist));
+
+    // Сразу рисуем (оптимистичный UI)
+    const tempId = 'temp_' + Date.now();
+    spawnCommentObject(tempId, text, spawnPos.x, spawnPos.y, spawnPos.z);
+    
+    document.getElementById('comment-modal').style.display = 'none';
+    document.getElementById('comment-text').value = '';
+
+    // Отправляем на сервер
+    const urlParams = new URLSearchParams(window.location.search);
+    fetch('/api/anemone/add_comment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            channel_id: urlParams.get('channel_id'),
+            text: text,
+            x: spawnPos.x, y: spawnPos.y, z: spawnPos.z
+        })
+    }).then(r => r.json()).then(resp => {
+        if(resp.status === 'success') {
+            // Обновляем список для поиска
+            commentsData.push(resp.data);
+            updateSearchList();
+        }
+    });
+});
+
+// Логика списка поиска
+const searchPanel = document.getElementById('search-panel');
+document.getElementById('search-btn').addEventListener('click', () => {
+    const isVisible = searchPanel.style.display === 'block';
+    searchPanel.style.display = isVisible ? 'none' : 'block';
+});
+
+function updateSearchList() {
+    const list = document.getElementById('search-list');
+    list.innerHTML = '';
+    
+    if (commentsData.length === 0) {
+        list.innerHTML = '<div style="padding:12px; color:#666;">Нет записей</div>';
+        return;
+    }
+
+    commentsData.forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'search-item';
+        // Обрезаем текст до 20 символов
+        const shortText = item.text.length > 20 ? item.text.substring(0, 20) + '...' : item.text;
+        div.innerText = shortText;
+        
+        div.addEventListener('click', () => {
+            // Устанавливаем цель навигации
+            navigationTarget = new THREE.Vector3(item.pos.x, item.pos.y, item.pos.z);
+            searchPanel.style.display = 'none'; // Закрываем список
+        });
+        
+        list.appendChild(div);
+    });
+}
+
+// --- HUD НАВИГАЦИЯ (Внутри loop) ---
+const hudArrow = document.getElementById('target-arrow');
+const hudCrosshair = document.getElementById('target-crosshair');
+const screenCenter = new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2);
+
+function updateNavigationHUD() {
+    if (!navigationTarget) {
+        hudArrow.style.display = 'none';
+        hudCrosshair.style.display = 'none';
+        return;
+    }
+
+    // Проецируем 3D точку на 2D экран
+    const targetClone = navigationTarget.clone();
+    targetClone.project(camera); // x, y в диапазоне [-1, 1]
+
+    const isBehind = targetClone.z > 1; // Если z > 1, точка за камерой (в WebGL project() z идет в depth)
+    
+    const x = (targetClone.x * 0.5 + 0.5) * window.innerWidth;
+    const y = (-targetClone.y * 0.5 + 0.5) * window.innerHeight;
+
+    // Проверяем, в кадре ли точка (с небольшим запасом)
+    const padding = 40;
+    const isOnScreen = !isBehind && 
+                       x > padding && x < window.innerWidth - padding && 
+                       y > padding && y < window.innerHeight - padding;
+
+    if (isOnScreen) {
+        // Показываем прицел на объекте
+        hudArrow.style.display = 'none';
+        hudCrosshair.style.display = 'block';
+        hudCrosshair.style.left = x + 'px';
+        hudCrosshair.style.top = y + 'px';
+    } else {
+        // Показываем стрелку
+        hudCrosshair.style.display = 'none';
+        hudArrow.style.display = 'block';
+
+        // Вычисляем угол к цели от центра экрана
+        let dirX, dirY;
+
+        if (isBehind) {
+            // Если сзади, инвертируем координаты, чтобы стрелка вела через край экрана
+            dirX = -targetClone.x;
+            dirY = -targetClone.y; // Y у project инвертирован, но нам нужен вектор
+        } else {
+            dirX = targetClone.x;
+            dirY = targetClone.y;
+        }
+
+        // Нормализуем вектор направления
+        const len = Math.sqrt(dirX*dirX + dirY*dirY);
+        if (len < 0.001) { dirX = 1; dirY = 0; } // Защита от 0
+        else { dirX /= len; dirY /= len; }
+
+        // Позиционируем стрелку на краю экрана
+        // Простая математика: движемся от центра на половину ширины/высоты по вектору
+        const radius = Math.min(window.innerWidth, window.innerHeight) / 2 - 60;
+        const arrowX = window.innerWidth / 2 + dirX * radius;
+        const arrowY = window.innerHeight / 2 - dirY * radius; // Минус, т.к. Y в CSS сверху вниз
+
+        hudArrow.style.left = arrowX + 'px';
+        hudArrow.style.top = arrowY + 'px';
+
+        // Вращаем стрелку
+        const angle = Math.atan2(-dirY, dirX) * (180 / Math.PI) + 90; // +90 т.к. стрелка смотрит вниз по дефолту
+        hudArrow.style.transform = `translate(-50%, -50%) rotate(${angle}deg)`;
+    }
+}
 // ФОГ (Туман) настраиваем под цвета неба, чтобы горизонт растворялся
 scene.fog = new THREE.FogExp2(CONFIG.colors.bottom, 0.0015);
 
@@ -1988,6 +2233,9 @@ function animate() {
     fireflyMat.uniforms.uPartSpeed.value = CONFIG.particles.speed;
 
     // Рендер
+    // Добавляем вызов навигации
+    updateNavigationHUD();
+
     renderer.render(scene, camera);
 }
 
@@ -2004,5 +2252,6 @@ window.addEventListener('resize', () => {
     fireflyMat.uniforms.uScale.value = window.innerHeight / 2.0;
     dustMat.uniforms.uScale.value = window.innerHeight / 2.0; 
 });
+
 
 
