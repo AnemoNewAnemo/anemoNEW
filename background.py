@@ -17,6 +17,7 @@ import requests
 from flask import Response, stream_with_context
 import random
 import hashlib
+import re
 
 import time  # <--- ДОБАВЛЕНО
 
@@ -48,10 +49,64 @@ IMAGE_CACHE = {}
 from datetime import datetime
 
 # --- ЗАМЕНА ФУНКЦИИ get_image_from_telegram ---
+# --- ЗАМЕНА ФУНКЦИИ get_image_from_telegram ---
 def get_image_from_telegram(post_id, custom_channel_id=None, req_id="Unknown"):
     t_start = time.time()
     post_id = str(post_id)
     target_channel = custom_channel_id if custom_channel_id else DEFAULT_CHANNEL_ID
+    
+    # 0. ПРОВЕРКА БАЗЫ ДАННЫХ (Art Posts)
+    # Импортируем здесь, чтобы избежать циклических импортов
+    from gpt_helper import get_art_post
+    
+    db_data = get_art_post(target_channel, post_id)
+    
+    if db_data:
+        logger.info(f"[{req_id}] DB HIT for {post_id}. Using database record.")
+        
+        # Формируем дату
+        timestamp = db_data.get('date', 0)
+        date_str = datetime.fromtimestamp(timestamp).strftime('%d.%m.%Y %H:%M') if timestamp else ""
+        
+        # Ссылка на пост (декоративная)
+        post_link = f"https://t.me/{target_channel.replace('@', '')}/{post_id}"
+
+        # ВАРИАНТ 1: ЭТО ФОТО
+        if db_data.get('type') == 'photo' and db_data.get('file_id'):
+            file_id = db_data['file_id']
+            
+            # Нам нужно превратить file_id в URL. 
+            # Используем getFile API телеграма напрямую.
+            try:
+                t_path = time.time()
+                path_r = requests_session.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}", timeout=5)
+                path_data = path_r.json()
+                
+                if path_data.get("ok"):
+                    file_path = path_data["result"]["file_path"]
+                    full_tg_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                    
+                    # Оборачиваем через прокси
+                    final_url = f"https://wsrv.nl/?url={full_tg_url}&n=-1"
+                    
+                    return {
+                        "url": final_url,
+                        "width": 1000, # В БД мы пока не храним размеры, ставим дефолт (wsrv сам разберется)
+                        "height": 1000,
+                        "caption": db_data.get('caption', "")[:100],
+                        "date": date_str,
+                        "post_link": post_link
+                    }
+                else:
+                     logger.error(f"[{req_id}] DB file_id expired or invalid: {file_id}")
+                     # Если file_id протух (редко для бота), можно попробовать упасть в fallback (ниже)
+            except Exception as e:
+                logger.error(f"[{req_id}] Error resolving DB file_id: {e}")
+
+
+            
+    # --- FALLBACK: СТАРЫЙ МЕТОД (Forward Message) ---
+    logger.info(f"[{req_id}] DB MISS for {post_id}. Fallback to Forwarding...")
     
     cache_key = f"{target_channel}_{post_id}"
     
@@ -391,6 +446,263 @@ def api_get_comments():
     channel_id = request.args.get('channel_id')
     comments = get_anemone_comments(channel_id)
     return jsonify(comments)
+
+
+
+
+
+
+
+
+
+CHUNK_SIZE = 1500  # Должно совпадать с настройкой в JS
+
+@app.route('/api/anemone/locate_post', methods=['GET'])
+def api_locate_post():
+    try:
+        target_post_id = int(request.args.get('post_id'))
+        # Получаем позицию камеры
+        cam_x = float(request.args.get('x', 0))
+        cam_y = float(request.args.get('y', 0))
+        cam_z = float(request.args.get('z', 0))
+        channel_id = request.args.get('channel_id', 'default_world')
+        
+        req_max_id = request.args.get('max_id')
+        max_limit = int(req_max_id) if req_max_id and req_max_id.isdigit() else DEFAULT_MAX_POST_ID
+    except (ValueError, TypeError):
+        return jsonify({"found": False, "error": "Invalid params"}), 400
+
+    # Определяем координаты чанка, в котором находится камера
+    start_cx = int(round(cam_x / CHUNK_SIZE))
+    start_cy = int(round(cam_y / CHUNK_SIZE))
+    start_cz = int(round(cam_z / CHUNK_SIZE))
+
+    # Радиус поиска (в чанках). 
+    # 5 слоев вокруг камеры = проверка ~500-1000 чанков. Это быстро, так как это просто генерация чисел.
+    SEARCH_RADIUS = 6 
+
+    # Проходим спиралью/кубом вокруг камеры
+    for r in range(SEARCH_RADIUS + 1):
+        # Оптимизация: перебираем диапазоны координат
+        for cx in range(start_cx - r, start_cx + r + 1):
+            for cy in range(start_cy - r, start_cy + r + 1):
+                for cz in range(start_cz - r, start_cz + r + 1):
+                    
+                    # Пропускаем внутренние слои, которые уже проверили (опционально, но ускоряет)
+                    # Если r > 0, проверяем только оболочку (края куба)
+                    dist_layer = max(abs(cx - start_cx), abs(cy - start_cy), abs(cz - start_cz))
+                    if dist_layer != r:
+                        continue
+
+                    # --- ЛОГИКА ГЕНЕРАЦИИ (Копия из api_get_anemone_chunk) ---
+                    seed_str = f"{channel_id}_{cx}_{cy}_{cz}"
+                    rng = random.Random(seed_str)
+                    
+                    dist = math.sqrt(cx**2 + cy**2 + cz**2)
+                    density_factor = 0.9 
+                    min_theoretical_id = int((dist * density_factor) ** 3) + 1
+                    max_theoretical_id = int(((dist + 1.2) * density_factor) ** 3) + 5
+                    
+                    is_core = min_theoretical_id <= max_limit
+                    items_count = rng.randint(2, 4)
+
+                    for i in range(items_count):
+                        # Генерируем параметры item'а чтобы прокрутить RNG
+                        px = rng.uniform(-CHUNK_SIZE/2, CHUNK_SIZE/2)
+                        py = rng.uniform(-CHUNK_SIZE/2, CHUNK_SIZE/2)
+                        pz = rng.uniform(-CHUNK_SIZE/2, CHUNK_SIZE/2)
+                        _ = rng.uniform(100, 300) # scale пропуск
+                        
+                        current_id = 0
+                        if is_core:
+                            eff_max = min(max_theoretical_id, max_limit)
+                            eff_min = min(min_theoretical_id, eff_max)
+                            current_id = rng.randint(eff_min, eff_max)
+                        else:
+                            current_id = rng.randint(1, max_limit)
+                        
+                        # --- ПРОВЕРКА СОВПАДЕНИЯ ---
+                        if current_id == target_post_id:
+                            # Нашли! Вычисляем мировые координаты
+                            world_x = cx * CHUNK_SIZE + px
+                            world_y = cy * CHUNK_SIZE + py
+                            world_z = cz * CHUNK_SIZE + pz
+                            
+                            return jsonify({
+                                "found": True,
+                                "pos": {"x": world_x, "y": world_y, "z": world_z},
+                                "dist": math.sqrt((world_x-cam_x)**2 + (world_y-cam_y)**2 + (world_z-cam_z)**2)
+                            })
+
+    return jsonify({"found": False, "message": "Not found near current location"}), 404
+
+def normalize_text(text):
+    """Приводит текст к нижнему регистру и меняет ё на е."""
+    if not text: return ""
+    return str(text).lower().replace('ё', 'е')
+
+def get_word_stem(word):
+    """
+    Простой стеммер для русского языка.
+    Отсекает окончания, но бережно относится к коротким словам.
+    """
+    if len(word) <= 3:
+        return word
+    
+    # Список основных окончаний (от длинных к коротким, чтобы сначала отрезать 'ая', а не 'а')
+    endings = [
+        'ами', 'ями', 'ов', 'ев', 'ей', 'ом', 'ем', 'ах', 'ях', 'ую', 'юю', 
+        'ая', 'яя', 'ое', 'ее', 'ые', 'ие', 'ый', 'ий', 'ой', 'ся', 'сь',
+        'а', 'я', 'о', 'е', 'ь', 'ы', 'и', 'у', 'ю'
+    ]
+    
+    for end in endings:
+        if word.endswith(end):
+            # Проверка: если отрезать окончание, останется ли корень длиннее 2 букв?
+            # Это защищает слова типа "дом" (чтобы не отрезать 'ом' и получить 'д')
+            if len(word) - len(end) >= 2:
+                return word[:-len(end)]
+    return word
+
+def smart_match(query, text_fields):
+    """
+    Проверяет, соответствует ли запрос полям текста.
+    query: строка запроса от пользователя
+    text_fields: список строк, где ищем (caption, ai_des, ai_style)
+    """
+    # 1. Нормализация и разбивка запроса на слова
+    norm_query = normalize_text(query)
+    # Используем regex, чтобы разбить "привет, мир!" на ["привет", "мир"]
+    q_words = re.findall(r'\w+', norm_query)
+    
+    if not q_words:
+        return True # Пустой запрос - показываем всё
+
+    # 2. Нормализация и разбивка текста поста
+    full_text = " ".join([normalize_text(t) for t in text_fields])
+    t_words = set(re.findall(r'\w+', full_text)) # set для быстрого поиска
+    
+    # 3. Логика сравнения
+    # Мы считаем, что пост подходит, если ВСЕ слова из запроса найдены в посте
+    for q_word in q_words:
+        found_word = False
+        
+        # А) Точное совпадение (с учетом е/ё)
+        # Это решает проблему "кот" != "который", так как мы сравниваем слово целиком
+        if q_word in t_words:
+            found_word = True
+        
+        # Б) Если точного нет, пробуем искать по корню (стемминг)
+        else:
+            q_stem = get_word_stem(q_word)
+            # Если слово короткое (<=3), стемминг не применяем, ищем только точно
+            if len(q_word) > 3:
+                for t_word in t_words:
+                    if len(t_word) > 3 and get_word_stem(t_word) == q_stem:
+                        found_word = True
+                        break
+        
+        if not found_word:
+            return False # Если хоть одно слово из запроса не найдено
+
+    return True
+
+# --- ОБНОВЛЕННЫЙ ЭНДПОИНТ ПОИСКА ---
+
+@app.route('/api/anemone/search', methods=['GET'])
+def api_search_gallery():
+    from gpt_helper import get_all_art_posts_cached
+    
+    # Получаем параметры
+    query = request.args.get('q', '').strip()
+    color_filter = request.args.get('color', '').lower().strip()
+    offset = int(request.args.get('offset', 0))
+    limit = int(request.args.get('limit', 50))
+    
+    # 1. Получаем все посты
+    all_posts = get_all_art_posts_cached()
+    
+    # 2. Фильтрация
+    filtered = []
+    
+    for p in all_posts:
+        # Игнорируем удаленные или пустые
+        if p.get('status') != 'ok' or p.get('type') != 'photo':
+            continue
+            
+        # --- УМНЫЙ ПОИСК (Заменяет старый блок if query in caption) ---
+        if query:
+            # Собираем все текстовые поля в кучу
+            text_content = [
+                str(p.get('caption', '')),
+                str(p.get('ai_des_ru', '')),
+                str(p.get('ai_style_ru', ''))
+            ]
+            
+            # Используем нашу умную функцию
+            if not smart_match(query, text_content):
+                continue
+        # -------------------------------------------------------------
+        
+        # Фильтр по цвету (оставляем как было)
+        if color_filter:
+            analysis = p.get('analysis', {})
+            dom = str(analysis.get('dom_color', '')).lower()
+            sec = str(analysis.get('sec_color', '')).lower()
+            
+            if color_filter not in ['black', 'white']:
+                if dom != color_filter and sec != color_filter:
+                    continue
+            
+        filtered.append(p)
+
+    # 3. Сортировка (Код сортировки оставляем без изменений)
+    if color_filter:
+        def color_sort_key(item):
+            analysis = item.get('analysis', {})
+            sat = float(analysis.get('sat', 0))
+            br = float(analysis.get('br', 0))
+            dom = str(analysis.get('dom_color', '')).lower()
+            sec = str(analysis.get('sec_color', '')).lower()
+            
+            if color_filter == 'white':
+                return (br, sat)
+            elif color_filter == 'black':
+                return (-br, sat)
+            else:
+                priority = 0
+                if dom == color_filter: priority = 2
+                elif sec == color_filter: priority = 1
+                return (priority, sat)
+
+        filtered.sort(key=color_sort_key, reverse=True)
+    else:
+        # По умолчанию: самые свежие
+        filtered.sort(key=lambda x: x.get('date', 0), reverse=True)
+
+    # 4. Пагинация
+    total = len(filtered)
+    chunk = filtered[offset : offset + limit]
+    
+    result_items = []
+    for item in chunk:
+        result_items.append({
+            "post_id": item.get('post_id'),
+            "file_id": item.get('file_id'),
+            "caption": item.get('caption'),
+            "post_link": f"https://t.me/{item.get('channel_id', '').replace('@', '')}/{item.get('post_id')}",
+            "ai_des": item.get('ai_des_ru'),
+            "ai_style": item.get('ai_style_ru'),
+            "date": datetime.fromtimestamp(item.get('date', 0)).strftime('%d.%m.%Y') if item.get('date') else "",
+            "analysis": item.get('analysis')
+        })
+
+    return jsonify({
+        "total": total,
+        "items": result_items
+    })
+
+
 
 
 
