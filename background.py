@@ -39,7 +39,7 @@ requests_session.headers.update({
 })
 
 DUMP_CHAT_ID = "-5129048838"  
-DEFAULT_CHANNEL_ID = "-1001479526905" 
+DEFAULT_CHANNEL_ID = "@anemonn"
 
 DEFAULT_MAX_POST_ID = 8504
 
