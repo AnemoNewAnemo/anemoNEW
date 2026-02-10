@@ -359,7 +359,46 @@ def update_media_title(user_id, media_id, new_title):
 
 
 
+def get_single_media(user_id, media_id):
+    """
+    Получает одну конкретную запись (таймер) по ID пользователя и ID медиа.
+    Нужно для режима 'Поделиться'.
+    """
+    try:
+        path = f'users_timers/{user_id}/{media_id}'
+        ref = db.reference(path)
+        data = ref.get()
+        return data if data else {}
+    except Exception as e:
+        logging.error(f"Ошибка получения медиа {media_id} для {user_id}: {e}")
+        return {}
 
+def save_art_post(channel_id, post_id, data):
+    """
+    Сохраняет обработанный пост в art_posts/CHANNEL_ID/post_id
+    """
+    logging.info(f"post_id {post_id}")    
+    try:
+        # Нормализуем ID канала (убираем @ если есть)
+        chan_key = channel_id.replace('@', '') if channel_id else "default"
+        ref = db.reference(f'art_posts/{chan_key}/{post_id}')
+        ref.set(data)
+        return True
+    except Exception as e:
+        logging.info(f"Error saving art post {post_id}: {e}")
+        return False
+
+def get_art_post(channel_id, post_id):
+    """
+    Получает данные поста из базы, если они есть.
+    """
+    try:
+        chan_key = channel_id.replace('@', '') if channel_id else "default"
+        ref = db.reference(f'art_posts/{chan_key}/{post_id}')
+        return ref.get()
+    except Exception as e:
+        # Логируем только критические ошибки, отсутствие ключа - это норма
+        return None
 
 
 _ALL_POSTS_CACHE = None
