@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-
+import { initGallery } from './gallery.js'; // <-- Добавляем это
 // --- КОНФИГУРАЦИЯ И СОСТОЯНИЕ (Глобальные настройки) ---
 const CONFIG = {
     colors: {
@@ -1906,7 +1906,7 @@ const state = {
     currentChunk: { x: null, y: null, z: null },
     loadQueue: [],
     activeLoads: 0,
-    occupied: [],
+    // occupied: [], <--- ЭТУ СТРОКУ НУЖНО УДАЛИТЬ
     // НОВОЕ: Карта активных контроллеров отмены { postId: AbortController }
     activeControllers: new Map() 
 };
@@ -2177,56 +2177,15 @@ function createHangingArt(group, data, chunkKey) {
     const baseScale = data.scale[0] * 1.5; 
     const geometry = currentPaperGeometry;
 
-    // --- ИЗМЕНЕНИЕ 1: Генерируем уникальный сид для этого объекта ---
-    // data.id приходит с сервера (вида "x_y_z_i"), он всегда одинаковый для объекта
+    // Генерируем уникальный сид для этого объекта
     const objSeed = cyrb128(data.id || Math.random().toString()); 
     
-    // Используем seededRandom вместо Math.random()
     const phase = seededRandom(objSeed) * 10;
-    const swaySpeed = 0.5 + seededRandom(objSeed + 1) * 0.5; // +1 чтобы число отличалось от phase
+    const swaySpeed = 0.5 + seededRandom(objSeed + 1) * 0.5;
 
-    // Вектор текущей позиции
+    // Вектор текущей позиции - БЕЗ СМЕЩЕНИЙ И КОЛЛИЗИЙ
+    // Мы доверяем координатам с сервера
     const pos = new THREE.Vector3(data.pos[0], data.pos[1] + (baseScale / 2), data.pos[2]);
-    const radius = baseScale * 1.2; 
-    const minZGap = 60; 
-
-    // Логика коллизий
-    for (let i = 0; i < 8; i++) {
-        let collision = false;
-        for (const item of state.occupied) {
-            // ... (код проверки дистанции тот же) ...
-            if (Math.abs(item.x - pos.x) > radius * 2.5) continue;
-            if (Math.abs(item.y - pos.y) > radius * 2.5) continue;
-
-            const dx = pos.x - item.x;
-            const dy = pos.y - item.y;
-            const dz = pos.z - item.z;
-            const distXY = Math.sqrt(dx*dx + dy*dy);
-
-            if (distXY < (radius + item.r) && Math.abs(dz) < minZGap) {
-                collision = true;
-                
-                let angle = Math.atan2(dy, dx);
-                // --- ИЗМЕНЕНИЕ 2: Детерминированный угол ---
-                if (distXY < 1.0) angle = seededRandom(objSeed + i * 100) * Math.PI * 2;
-
-                const pushDist = (radius + item.r) - distXY + 20; 
-                
-                pos.x += Math.cos(angle) * pushDist;
-                pos.y += Math.sin(angle) * pushDist;
-                pos.z += (dz >= 0 ? 1 : -1) * 30;
-                
-                // --- ИЗМЕНЕНИЕ 3: Детерминированный микро-шум ---
-                // Используем i в сиде, чтобы на каждой итерации цикла шум был разным, но повторяемым
-                pos.x += (seededRandom(objSeed + i * 10) - 0.5) * 10;
-                pos.y += (seededRandom(objSeed + i * 20) - 0.5) * 10;
-                break; 
-            }
-        }
-        if (!collision) break; 
-    }
-
-    state.occupied.push({ x: pos.x, y: pos.y, z: pos.z, r: radius, chunkKey: chunkKey });
 
     const material = new THREE.ShaderMaterial({
         vertexShader: paperVertexShader,
@@ -2236,7 +2195,7 @@ function createHangingArt(group, data, chunkKey) {
             map: { value: PLACEHOLDER_TEXTURE },
             hasTexture: { value: false },
             uColor: { value: new THREE.Color(0xffffff) },
-            uSizeMult: { value: CONFIG.details.fireflySize }, // <--- ДОБАВИТЬ            
+            uSizeMult: { value: CONFIG.details.fireflySize },          
             uAspectRatio: { value: 1.0 },
             uPhase: { value: phase },
             uSwaySpeed: { value: swaySpeed },
@@ -2289,11 +2248,40 @@ function createHangingArt(group, data, chunkKey) {
 function unloadChunk(key) {
     const c = state.chunks.get(key);
     if(c) { 
+        // --- НАЧАЛО ИСПРАВЛЕНИЯ ПАМЯТИ ---
+        // Проходим по всем объектам внутри удаляемого чанка
+        c.group.traverse(obj => {
+            if (obj.isMesh) {
+                // 1. Очистка материала
+                if (obj.material) {
+                    // Если у материала есть текстура (фотография), удаляем её из GPU
+                    if (obj.material.uniforms && obj.material.uniforms.map && obj.material.uniforms.map.value) {
+                        // Проверяем, что это не глобальная заглушка, чтобы не сломать остальные
+                        if (obj.material.uniforms.map.value !== PLACEHOLDER_TEXTURE) {
+                            obj.material.uniforms.map.value.dispose();
+                        }
+                    }
+                    // Удаляем сам шейдерный материал
+                    obj.material.dispose();
+                }
+                
+                // 2. Очистка геометрии
+                // В вашем коде геометрия общая (realisticPaperGeometry), её удалять НЕЛЬЗЯ.
+                // Но если вы добавляли Line (веревку) с уникальной геометрией, удаляем её:
+                if (obj.geometry && obj.geometry !== realisticPaperGeometry && obj.geometry !== simplePaperGeometry && obj.geometry !== commonLineGeometry) {
+                     obj.geometry.dispose();
+                }
+            }
+            // Если это объект Line (веревка)
+            if (obj.isLine) {
+                 if (obj.material) obj.material.dispose();
+                 // Геометрия веревки у вас commonLineGeometry, её не трогаем
+            }
+        });
+        // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
         scene.remove(c.group); 
         state.chunks.delete(key);
-        
-        // Очищаем массив занятых позиций для этого чанка
-        state.occupied = state.occupied.filter(item => item.chunkKey !== key);
     }
 }
 
@@ -2316,12 +2304,15 @@ function updateChunks() {
 
 // Хелпер для проверки: кликнули ли мы по интерфейсу?
 function isUIInteraction(e) {
-    // Проверяем, находится ли цель клика внутри панели, кнопки или попапа цветовой палитры
+    // Проверяем, находится ли цель клика внутри панелей или кнопок
     return e.target.closest('#settings-panel') || 
            e.target.closest('#settings-btn') || 
-           e.target.closest('.custom-picker-popover');
+           e.target.closest('.custom-picker-popover') ||
+           e.target.closest('#search-panel') ||  // <--- Добавлено
+           e.target.closest('#search-btn') ||    // <--- Добавлено
+           e.target.closest('#comment-modal') || // <--- Добавлено (на случай скролла внутри модалки)
+           e.target.closest('#add-btn');         // <--- Добавлено
 }
-
 
 let isTwoFingerTouch = false; 
 let initialPinchDistance = 0;
@@ -2391,7 +2382,13 @@ window.addEventListener('touchend', (e) => {
         state.isDragging = false;
     }
 });
-
+// Слушатель внешних событий навигации (например, из галереи)
+window.addEventListener('set-navigation-target', (e) => {
+    const { x, y, z } = e.detail;
+    navigationTarget = new THREE.Vector3(x, y, z);
+    updateNavigationHUD();
+    console.log(`New Target Set: ${x}, ${y}, ${z}`);
+});
 
 window.addEventListener('mousedown', e => { 
     // Если клик по интерфейсу — выходим, не запуская драг
@@ -2774,12 +2771,25 @@ if (grainOpacity && grainEl) {
 
 
 const clock = new THREE.Clock();
-let frameCount = 0; // <--- 1. ОБЪЯВЛЯЕМ ПЕРЕМЕННУЮ ЗДЕСЬ
+let frameCount = 0; 
+let isRenderPaused = false; // <--- 1. Флаг паузы
+
+// <--- 2. Слушатель переключения паузы из галереи
+window.addEventListener('toggle-pause', (e) => {
+    isRenderPaused = e.detail;
+    if (!isRenderPaused) {
+        // Сбрасываем накопленное время, чтобы физика не "скакнула" при возобновлении
+        clock.getDelta(); 
+    }
+});
 
 function animate() {
     requestAnimationFrame(animate);
     
-    frameCount++; // <--- 2. УВЕЛИЧИВАЕМ СЧЕТЧИК КАДРОВ
+    // <--- 3. Если пауза, выходим из функции (ничего не считаем, не рендерим)
+    if (isRenderPaused) return;
+
+    frameCount++; 
 
     // НОВОЕ: Проверка активных загрузок на дальность
     if (state.activeLoads > 0 && frameCount % 30 === 0) { // Теперь frameCount существует
@@ -2884,3 +2894,5 @@ window.addEventListener('resize', () => {
     fireflyMat.uniforms.uScale.value = window.innerHeight / 2.0;
     dustMat.uniforms.uScale.value = window.innerHeight / 2.0; 
 });
+
+initGallery();
