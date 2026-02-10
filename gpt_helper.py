@@ -359,6 +359,60 @@ def update_media_title(user_id, media_id, new_title):
 
 
 
+
+
+
+_ALL_POSTS_CACHE = None
+_LAST_CACHE_UPDATE = 0
+
+def get_all_art_posts_cached(channel_id="@anemonn"):
+    global _ALL_POSTS_CACHE, _LAST_CACHE_UPDATE
+
+    current_time = time.time()
+
+    if _ALL_POSTS_CACHE is None or (current_time - _LAST_CACHE_UPDATE) > 300:
+        try:
+            chan_key = channel_id.replace('@', '')
+            ref = db.reference(f'art_posts/{chan_key}')
+            data = ref.get()
+
+            posts_list = []
+
+            if isinstance(data, dict):
+                for pid, pdata in data.items():
+                    if isinstance(pdata, dict):
+                        pdata['post_id'] = int(pid)
+                        posts_list.append(pdata)
+
+            elif isinstance(data, list):
+                for idx, pdata in enumerate(data):
+                    if isinstance(pdata, dict):
+                        pdata['post_id'] = idx
+                        posts_list.append(pdata)
+
+            _ALL_POSTS_CACHE = posts_list
+            _LAST_CACHE_UPDATE = current_time
+            logging.info(f"Posts Cache Updated: {len(posts_list)} items")
+
+        except Exception as e:
+            logging.error(f"Error fetching all posts: {e}")
+            return []
+
+    return _ALL_POSTS_CACHE
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def save_ozon_tracking_to_firebase(user_id: int, item_data: dict):
     """Сохраняет товар для отслеживания в Firebase."""
     try:
