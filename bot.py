@@ -13393,7 +13393,7 @@ async def handle_new_caption(update: Update, context: CallbackContext, key) -> i
 
 
 async def publish_to_telegram_scheduled(context: CallbackContext):
-    """Публикует пост в Telegram по расписанию с поддержкой музыкальной кнопки."""
+    """Публикует пост в Telegram по расписанию с поддержкой медиагрупп."""
     job_data = context.job.data
     user_id = job_data['user_id']
     message_id = job_data['message_id']
@@ -13414,7 +13414,7 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
         logging.error(f"Данные для публикации {key} не найдены.")
         return
 
-    # --- ЛОГИКА МУЗЫКАЛЬНОЙ КНОПКИ (добавлено) ---
+    # --- ЛОГИКА МУЗЫКАЛЬНОЙ КНОПКИ ---
     is_music_post = media_group_data.get('music_post', False)
     music_reply_markup = None
     
@@ -13426,9 +13426,7 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
         if musicmedia and isinstance(musicmedia, list):
             raw_name = musicmedia[0].get('music_name')
             if raw_name:
-                # убираем расширение файла
                 music_name = raw_name.rsplit('.', 1)[0]
-                # обрезаем до 20 символов
                 if len(music_name) > 19:
                     cut = music_name[:19].rsplit(' ', 1)[0]
                     music_name = cut + "..."
@@ -13437,7 +13435,7 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
         music_reply_markup = InlineKeyboardMarkup([
             [InlineKeyboardButton(text=button_text, url=web_app_url)]
         ])
-    # ---------------------------------------------
+    # ---------------------------------
 
     try:
         # Логика извлечения медиа и каналов
@@ -13458,7 +13456,7 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
         for item in media_items:
             file_url = item['file_id']
             mime_type, _ = mimetypes.guess_type(file_url)
-            processed_image = await convert_image_repost(file_url) # Предполагается, что эта функция у вас есть
+            processed_image = await convert_image_repost(file_url)
             if processed_image:
                 caption = item.get('caption')
                 parse_mode = item.get('parse_mode')
@@ -13467,16 +13465,15 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
                 else:
                     media_group.append(InputMediaPhoto(media=processed_image, caption=caption, parse_mode=parse_mode))
 
-        # --- ОТПРАВКА (Обновлено) ---
-        
-        # Сценарий 1: Музыкальный пост и ВСЕГО ОДИН файл.
-        # Отправляем через send_photo/send_animation, чтобы прикрепить кнопку к посту.
-        sent_message = None
+        # --- ОТПРАВКА И СОХРАНЕНИЕ ---
+        sent_messages = [] # Список для всех отправленных сообщений
 
+        # Сценарий 1: Музыка + 1 файл (отправляем отдельно чтобы прицепить кнопку)
         if is_music_post and len(media_group) == 1:
             item = media_group[0]
+            msg = None
             if isinstance(item, InputMediaPhoto):
-                sent_message = await bot.send_photo( # Сохраняем в переменную
+                msg = await bot.send_photo(
                     chat_id=chat_id,
                     photo=item.media,
                     caption=item.caption,
@@ -13484,17 +13481,21 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
                     reply_markup=music_reply_markup
                 )
             else:
-                 await bot.send_animation(
+                 msg = await bot.send_animation(
                     chat_id=chat_id,
                     animation=item.media,
                     caption=item.caption,
                     parse_mode=item.parse_mode,
                     reply_markup=music_reply_markup
                 )
+            if msg:
+                sent_messages.append(msg)
+
+        # Сценарий 2: Группа файлов
         else:
-            sent_messages_list = await bot.send_media_group(chat_id=chat_id, media=media_group)
-            if sent_messages_list:
-                sent_message = sent_messages_list[0]
+            msgs_list = await bot.send_media_group(chat_id=chat_id, media=media_group)
+            if msgs_list:
+                sent_messages.extend(msgs_list)
 
             if is_music_post:
                 await bot.send_message(
@@ -13503,25 +13504,27 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
                     reply_markup=music_reply_markup
                 )
 
-        # === ИНТЕГРАЦИЯ С БАЗОЙ ДАННЫХ (ФОНОВАЯ ЗАДАЧА) ===
-        if sent_message and sent_message.photo:
-            new_post_id = sent_message.message_id
-            best_photo = sent_message.photo[-1]
-            new_file_id = best_photo.file_id
-            post_caption = sent_message.caption if sent_message.caption else ""
-            post_date = int(sent_message.date.timestamp())
+        # === ЦИКЛ СОХРАНЕНИЯ В ФОНЕ ===
+        # Обрабатываем КАЖДУЮ картинку из альбома
+        for msg in sent_messages:
+            if msg.photo:
+                new_post_id = msg.message_id
+                best_photo = msg.photo[-1]
+                new_file_id = best_photo.file_id
+                post_caption = msg.caption if msg.caption else ""
+                post_date = int(msg.date.timestamp())
 
-            asyncio.create_task(
-                gpt_helper.analyze_and_save_background(
-                    bot, # Используем объект bot из контекста функции
-                    str(chat_id), 
-                    new_post_id, 
-                    new_file_id, 
-                    post_caption, 
-                    post_date
+                asyncio.create_task(
+                    gpt_helper.analyze_and_save_background(
+                        bot, 
+                        str(chat_id), 
+                        new_post_id, 
+                        new_file_id, 
+                        post_caption, 
+                        post_date
+                    )
                 )
-            )
-        # ==================================================
+        # ==============================
 
         logging.info(f"Пост {key} успешно опубликован в Telegram канал {chat_id}.")
         
@@ -14491,23 +14494,21 @@ def schedule_publication_job(
 
 async def handle_publish_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
-    await query.answer()  # Ответ пользователю, что нажатие обработано
+    await query.answer()
     temp_message = await query.message.reply_text("📤 Пост переносится, ожидайте...")
-    # Извлекаем user_id и message_id из callback_data
+    
     _, user_id_str, message_id_str = query.data.split('_')
     user_id = int(user_id_str)
     message_id = int(message_id_str)
+    
     global media_group_storage
-    # Загружаем данные из Firebase
     media_group_storage = load_publications_from_firebase()
 
-    # Проверяем, есть ли записи для указанного user_id
     user_data = media_group_storage.get(str(user_id))
     if not user_data:
         await temp_message.edit_text("🚫 Ошибка: Пользовательские данные не найдены.")
         return
 
-    # Проверяем наличие конкретной записи
     key = f"{user_id}_{message_id}"
     media_group_data = user_data.get(key)
 
@@ -14536,14 +14537,10 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
                     if raw_name:
                         # убираем расширение файла
                         music_name = raw_name.rsplit('.', 1)[0]
-
                         # обрезаем до 20 символов
                         if len(music_name) > 19:
                             cut = music_name[:19].rsplit(' ', 1)[0]
                             music_name = cut + "..."
-
-
-
 
                 button_text = f"◄⠀▐▐ ⠀►  |  {music_name}"
 
@@ -14561,7 +14558,6 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
             await temp_message.edit_text(f"🚫 Ошибка преобразования данных: {e}")
             return
 
-        # Загружаем привязанные каналы из Firebase
         channel_ref = db.reference('users_publications/channels')
         channels_data = channel_ref.get() or {}
 
@@ -14574,49 +14570,40 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
             keyboard = InlineKeyboardMarkup(
                 [[InlineKeyboardButton("‼️Перезапуск бота‼️", callback_data='restart')]]
             )
-            
             await temp_message.edit_text(
-                "Сейчас у вас нет привязанных каналов. Перешлите в бот любой пост из вашего канала, чтобы привязать его. Не убирайте галочку с \"Показывать отправителя\" чтобы бот смог увидеть ваш канал. \n\nТак же для публикации постов бот должен быть добавлен в ваш канал.",
-                reply_markup=keyboard  # Добавляем клавиатуру к сообщению
+                "Сейчас у вас нет привязанных каналов...", 
+                reply_markup=keyboard
             )
-
-            # Устанавливаем пользователя в состояние ожидания пересланного сообщения
             if user_id not in waiting_for_forward:
-                waiting_for_forward[user_id] = True  # Помещаем пользователя в состояние ожидания
-
+                waiting_for_forward[user_id] = True
             return
 
-        # Используем первый привязанный канал для публикации
         chat_id = user_channels[0]
-
-        # Создаём медиагруппу для отправки в канал
         media_group = []
+        
+        # Сбор медиа
         for item in media_items:
             file_url = item['file_id']
-
-            # Определяем MIME-тип файла по URL
             mime_type, _ = mimetypes.guess_type(file_url)
-
-            # Обрабатываем файл через convert_image_repost
             processed_image = await convert_image_repost(file_url)
 
             if processed_image is not None:
-                caption = item.get('caption')  # None, если 'caption' отсутствует
-                parse_mode = item.get('parse_mode')  # None, если 'parse_mode' отсутствует
+                caption = item.get('caption')
+                parse_mode = item.get('parse_mode')
 
-                if mime_type == "image/gif":  # Если это GIF
+                if mime_type == "image/gif":
                     media_group.append(
                         InputMediaDocument(
-                            media=processed_image,  # Используем обработанный GIF
+                            media=processed_image,
                             caption=caption,
                             filename="animation.gif",
                             parse_mode=parse_mode
                         )
                     )
-                else:  # Любое другое изображение
+                else:
                     media_group.append(
                         InputMediaPhoto(
-                            media=processed_image,  # Используем обработанное изображение
+                            media=processed_image,
                             caption=caption,
                             parse_mode=parse_mode
                         )
@@ -14625,17 +14612,17 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
                 await temp_message.edit_text(f"🚫 Ошибка при обработке файла: {file_url}")
                 return
 
-        # Публикуем медиагруппу в канале
+        # --- ОБНОВЛЕННАЯ ЛОГИКА ПУБЛИКАЦИИ И СОХРАНЕНИЯ ---
         try:
-            # Сценарий 1: Музыкальный пост и ВСЕГО ОДИН файл.
-            # Отправляем через send_photo/send_animation, чтобы прикрепить кнопку к посту.
-            sent_message = None
+            sent_messages = [] # Список для сбора всех отправленных сообщений
 
             # Сценарий 1: Музыкальный пост и ВСЕГО ОДИН файл.
+            # Отправляем через send_photo/send_animation, чтобы прикрепить кнопку к посту.
             if is_music_post and len(media_group) == 1:
                 item = media_group[0]
+                msg = None
                 if isinstance(item, InputMediaPhoto):
-                    sent_message = await context.bot.send_photo( # Сохраняем результат в sent_message
+                    msg = await context.bot.send_photo(
                         chat_id=chat_id,
                         photo=item.media,
                         caption=item.caption,
@@ -14643,25 +14630,25 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
                         reply_markup=music_reply_markup
                     )
                 else:
-                    # GIF не сохраняем в арт-галерею, оставляем как было
-                    await context.bot.send_animation(
+                    msg = await context.bot.send_animation(
                         chat_id=chat_id,
                         animation=item.media,
                         caption=item.caption,
                         parse_mode=item.parse_mode,
                         reply_markup=music_reply_markup
                     )
+                if msg:
+                    sent_messages.append(msg)
 
             # Сценарий 2: Обычный пост или Музыкальный пост с НЕСКОЛЬКИМИ файлами
             else:
                 # send_media_group возвращает список сообщений
-                sent_messages_list = await context.bot.send_media_group(
+                msgs_list = await context.bot.send_media_group(
                     chat_id=chat_id,
                     media=media_group
                 )
-                # Берем первое сообщение из группы для галереи (или с подписью)
-                if sent_messages_list:
-                    sent_message = sent_messages_list[0]
+                if msgs_list:
+                    sent_messages.extend(msgs_list) # Добавляем все сообщения альбома
                     
                 if is_music_post:
                      await context.bot.send_message(
@@ -14670,28 +14657,32 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
                         reply_markup=music_reply_markup
                     )
 
-            # === ИНТЕГРАЦИЯ С БАЗОЙ ДАННЫХ (ФОНОВАЯ ЗАДАЧА) ===
-            # Проверяем, что сообщение отправлено и это фото
-            if sent_message and sent_message.photo:
-                # Получаем данные
-                new_post_id = sent_message.message_id
-                # Берем самое большое фото (последнее в списке)
-                best_photo = sent_message.photo[-1]
-                new_file_id = best_photo.file_id
-                post_caption = sent_message.caption if sent_message.caption else ""
-                post_date = int(sent_message.date.timestamp())
+            # === ИНТЕГРАЦИЯ С БАЗОЙ ДАННЫХ (ЦИКЛ ПО ВСЕМ ФОТО) ===
+            # Проходим по каждому сообщению (каждой картинке альбома)
+            for msg in sent_messages:
+                # Проверяем, есть ли фото (у send_animation фото может быть в thumb, но логика ниже для photo)
+                # Если это InputMediaPhoto, msg.photo будет списком размеров
+                if msg.photo:
+                    new_post_id = msg.message_id
+                    # Берем самое большое фото (последнее в списке)
+                    best_photo = msg.photo[-1]
+                    new_file_id = best_photo.file_id
+                    
+                    # Подпись обычно есть только у первого фото в альбоме, у остальных None (или берем пустую строку)
+                    post_caption = msg.caption if msg.caption else ""
+                    post_date = int(msg.date.timestamp())
 
-                # Запускаем задачу в фоне ("Fire and forget")
-                asyncio.create_task(
-                    gpt_helper.analyze_and_save_background(
-                        context.bot, 
-                        str(chat_id), 
-                        new_post_id, 
-                        new_file_id, 
-                        post_caption, 
-                        post_date
+                    # Запускаем задачу в фоне ("Fire and forget") ДЛЯ КАЖДОГО ФОТО
+                    asyncio.create_task(
+                        gpt_helper.analyze_and_save_background(
+                            context.bot, 
+                            str(chat_id), 
+                            new_post_id, 
+                            new_file_id, 
+                            post_caption, 
+                            post_date
+                        )
                     )
-                )
             # ==================================================
 
             await temp_message.edit_text(f"✅ Пост успешно опубликован в канале {chat_id}!")
@@ -14699,8 +14690,7 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
         except Forbidden as e:
             if "bot is not a member of the channel chat" in str(e):
                 await temp_message.edit_text(
-                    "🚫 Для возможности публиковать посты из бота в ваш канал, пожалуйста, добавьте бота в ваш канал с разрешением на публикацию. "
-                    "Если вы не хотите этого делать, то можете пересылать посты вручную."
+                    "🚫 Для возможности публиковать посты добавьте бота в канал."
                 )
             else:
                 await temp_message.edit_text(f"🚫 Ошибка доступа: {e}")
