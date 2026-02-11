@@ -4709,7 +4709,8 @@ async def analyze_and_save_background(bot, channel_id, message_id, file_id, capt
         finally:
              if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
-
+        if str(channel_id) == "-1001479526905":
+            channel_id = "anemonn"
         # 4. Сохранение в Firebase
         final_data = {
             "ai_des_ru": ai_des,
@@ -4734,4 +4735,3 @@ async def analyze_and_save_background(bot, channel_id, message_id, file_id, capt
 
     except Exception as global_e:
         logging.error(f"Background: Критическая ошибка в фоновой задаче: {global_e}", exc_info=True)
-
