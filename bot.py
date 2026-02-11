@@ -13471,39 +13471,57 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
         
         # Сценарий 1: Музыкальный пост и ВСЕГО ОДИН файл.
         # Отправляем через send_photo/send_animation, чтобы прикрепить кнопку к посту.
+        sent_message = None
+
         if is_music_post and len(media_group) == 1:
             item = media_group[0]
-            
-            # Если это фото
             if isinstance(item, InputMediaPhoto):
-                await bot.send_photo(
+                sent_message = await bot.send_photo( # Сохраняем в переменную
                     chat_id=chat_id,
                     photo=item.media,
                     caption=item.caption,
                     parse_mode=item.parse_mode,
                     reply_markup=music_reply_markup
                 )
-            # Если это GIF (InputMediaDocument)
             else:
-                await bot.send_animation(
+                 await bot.send_animation(
                     chat_id=chat_id,
                     animation=item.media,
                     caption=item.caption,
                     parse_mode=item.parse_mode,
                     reply_markup=music_reply_markup
                 )
-
-        # Сценарий 2: Обычный пост или Музыкальный пост с НЕСКОЛЬКИМИ файлами
         else:
-            await bot.send_media_group(chat_id=chat_id, media=media_group)
-            
-            # Если это был музыкальный альбом (много фото), кнопку отправляем следом отдельным сообщением
+            sent_messages_list = await bot.send_media_group(chat_id=chat_id, media=media_group)
+            if sent_messages_list:
+                sent_message = sent_messages_list[0]
+
             if is_music_post:
                 await bot.send_message(
                     chat_id=chat_id,
                     text="🎧 Нажмите кнопку ниже, чтобы слушать музыку:",
                     reply_markup=music_reply_markup
                 )
+
+        # === ИНТЕГРАЦИЯ С БАЗОЙ ДАННЫХ (ФОНОВАЯ ЗАДАЧА) ===
+        if sent_message and sent_message.photo:
+            new_post_id = sent_message.message_id
+            best_photo = sent_message.photo[-1]
+            new_file_id = best_photo.file_id
+            post_caption = sent_message.caption if sent_message.caption else ""
+            post_date = int(sent_message.date.timestamp())
+
+            asyncio.create_task(
+                gpt_helper.analyze_and_save_background(
+                    bot, # Используем объект bot из контекста функции
+                    str(chat_id), 
+                    new_post_id, 
+                    new_file_id, 
+                    post_caption, 
+                    post_date
+                )
+            )
+        # ==================================================
 
         logging.info(f"Пост {key} успешно опубликован в Telegram канал {chat_id}.")
         
@@ -14611,42 +14629,70 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
         try:
             # Сценарий 1: Музыкальный пост и ВСЕГО ОДИН файл.
             # Отправляем через send_photo/send_animation, чтобы прикрепить кнопку к посту.
+            sent_message = None
+
+            # Сценарий 1: Музыкальный пост и ВСЕГО ОДИН файл.
             if is_music_post and len(media_group) == 1:
                 item = media_group[0]
-                
-                # Если это фото
                 if isinstance(item, InputMediaPhoto):
-                    await context.bot.send_photo(
+                    sent_message = await context.bot.send_photo( # Сохраняем результат в sent_message
                         chat_id=chat_id,
                         photo=item.media,
                         caption=item.caption,
                         parse_mode=item.parse_mode,
-                        reply_markup=music_reply_markup # Цепляем кнопку сюда
+                        reply_markup=music_reply_markup
                     )
-                # Если это GIF (InputMediaDocument)
                 else:
-                    await context.bot.send_animation( # Используем send_animation для GIF
+                    # GIF не сохраняем в арт-галерею, оставляем как было
+                    await context.bot.send_animation(
                         chat_id=chat_id,
                         animation=item.media,
                         caption=item.caption,
                         parse_mode=item.parse_mode,
-                        reply_markup=music_reply_markup # Цепляем кнопку сюда
+                        reply_markup=music_reply_markup
                     )
-            
+
             # Сценарий 2: Обычный пост или Музыкальный пост с НЕСКОЛЬКИМИ файлами
             else:
-                await context.bot.send_media_group(
+                # send_media_group возвращает список сообщений
+                sent_messages_list = await context.bot.send_media_group(
                     chat_id=chat_id,
                     media=media_group
                 )
-                
-                # Если это был музыкальный альбом (много фото), кнопку отправляем следом отдельным сообщением
+                # Берем первое сообщение из группы для галереи (или с подписью)
+                if sent_messages_list:
+                    sent_message = sent_messages_list[0]
+                    
                 if is_music_post:
-                    await context.bot.send_message(
+                     await context.bot.send_message(
                         chat_id=chat_id,
                         text="🎧 Нажмите кнопку ниже, чтобы слушать музыку:",
                         reply_markup=music_reply_markup
                     )
+
+            # === ИНТЕГРАЦИЯ С БАЗОЙ ДАННЫХ (ФОНОВАЯ ЗАДАЧА) ===
+            # Проверяем, что сообщение отправлено и это фото
+            if sent_message and sent_message.photo:
+                # Получаем данные
+                new_post_id = sent_message.message_id
+                # Берем самое большое фото (последнее в списке)
+                best_photo = sent_message.photo[-1]
+                new_file_id = best_photo.file_id
+                post_caption = sent_message.caption if sent_message.caption else ""
+                post_date = int(sent_message.date.timestamp())
+
+                # Запускаем задачу в фоне ("Fire and forget")
+                asyncio.create_task(
+                    gpt_helper.analyze_and_save_background(
+                        context.bot, 
+                        str(chat_id), 
+                        new_post_id, 
+                        new_file_id, 
+                        post_caption, 
+                        post_date
+                    )
+                )
+            # ==================================================
 
             await temp_message.edit_text(f"✅ Пост успешно опубликован в канале {chat_id}!")
             
