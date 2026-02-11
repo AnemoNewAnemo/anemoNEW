@@ -4594,4 +4594,144 @@ async def generate_inpaint_gemini(image_file_path: str, instructions: str):
         logger.error("Ошибка при обработке изображения с Gemini:", exc_info=True)
         return None, "Ошибка при обработке изображения."
 
+async def analyze_and_save_background(bot, channel_id, message_id, file_id, caption, date_timestamp):
+    """
+    Фоновая задача для анализа изображения и сохранения в Firebase.
+
+    Не блокирует основной поток бота.
+    """
+    from bot import analyze_image_colors
+    from bot import calculate_normalized_brightness    
+    try:
+        logging.info(f"Background: Начинаю обработку поста {message_id} для {channel_id}")
+
+        # 1. Скачиваем изображение (уменьшенную версию, так как берем по file_id из Telegram)
+        try:
+            file_info = await bot.get_file(file_id)
+            img_byte_arr = io.BytesIO()
+            await file_info.download_to_memory(img_byte_arr)
+            img_byte_arr.seek(0)
+            image = Image.open(img_byte_arr)
+        except Exception as e:
+            logging.error(f"Background: Ошибка скачивания файла: {e}")
+            return
+
+        # 2. Анализ цвета (используем ваши функции)
+        # ВАЖНО: Убедитесь, что analyze_image_colors и calculate_normalized_brightness доступны в этом файле
+        try:
+            b_dist, s_dist, h_dist = analyze_image_colors(image, 'neutral')
+            norm_brightness = calculate_normalized_brightness(b_dist, s_dist)
+            
+            sorted_hues = sorted(h_dist.items(), key=lambda item: item[1]['tw'], reverse=True)
+            dom_color = sorted_hues[0][0] if sorted_hues else None
+            sec_color = sorted_hues[1][0] if len(sorted_hues) > 1 else None
+            
+            # Расчет насыщенности (упрощенно из вашего примера)
+            total_saturation = (s_dist.get('gray', 0) * 0.0 + s_dist.get('medium', 0) * 0.5 + s_dist.get('high', 0) * 1.0)
+            
+            analysis_data = {
+                "br": round(norm_brightness, 2), # Сократил ключи как в вашем примере JSON
+                "dom_color": dom_color,
+                "sat": round(total_saturation, 2),
+                "sec_color": sec_color
+            }
+        except Exception as e:
+            logging.error(f"Background: Ошибка цветового анализа: {e}")
+            # Если цветовой анализ упал, ставим заглушки, чтобы не прерывать процесс
+            analysis_data = {"error": "color_analysis_failed"}
+
+        # 3. Анализ через Gemini (Описание и Стиль)
+        ai_des = ""
+        ai_style = ""
+        
+        system_instruction = (
+            "Ты искусствовед и помощник для онлайн-галереи. "
+            "Твоя задача: проанализировать изображение и вернуть JSON. "
+            "Поля JSON: 'description' (описание сюжета на русском языке, максимум 3 предложения, по данному тексту должна быть возможность найти это изображение в базе данных. Перечисли сюжет, атмоферу, детали, всё выделяет данное изображение) "
+            "и 'style' (художественный стиль или техника исполнения на русском языке, например: 'Масло', 'Акрил', 'Digital Art', 'Скетч'). "
+            "Не пиши ничего кроме JSON."
+        )
+
+        # Сбрасываем указатель байтов перед отправкой в Gemini
+        img_byte_arr.seek(0)
+        
+        # Загрузка файла в Gemini (временная)
+        gemini_file = None
+        try:
+            # Создаем временный файл для upload
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
+                image.save(temp_file, format="JPEG")
+                temp_file_path = temp_file.name
+
+            gemini_file = client.files.upload(file=pathlib.Path(temp_file_path))
+            
+            # Ждем обработки
+            while gemini_file.state == "PROCESSING":
+                await asyncio.sleep(2)
+                gemini_file = client.files.get(name=gemini_file.name)
+
+            # Запрос к модели
+            for api_key in key_manager.get_keys_to_try():
+                try:
+                    local_client = genai.Client(api_key=api_key)
+                    
+                    response = await local_client.aio.models.generate_content(
+                        model=PRIMARY_MODEL, # Или FALLBACK_MODELS[0] если нужно
+                        contents=[
+                            types.Content(
+                                role="user",
+                                parts=[
+                                    types.Part.from_uri(file_uri=gemini_file.uri, mime_type=gemini_file.mime_type),
+                                    types.Part(text="Return JSON with keys: description, style")
+                                ]
+                            )
+                        ],
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_instruction,
+                            response_mime_type="application/json", # Форсируем JSON
+                            temperature=0.5
+                        )
+                    )
+                    
+                    if response.candidates and response.candidates[0].content.parts:
+                        raw_json = response.candidates[0].content.parts[0].text
+                        parsed = json.loads(raw_json)
+                        ai_des = parsed.get("description", "")
+                        ai_style = parsed.get("style", "")
+                        await key_manager.set_successful_key(api_key)
+                        break # Успех
+                except Exception as ex:
+                    logging.warning(f"Background: Gemini error with key ...{api_key[-4:]}: {ex}")
+                    continue
+                    
+        except Exception as e:
+            logging.error(f"Background: Ошибка AI анализа: {e}")
+        finally:
+             if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+
+        # 4. Сохранение в Firebase
+        final_data = {
+            "ai_des_ru": ai_des,
+            "ai_style_ru": ai_style,
+            "analysis": analysis_data,
+            "caption": caption,
+            "channel_id": channel_id,
+            "date": date_timestamp,
+            "file_id": file_id,
+            "post_id": message_id,
+            "status": "ok",
+            "type": "photo"
+        }
+
+        # Используем существующую функцию сохранения
+        save_success = save_art_post(channel_id, message_id, final_data)
+        
+        if save_success:
+            logging.info(f"Background: Пост {message_id} успешно сохранен в базу галереи.")
+        else:
+            logging.error(f"Background: Ошибка записи в Firebase для {message_id}.")
+
+    except Exception as global_e:
+        logging.error(f"Background: Критическая ошибка в фоновой задаче: {global_e}", exc_info=True)
 
