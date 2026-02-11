@@ -4655,28 +4655,34 @@ async def analyze_and_save_background(bot, channel_id, message_id, file_id, capt
         # Сбрасываем указатель байтов перед отправкой в Gemini
         img_byte_arr.seek(0)
         
-        # Загрузка файла в Gemini (временная)
-        gemini_file = None
+        temp_file_path = None
         try:
-            # Создаем временный файл для upload
+            # Создаем временный файл ОДИН РАЗ перед циклом
             with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
                 image.save(temp_file, format="JPEG")
                 temp_file_path = temp_file.name
 
-            gemini_file = client.files.upload(file=pathlib.Path(temp_file_path))
-            
-            # Ждем обработки
-            while gemini_file.state == "PROCESSING":
-                await asyncio.sleep(2)
-                gemini_file = client.files.get(name=gemini_file.name)
-
-            # Запрос к модели
+            # --- Перебор ключей и моделей ---
             for api_key in key_manager.get_keys_to_try():
+                gemini_file = None
                 try:
-                    local_client = genai.Client(api_key=api_key)
+                    # 1. Инициализируем клиент с текущим ключом
+                    client = genai.Client(api_key=api_key)
                     
-                    response = await local_client.aio.models.generate_content(
-                        model=PRIMARY_MODEL, # Или FALLBACK_MODELS[0] если нужно
+                    # 2. Загружаем файл ИМЕННО ЭТИМ клиентом
+                    gemini_file = client.files.upload(file=pathlib.Path(temp_file_path))
+                    
+                    # Ждем обработки файла
+                    while gemini_file.state == "PROCESSING":
+                        await asyncio.sleep(2)
+                        gemini_file = client.files.get(name=gemini_file.name)
+                        
+                    if gemini_file.state == "FAILED":
+                        raise Exception("Gemini File Processing Failed")
+
+                    # 3. Запрос к модели (используем client.aio для асинхронности)
+                    response = await client.aio.models.generate_content(
+                        model=PRIMARY_MODEL,
                         contents=[
                             types.Content(
                                 role="user",
@@ -4688,7 +4694,7 @@ async def analyze_and_save_background(bot, channel_id, message_id, file_id, capt
                         ],
                         config=types.GenerateContentConfig(
                             system_instruction=system_instruction,
-                            response_mime_type="application/json", # Форсируем JSON
+                            response_mime_type="application/json",
                             temperature=0.5
                         )
                     )
@@ -4698,17 +4704,27 @@ async def analyze_and_save_background(bot, channel_id, message_id, file_id, capt
                         parsed = json.loads(raw_json)
                         ai_des = parsed.get("description", "")
                         ai_style = parsed.get("style", "")
+                        
                         await key_manager.set_successful_key(api_key)
-                        break # Успех
+                        logging.info(f"Background: Gemini успешно обработал файл c ключом ...{api_key[-4:]}")
+                        break # Успех, выходим из цикла ключей
+                        
                 except Exception as ex:
-                    logging.warning(f"Background: Gemini error with key ...{api_key[-4:]}: {ex}")
+                    logging.warning(f"Background: Ошибка Gemini с ключом ...{api_key[-4:]}: {ex}")
+                    # Если файл был загружен, но генерация упала, можно попробовать удалить его (опционально)
+                    # Но важнее просто продолжить со следующим ключом
                     continue
                     
         except Exception as e:
-            logging.error(f"Background: Ошибка AI анализа: {e}")
+            logging.error(f"Background: Общая ошибка подготовки файла или AI анализа: {e}")
         finally:
-             if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
+            # Удаляем локальный временный файл
+             if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.remove(temp_file_path)
+                except Exception as del_err:
+                    logging.error(f"Не удалось удалить временный файл: {del_err}")
+
         if str(channel_id) == "-1001479526905":
             channel_id = "anemonn"
         # 4. Сохранение в Firebase
