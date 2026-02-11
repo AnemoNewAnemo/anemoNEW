@@ -2031,7 +2031,7 @@ fetch(`/api/anemone/resolve_image?post_id=${task.postId}${channelParam}`, { sign
                             const words = data.caption.split(' ');
                             let line = '';
                             let lineCount = 0;
-                            const maxLines = 3;
+                            const maxLines = 7;
 
                             for (let n = 0; n < words.length; n++) {
                                 const testLine = line + words[n] + ' ';
