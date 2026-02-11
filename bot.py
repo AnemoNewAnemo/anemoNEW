@@ -439,6 +439,209 @@ async def send_timer_app_button(update, context):
 
 
 
+import httpx
+import logging
+import asyncio
+import random
+import httpx
+from urllib.parse import urlparse, parse_qs  # <--- ЭТОГО НЕ ХВАТАЛО
+# Ссылка на RAW файл (преобразована из вашей ссылки)
+# Настройка логгера (чтобы выводилось в консоль)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+PROXY_URL = "https://raw.githubusercontent.com/Argh94/Proxy-List/main/MTProto.txt"
+
+def normalize_proxy(line):
+    """
+    Превращает ссылку вида tg://proxy?server=... или https://t.me...
+    в формат IP:PORT:SECRET
+    """
+    line = line.strip()
+    if not line:
+        return None
+
+    # Если строка уже похожа на ip:port:secret (простая проверка)
+    # Проверяем, что нет "http" и есть хотя бы 2 двоеточия
+    if "server=" not in line and line.count(':') >= 2 and "://" not in line:
+        return line
+
+    try:
+        # Пытаемся распарсить как URL
+        parsed = urlparse(line)
+        query = parse_qs(parsed.query)
+        
+        # Извлекаем параметры (parse_qs возвращает списки)
+        server = query.get('server', [None])[0]
+        port = query.get('port', [None])[0]
+        secret = query.get('secret', [None])[0]
+
+        if server and port and secret:
+            # Иногда в конце домена бывает точка (например .info.), её лучше убрать для чистоты
+            server = server.rstrip('.')
+            return f"{server}:{port}:{secret}"
+        else:
+            return None
+    except Exception as e:
+        # Для отладки можно раскомментировать, чтобы видеть ошибки парсинга
+        # logger.error(f"Ошибка парсинга строки {line}: {e}")
+        return None
+
+async def fetch_proxies():
+    """Скачивает и нормализует список прокси."""
+    logger.info(f"🚀 [FETCH] Загрузка списка: {PROXY_URL}")
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(PROXY_URL, timeout=10.0)
+            if response.status_code == 200:
+                raw_lines = response.text.splitlines()
+                valid_proxies = []
+                
+                for line in raw_lines:
+                    normalized = normalize_proxy(line)
+                    if normalized:
+                        valid_proxies.append(normalized)
+
+                logger.info(f"✅ [FETCH] Скачано строк: {len(raw_lines)}. Распознано прокси: {len(valid_proxies)}")
+                if valid_proxies:
+                    logger.info(f"📝 [FETCH] Пример: {valid_proxies[0]}")
+                return valid_proxies
+            else:
+                logger.error(f"❌ [FETCH] Ошибка сервера: {response.status_code}")
+        except Exception as e:
+            logger.error(f"❌ [FETCH] Ошибка сети: {e}")
+    return []
+
+async def check_proxy_tcp(proxy_str, timeout=3.0):
+    """
+    Проверяет доступность порта (TCP Connect).
+    """
+    try:
+        parts = proxy_str.rsplit(':', 2)
+        if len(parts) < 3:
+            return None
+        
+        host = parts[0]
+        port = int(parts[1])
+
+        # Убираем скобки IPv6 и лишние точки
+        host = host.replace("[", "").replace("]", "").rstrip('.')
+
+        # Пытаемся подключиться к порту
+        future = asyncio.open_connection(host, port)
+        reader, writer = await asyncio.wait_for(future, timeout=timeout)
+        
+        # Если подключились — закрываем соединение и возвращаем успех
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        
+        logger.info(f"✅ [ALIVE] Живой: {host}:{port}") 
+        return proxy_str
+        
+    except (asyncio.TimeoutError, ConnectionRefusedError, OSError):
+        return None
+    except Exception as e:
+        # logger.debug(f"Ошибка проверки {proxy_str}: {e}")
+        return None
+
+async def get_working_proxies(target_count=20):
+    logger.info("🏁 [START] Поиск рабочих прокси...")
+    all_proxies = await fetch_proxies()
+
+    if not all_proxies:
+        return []
+
+    random.shuffle(all_proxies)
+    
+    # Берем с запасом (например, 300 штук), чтобы найти 20 рабочих
+    check_queue = all_proxies[:300] 
+
+    working_proxies = []
+    batch_size = 50 # Увеличил размер пачки для скорости
+    
+    # Разбиваем на пачки
+    for i in range(0, len(check_queue), batch_size):
+        if len(working_proxies) >= target_count:
+            break
+            
+        batch = check_queue[i : i + batch_size]
+        logger.info(f"🔄 [BATCH] Проверка {i}..{i+len(batch)} из {len(check_queue)}...")
+        
+        tasks = [check_proxy_tcp(p) for p in batch]
+        results = await asyncio.gather(*tasks)
+        
+        for res in results:
+            if res and len(working_proxies) < target_count:
+                if res not in working_proxies:
+                    working_proxies.append(res)
+    
+    logger.info(f"🏁 [FINISH] Найдено: {len(working_proxies)}")
+    return working_proxies
+
+
+def create_keyboard(proxies):
+    keyboard = []
+    row = []
+    
+    for i, proxy_str in enumerate(proxies, 1):
+        try:
+            parts = proxy_str.rsplit(':', 2)
+            if len(parts) >= 3:
+                ip, port, secret = parts[0], parts[1], parts[2]
+                url = f"https://t.me/proxy?server={ip}&port={port}&secret={secret}"
+                button = InlineKeyboardButton(f"Proxy {i}", url=url)
+                row.append(button)
+                
+                if len(row) == 3:
+                    keyboard.append(row)
+                    row = []
+        except Exception:
+            pass
+    
+    if row:
+        keyboard.append(row)
+        
+    keyboard.append([InlineKeyboardButton("🔄 Прислать ещё", callback_data="refresh_proxies")])
+    return InlineKeyboardMarkup(keyboard)
+
+async def send_proxies(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Хендлер команды /proxy или кнопки"""
+    is_callback = False
+    message = None
+    
+    if update.callback_query:
+        is_callback = True
+        query = update.callback_query
+        await query.answer("Загружаю...")
+        message = query.message
+        await message.edit_text("🔍 Ищу живые прокси (парсинг ссылок)...")
+    else:
+        message = update.message
+        await message.reply_text("🔍 Ищу живые прокси (парсинг ссылок)...")
+
+    proxies = await get_working_proxies(20)
+
+    if not proxies:
+        text = "😔 Живых прокси не найдено. Попробуйте позже."
+        reply_markup = None
+    else:
+        text = f"✅ Найдено {len(proxies)} рабочих прокси:"
+        reply_markup = create_keyboard(proxies)
+
+    if is_callback:
+        await message.edit_text(text=text, reply_markup=reply_markup)
+    else:
+        await message.reply_text(text=text, reply_markup=reply_markup)
+
+
+
+
 
 
 
@@ -18153,6 +18356,8 @@ def main() -> None:
     application.add_handler(CommandHandler("vpn", vpn_menu))
     application.add_handler(CommandHandler("vpnconfig", send_subscription))
 
+    application.add_handler(CommandHandler("proxy", send_proxies))
+    application.add_handler(CallbackQueryHandler(send_proxies, pattern="refresh_proxies"))
 
 
     
