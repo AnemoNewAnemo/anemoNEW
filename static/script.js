@@ -74,7 +74,7 @@ const CHUNK_SIZE = 1500;
 const RENDER_DISTANCE = 1;
 const FADE_DISTANCE = 1600;
 // ОПТИМИЗАЦИЯ: Увеличиваем с 2 до 6, так как файлы теперь загружаются быстрее
-const MAX_CONCURRENT_LOADS = 6; 
+const MAX_CONCURRENT_LOADS = 8;  
 const MAX_TEXTURE_SIZE = 512;
 // --- SHADERS (Шейдеры) ---
 
@@ -1896,7 +1896,12 @@ function createPlaceholderTexture() {
     return new THREE.CanvasTexture(c);
 }
 
-// --- ЛОГИКА ЧАНКОВ (Без изменений ядра, но обновлен рендер картин) ---
+
+
+
+// Максимальная дистанция для загрузки (чуть больше дальности видимости)
+const MAX_LOAD_DIST = 2000;
+
 const state = {
     chunks: new Map(),
     targetPos: new THREE.Vector3(0, 0, 1000), 
@@ -1904,29 +1909,42 @@ const state = {
     isDragging: false,
     lastMouse: { x: 0, y: 0 },
     currentChunk: { x: null, y: null, z: null },
+    
+    // Очередь ожидания
     loadQueue: [],
-    activeLoads: 0,
-    // occupied: [], <--- ЭТУ СТРОКУ НУЖНО УДАЛИТЬ
-    // НОВОЕ: Карта активных контроллеров отмены { postId: AbortController }
-    activeControllers: new Map() 
+    // Активные задачи: Map(postId -> { controller, pos, timestamp })
+    activeTasks: new Map() 
 };
 
-// Максимальная дистанция для загрузки (чуть больше дальности видимости)
-const MAX_LOAD_DIST = 2000;
-
-function processLoadQueue() {
-    // 1. ОЧИСТКА ОЧЕРЕДИ ОТ ДАЛЕКИХ ЗАДАЧ
-    // Если пользователь улетел, убираем задачи из очереди ДО того, как они начнутся
-
-
-    if (state.activeLoads >= MAX_CONCURRENT_LOADS || state.loadQueue.length === 0) {
-        if (state.loadQueue.length > 0 && state.activeLoads >= MAX_CONCURRENT_LOADS) {
-            console.warn(`[QUEUE] STALLED? Active limit reached. Active: ${state.activeLoads}, Queue: ${state.loadQueue.length}`);
+// Функция оценки важности задачи (меньше = важнее)
+function getTaskScore(pos, cameraPos, cameraDir, frustum) {
+    const p = new THREE.Vector3(pos[0], pos[1], pos[2]);
+    const dist = p.distanceTo(cameraPos);
+    
+    // Проверка на попадание в камеру
+    const isVisible = frustum.intersectsSphere(new THREE.Sphere(p, 100)); // Радиус сферы проверки
+    
+    if (isVisible) {
+        // Если видно — приоритет равен дистанции (чем ближе, тем важнее)
+        return dist; 
+    } else {
+        // Если не видно — проверяем, спереди ли оно вообще
+        const toItem = new THREE.Vector3().subVectors(p, cameraPos).normalize();
+        const dot = cameraDir.dot(toItem);
+        
+        if (dot > 0.5) { 
+            // Спереди, но далеко или за краем экрана (штраф +10000)
+            return 10000 + dist; 
+        } else {
+            // Сзади (штраф +200000) - самый низкий приоритет
+            return 200000 + dist;
         }
-        return;
     }
+}
 
-    // --- ЛОГИКА ПРИОРИТЕТОВ (сохранена как была) ---
+// Главная функция управления очередью
+function processLoadQueue() {
+    // 1. Подготовка данных камеры для расчетов
     camera.updateMatrixWorld();
     const projScreenMatrix = new THREE.Matrix4();
     projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
@@ -1934,177 +1952,206 @@ function processLoadQueue() {
     frustum.setFromProjectionMatrix(projScreenMatrix);
 
     const cameraDir = new THREE.Vector3();
-    camera.getWorldDirection(cameraDir); 
+    camera.getWorldDirection(cameraDir);
     const cameraPos = camera.position;
 
-    const mappedQueue = state.loadQueue.map((item, index) => {
-        const pos = new THREE.Vector3(item.pos[0], item.pos[1], item.pos[2]);
-        const dist = pos.distanceTo(cameraPos);
-        const isVisible = frustum.intersectsSphere(new THREE.Sphere(pos, 400));
-        let score = isVisible ? dist : (cameraDir.dot(new THREE.Vector3().subVectors(pos, cameraPos).normalize()) > 0.4 ? 100000 + dist : 200000 + dist);
-        return { index, score };
+    // 2. Сортировка очереди ожидания (Пересчитываем приоритеты каждый раз)
+    state.loadQueue.forEach(item => {
+        item.score = getTaskScore(item.pos, cameraPos, cameraDir, frustum);
     });
+    state.loadQueue.sort((a, b) => a.score - b.score);
 
-    mappedQueue.sort((a, b) => a.score - b.score);
-    state.loadQueue = mappedQueue.map(el => state.loadQueue[el.index]);
-    // ---------------------------
+    // 3. АГРЕССИВНАЯ ОТМЕНА (KILL SWITCH)
+    // Если слоты заняты, проверяем, не грузим ли мы мусор
+    if (state.activeTasks.size >= MAX_CONCURRENT_LOADS && state.loadQueue.length > 0) {
+        const bestCandidate = state.loadQueue[0]; // Лучший ожидающий
+        
+        // Ищем худшего активного
+        let worstActiveId = null;
+        let worstActiveScore = -1;
 
-    const task = state.loadQueue.shift();
-    state.activeLoads++;
-    
-    const taskId = task.postId; // Для логов
-    console.log(`[QUEUE] START Task ${taskId} | Active: ${state.activeLoads}`);
+        for (const [id, task] of state.activeTasks) {
+            // Не отменяем задачи, которые начались только что (< 200мс), даем им шанс
+            if (Date.now() - task.startTime < 200) continue;
 
+            const score = getTaskScore(task.pos, cameraPos, cameraDir, frustum);
+            if (score > worstActiveScore) {
+                worstActiveScore = score;
+                worstActiveId = id;
+            }
+        }
+
+        // Если худший активный сильно хуже (разница в очках > 2000), чем лучший ожидающий
+        // Например: Активный сзади (200000), а ожидающий перед носом (100)
+        if (worstActiveId && worstActiveScore > bestCandidate.score + 2000) {
+            console.log(`[LOADER] Preempting task ${worstActiveId} (Score: ${Math.round(worstActiveScore)}) for ${bestCandidate.postId}`);
+            
+            const taskToKill = state.activeTasks.get(worstActiveId);
+            if (taskToKill && taskToKill.controller) {
+                taskToKill.controller.abort(); // Отменяем Fetch
+            }
+            state.activeTasks.delete(worstActiveId);
+            // Слот освободился, идем дальше к запуску
+        }
+    }
+
+    // 4. Запуск новых задач, если есть слоты
+    while (state.activeTasks.size < MAX_CONCURRENT_LOADS && state.loadQueue.length > 0) {
+        const task = state.loadQueue.shift();
+        runTask(task);
+    }
+}
+
+function runTask(task) {
     const controller = new AbortController();
-    state.activeControllers.set(task.postId, controller);
+    const taskId = task.postId;
+    
+    // Регистрируем задачу как активную
+    state.activeTasks.set(taskId, {
+        controller: controller,
+        pos: task.pos,
+        startTime: Date.now()
+    });
 
     const urlParams = new URLSearchParams(window.location.search);
     const customChannel = urlParams.get('channel_id');
     const channelParam = customChannel ? `&channel_id=${customChannel}` : '';
 
-    // Передаем signal в fetch
-fetch(`/api/anemone/resolve_image?post_id=${task.postId}${channelParam}`, { signal: controller.signal })
+    fetch(`/api/anemone/resolve_image?post_id=${taskId}${channelParam}`, { signal: controller.signal })
         .then(r => r.json())
         .then(data => {
             if (data.error === 'access_denied') {
-                console.error(`[QUEUE] ERROR Access Denied for ${taskId}`);
-                const modal = document.getElementById('error-modal');
-                const chanSpan = document.getElementById('err-channel');
-                if(modal && chanSpan) {
-                    chanSpan.innerText = customChannel;
-                    modal.style.display = 'flex';
-                }
                 task.onError();
-                cleanupTask(); // <--- ОБЯЗАТЕЛЬНО ДОБАВИТЬ ЭТО!
-                return; // Желательно выйти из функции
-            } else if (data.found && data.url) {
+                return;
+            }
+            
+            if (data.found && data.url) {
+                // Если задача была отменена пока мы ждали JSON, выходим
+                if (controller.signal.aborted) return;
+
                 const loader = new THREE.ImageLoader();
                 loader.setCrossOrigin('anonymous');
+                
+                // ВАЖНО: ImageLoader в Three.js сложнее отменить, но мы можем проверить сигнал перед стартом
                 loader.load(
                     data.url,
                     (image) => {
-                        console.log(`[QUEUE] IMG LOADED ${taskId}`);
-                        // --- ГЕНЕРАЦИЯ ПОЛАРОИДА С ТЕКСТОМ ---
+                        if (controller.signal.aborted) return; // Проверка перед созданием текстуры
+                        
+                        // --- ГЕНЕРАЦИЯ ПОЛАРОИДА (Ваш код) ---
                         const canvas = document.createElement('canvas');
                         const ctx = canvas.getContext('2d');
-
                         const cardWidth = 512;
                         const borderSide = cardWidth * 0.05;
                         const borderTop = cardWidth * 0.05; 
                         const borderBottom = cardWidth * 0.25;
-                        
                         const imgRatio = image.width / image.height;
                         const drawWidth = cardWidth - (borderSide * 2);
                         const drawHeight = drawWidth / imgRatio;
-
                         const cardHeight = borderTop + drawHeight + borderBottom;
-
                         canvas.width = cardWidth;
                         canvas.height = cardHeight;
-
-                        // 1. Подложка
                         ctx.fillStyle = '#ffffff';
                         ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-                        // 2. Изображение
                         ctx.drawImage(image, borderSide, borderTop, drawWidth, drawHeight);
-
-                        // 3. Дата
                         if (data.date) {
                             ctx.fillStyle = '#888888';
                             ctx.font = '500 14px "Helvetica Neue", Arial, sans-serif';
                             ctx.textAlign = 'left';
                             ctx.fillText(data.date, borderSide, borderTop + drawHeight + 30);
                         }
-
-                        // 4. Подпись
                         if (data.caption) {
                             ctx.fillStyle = '#222222';
                             ctx.font = '400 16px "Helvetica Neue", Arial, sans-serif';
                             ctx.textAlign = 'left';
-                            
                             const textX = borderSide;
                             let textY = borderTop + drawHeight + 55;
                             const maxWidth = cardWidth - (borderSide * 2);
                             const lineHeight = 20;
-
                             const words = data.caption.split(' ');
                             let line = '';
                             let lineCount = 0;
-                            const maxLines = 7;
-
+                            const maxLines = 3;
                             for (let n = 0; n < words.length; n++) {
                                 const testLine = line + words[n] + ' ';
                                 const metrics = ctx.measureText(testLine);
-                                const testWidth = metrics.width;
-                                if (testWidth > maxWidth && n > 0) {
+                                if (metrics.width > maxWidth && n > 0) {
                                     ctx.fillText(line, textX, textY);
                                     line = words[n] + ' ';
                                     textY += lineHeight;
                                     lineCount++;
-                                    if(lineCount >= maxLines) {
-                                        line = line.trim() + '...';
-                                        break;
-                                    }
-                                } else {
-                                    line = testLine;
-                                }
+                                    if(lineCount >= maxLines) { line = line.trim() + '...'; break; }
+                                } else { line = testLine; }
                             }
-                            if (lineCount < maxLines) {
-                                ctx.fillText(line, textX, textY);
-                            }
+                            if (lineCount < maxLines) ctx.fillText(line, textX, textY);
                         }
 
                         const tex = new THREE.CanvasTexture(canvas);
                         const totalRatio = cardWidth / cardHeight;
                         task.onSuccess(tex, totalRatio);
-                        cleanupTask();
+                        
+                        finishTask(taskId);
                     },
                     undefined,
-                    (err) => { 
-                        console.error(`[QUEUE] IMG ERROR ${taskId}`, err);
+                    () => { 
                         task.onError(); 
-                        cleanupTask(); 
+                        finishTask(taskId); 
                     }
                 );
             } else {
-                console.warn(`[QUEUE] NOT FOUND ${taskId}`);
                 task.onError();
-                cleanupTask();
+                finishTask(taskId);
             }
         })
         .catch((err) => {
-            if (err.name === 'AbortError') {
-                console.log(`[QUEUE] ABORTED ${taskId}`);
-            } else {
-                console.error(`[QUEUE] FETCH ERROR ${taskId}`, err);
+            // Игнорируем ошибки отмены
+            if (err.name !== 'AbortError') {
                 task.onError();
             }
-            cleanupTask();
+            finishTask(taskId);
         });
-
-    function cleanupTask() {
-        console.log(`[QUEUE] FINISH Task ${taskId} | Active BEFORE: ${state.activeLoads}`);
-        state.activeControllers.delete(task.postId);
-        state.activeLoads--;
-        console.log(`[QUEUE] FINISH Task ${taskId} | Active AFTER: ${state.activeLoads}`);
-        
-        // Защита от ухода в минус (на всякий случай)
-        if (state.activeLoads < 0) {
-             console.error('[QUEUE] CRITICAL: Active loads negative!');
-             state.activeLoads = 0;
-        }
-        
-        processLoadQueue();
-    }
 }
-// 1. Изменяем queueImageLoad, чтобы принимать позицию (pos)
-function queueImageLoad(postId, pos, onSuccess, onError) {
-    // Сохраняем позицию объекта для расчета приоритета
-    state.loadQueue.push({ postId, pos, onSuccess, onError });
+
+function finishTask(id) {
+    state.activeTasks.delete(id);
+    // Сразу пытаемся взять следующую задачу
     processLoadQueue();
 }
 
+// Добавляем задачу и сразу вызываем обработчик
+function queueImageLoad(postId, pos, onSuccess, onError) {
+    // Проверка дубликатов в очереди
+    if (state.loadQueue.some(t => t.postId === postId)) return;
+    // Проверка дубликатов в активных (уже грузится)
+    if (state.activeTasks.has(postId)) return;
+
+    state.loadQueue.push({ 
+        postId, 
+        pos, 
+        onSuccess, 
+        onError,
+        score: 0 // Будет рассчитано в processLoadQueue
+    });
+    
+    // Дебаунс, чтобы не сортировать 100 раз при генерации чанка
+    if (!state.queueTimeout) {
+        state.queueTimeout = setTimeout(() => {
+            state.queueTimeout = null;
+            processLoadQueue();
+        }, 50);
+    }
+}
+
+// ВАЖНО: Добавьте этот вызов в ваш основной цикл animate(), 
+// чтобы пересчитывать приоритеты когда камера движется
+setInterval(() => {
+    // Если очередь не пуста или есть активные задачи — перепроверяем приоритеты
+    if (state.loadQueue.length > 0 || state.activeTasks.size > 0) {
+        processLoadQueue();
+    }
+}, 500); // Проверка каждые 0.5 сек (достаточно часто для UI, но не грузит CPU)
+
+// --- КОНЕЦ НОВОГО БЛОКА ---
 
 
 // --- ОБНОВЛЕННАЯ ФУНКЦИЯ loadChunk ---
