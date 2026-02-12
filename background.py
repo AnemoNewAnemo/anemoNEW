@@ -355,59 +355,43 @@ def api_get_anemone_chunk():
     except ValueError:
         return jsonify([])
 
-    # 1. Формируем уникальную строку сида
     seed_str = f"{channel_id}_{cx}_{cy}_{cz}"
-    
-    # 2. Генератор
     rng = random.Random(seed_str)
 
-    # 3. ЛОГИКА СФЕРИЧЕСКОГО РАСПРЕДЕЛЕНИЯ
-    # Считаем расстояние от центра (0,0,0) в "чанках"
     dist = math.sqrt(cx**2 + cy**2 + cz**2)
-    
-    # Коэффициент плотности. 
-    # 0.8 - посты стоят плотнее, 1.5 - посты разлетаются шире.
-    # Можно подстроить под себя.
     density_factor = 0.9 
     
-    # Вычисляем, какие ID должны быть в этом радиусе "по идее".
-    # Используем кубическую зависимость (dist^3), чтобы заполнять объем сферы равномерно.
-    # +1 гарантирует, что в центре (dist=0) ID начнутся с 1.
     min_theoretical_id = int((dist * density_factor) ** 3) + 1
     max_theoretical_id = int(((dist + 1.2) * density_factor) ** 3) + 5
     
-    # Определяем режим для этого чанка:
-    # ЯДРО (Core) или ХАОС (Chaos)
     is_core = min_theoretical_id <= max_limit
     
-    # Генерируем объекты
     items_count = rng.randint(2, 4)
     chunk_size = 1500 
     
+    # --- НАСТРОЙКИ ФИЗИКИ ---
+    MIN_DIST = 450 
+    # Безопасный отступ от края чанка. 
+    # Если MIN_DIST=450, то половина это 225. Берем с запасом 250.
+    # Это гарантирует, что карточки из соседних чанков не пересекутся.
+    MARGIN = 260 
+    spawn_limit = (chunk_size / 2) - MARGIN
+
     planes = []
     
     for i in range(items_count):
-        px = rng.uniform(-chunk_size/2, chunk_size/2)
-        py = rng.uniform(-chunk_size/2, chunk_size/2)
-        pz = rng.uniform(-chunk_size/2, chunk_size/2)
+        # Генерируем в безопасной зоне (не на самом краю)
+        px = rng.uniform(-spawn_limit, spawn_limit)
+        py = rng.uniform(-spawn_limit, spawn_limit)
+        pz = rng.uniform(-spawn_limit, spawn_limit)
         scale = rng.uniform(100, 300)
 
-        # === ГЛАВНОЕ ИЗМЕНЕНИЕ ЗДЕСЬ ===
         if is_core:
-            # Мы внутри "изученной вселенной". 
-            # Выдаем ID, который строго привязан к этому расстоянию.
-            # Ограничиваем верхнюю планку max_limit, чтобы не выйти за пределы.
             eff_max = min(max_theoretical_id, max_limit)
-            
-            # Защита: если min > eff_max (крайний случай на границе), берем eff_max
             eff_min = min(min_theoretical_id, eff_max)
-            
             random_msg_id = rng.randint(eff_min, eff_max)
         else:
-            # Мы в "дальнем космосе" (за пределами max_limit).
-            # Генерируем случайные дубликаты из всего доступного пула.
             random_msg_id = rng.randint(1, max_limit)
-        # ===============================
 
         planes.append({
             "id": f"{cx}_{cy}_{cz}_{i}", 
@@ -417,56 +401,59 @@ def api_get_anemone_chunk():
             "rotation": [rng.uniform(-0.2, 0.2), rng.uniform(-0.2, 0.2), 0]
         })
 
-    # --- ВСТАВИТЬ ЭТОТ БЛОК (ЛОГИКА РАЗДВИГАНИЯ) ---
-    # Минимальная дистанция, чтобы карточки не лезли друг на друга.
-    # Так как scale у тебя ~100-300, берем с запасом 450-500.
-    MIN_DIST = 450 
-
-    # Делаем 3 прохода (итерации), чтобы если мы подвинули один объект 
-    # и он наехал на третий, мы это тоже исправили.
-    for _ in range(3):
+    # --- УЛУЧШЕННАЯ ЛОГИКА РАЗДВИГАНИЯ ---
+    # Увеличим число итераций с 3 до 5 для надежности
+    for _ in range(5):
+        # 1. Расталкивание друг от друга
         for i in range(len(planes)):
             for j in range(i + 1, len(planes)):
-                p1 = planes[i]['pos'] # Список [x, y, z]
-                p2 = planes[j]['pos'] # Список [x, y, z]
+                p1 = planes[i]['pos'] 
+                p2 = planes[j]['pos'] 
 
                 dx = p1[0] - p2[0]
                 dy = p1[1] - p2[1]
                 dz = p1[2] - p2[2]
                 
-                dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+                dist_val = math.sqrt(dx*dx + dy*dy + dz*dz)
 
-                # Если дистанция меньше допустимой — раздвигаем
-                if dist < MIN_DIST:
-                    # Защита от деления на ноль (если координаты совпали идеально)
-                    if dist < 0.1:
+                if dist_val < MIN_DIST:
+                    if dist_val < 0.1:
                         dx, dy, dz = 1.0, 0.0, 0.0
-                        dist = 1.0
+                        dist_val = 1.0
                     
-                    # Вычисляем силу толчка (половину перекрытия каждому)
-                    push = (MIN_DIST - dist) / 2.0
+                    push = (MIN_DIST - dist_val) / 2.0
                     
-                    # Нормализуем вектор направления
-                    nx = dx / dist
-                    ny = dy / dist
-                    nz = dz / dist
+                    nx = dx / dist_val
+                    ny = dy / dist_val
+                    nz = dz / dist_val
                     
-                    # Двигаем первый объект ОТ второго
                     p1[0] += nx * push
                     p1[1] += ny * push
                     p1[2] += nz * push
                     
-                    # Двигаем второй объект В ОБРАТНУЮ сторону
                     p2[0] -= nx * push
                     p2[1] -= ny * push
                     p2[2] -= nz * push
-    # -----------------------------------------------
+
+        # 2. НОВОЕ: Удержание внутри границ (Clamping)
+        # Если после толчка карточка вылетела к краю чанка, возвращаем её в безопасную зону.
+        # Это предотвращает коллизии с соседями.
+        for p in planes:
+            pos = p['pos']
+            # Clamp X
+            if pos[0] > spawn_limit: pos[0] = spawn_limit
+            elif pos[0] < -spawn_limit: pos[0] = -spawn_limit
+            # Clamp Y
+            if pos[1] > spawn_limit: pos[1] = spawn_limit
+            elif pos[1] < -spawn_limit: pos[1] = -spawn_limit
+            # Clamp Z
+            if pos[2] > spawn_limit: pos[2] = spawn_limit
+            elif pos[2] < -spawn_limit: pos[2] = -spawn_limit
 
     return jsonify({
         "cx": cx, "cy": cy, "cz": cz,
         "items": planes
     })
-
 @app.route('/api/anemone/add_comment', methods=['POST'])
 def api_add_comment():
     from gpt_helper import add_anemone_comment
