@@ -50,28 +50,35 @@ from datetime import datetime
 
 # --- ЗАМЕНА ФУНКЦИИ get_image_from_telegram ---
 # --- ЗАМЕНА ФУНКЦИИ get_image_from_telegram ---
+# --- ЗАМЕНА ФУНКЦИИ get_image_from_telegram ---
 def get_image_from_telegram(post_id, custom_channel_id=None, req_id="Unknown"):
     t_start = time.time()
     post_id = str(post_id)
     target_channel = custom_channel_id if custom_channel_id else DEFAULT_CHANNEL_ID
     
-    # 0. ПРОВЕРКА БАЗЫ ДАННЫХ (Art Posts)
-    # Импортируем здесь, чтобы избежать циклических импортов
-    from gpt_helper import get_art_post
+    # 0. ПРОВЕРКА БАЗЫ ДАННЫХ
+    # ИЗМЕНЕНИЕ: Используем базу ТОЛЬКО если это основной канал
+    db_data = None
     
-    db_data = get_art_post(target_channel, post_id)
+    # Приводим к общему виду для сравнения
+    is_main_channel = (target_channel.lower() == '@anemonn' or target_channel == 'default_world')
     
+    if is_main_channel:
+        from gpt_helper import get_art_post
+        # Пытаемся достать из базы только для Anemonn
+        db_data = get_art_post('@anemonn', post_id)
+    else:
+        logger.info(f"[{req_id}] Channel {target_channel} is NOT Anemonn. Skipping DB, using Forwarding.")
+
+    # Если нашли в базе (только для Anemonn), возвращаем ссылку
     if db_data:
         logger.info(f"[{req_id}] DB HIT for {post_id}. Using database record.")
         
         # Формируем дату
         timestamp = db_data.get('date', 0)
         date_str = datetime.fromtimestamp(timestamp).strftime('%d.%m.%Y %H:%M') if timestamp else ""
-        
-        # Ссылка на пост (декоративная)
         post_link = f"https://t.me/{target_channel.replace('@', '')}/{post_id}"
-
-        # ВАРИАНТ 1: ЭТО ФОТО
+        
         if db_data.get('type') == 'photo' and db_data.get('file_id'):
             file_id = db_data['file_id']
             
@@ -242,9 +249,6 @@ def get_image_from_telegram(post_id, custom_channel_id=None, req_id="Unknown"):
 
     logger.error(f"[{req_id}] FAILED after retries. Time: {time.time() - t_start:.3f}s")
     return None
-
-
-
 
 @app.route('/api/anemone/resolve_image')
 def api_resolve_image():
