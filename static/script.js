@@ -85,7 +85,7 @@ const CHUNK_SIZE = 1500;
 const RENDER_DISTANCE = 1;
 const FADE_DISTANCE = 1600;
 // ОПТИМИЗАЦИЯ: Увеличиваем с 2 до 6, так как файлы теперь загружаются быстрее
-const MAX_CONCURRENT_LOADS = 4;  
+const MAX_CONCURRENT_LOADS = 6;  
 const MAX_TEXTURE_SIZE = 512;
 // --- SHADERS (Шейдеры) ---
 
@@ -3660,3 +3660,4 @@ window.addEventListener('resize', () => {
 });
 
 initGallery();
+
