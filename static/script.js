@@ -74,7 +74,7 @@ const CHUNK_SIZE = 1500;
 const RENDER_DISTANCE = 1;
 const FADE_DISTANCE = 1600;
 // ОПТИМИЗАЦИЯ: Увеличиваем с 2 до 6, так как файлы теперь загружаются быстрее
-const MAX_CONCURRENT_LOADS = 8;  
+const MAX_CONCURRENT_LOADS = 4;  
 const MAX_TEXTURE_SIZE = 512;
 // --- SHADERS (Шейдеры) ---
 
@@ -174,10 +174,9 @@ const paperFragmentShader = `
     varying float vDist;
     varying vec3 vWorldPos;
 
-    // --- ФУНКЦИЯ РИСОВАНИЯ ЗАГРУЗОЧНОЙ ПОЛОСЫ (Плавное заполнение) ---
+    // --- ФУНКЦИЯ РИСОВАНИЯ ЗАГРУЗОЧНОЙ ПОЛОСЫ ---
     float drawProgressBar(vec2 uv, float totalTime) {
         float result = 0.0;
-        
         float count = 5.0;
         float boxW = 0.04;
         float boxH = 0.012;
@@ -186,54 +185,44 @@ const paperFragmentShader = `
         float totalWidth = (boxW * count) + (gap * (count - 1.0));
         float startX = 0.5 - (totalWidth * 0.5) + (boxW * 0.5);
         float posY = 0.40;
-
-        // Время на один блок (в секундах)
         float timePerBlock = 6.0; 
 
         for(float i = 0.0; i < 5.0; i++) {
             vec2 center = vec2(startX + i * (boxW + gap), posY);
-            
-            // SDF для прямоугольника
             vec2 d = abs(uv - center) - vec2(boxW * 0.5, boxH * 0.5);
             float dist = max(d.x, d.y);
-            
-            // Контур
             float outline = 1.0 - smoothstep(0.0, 0.0015, abs(dist));
             
-            // Логика заполнения
-            // Вычисляем, насколько заполнен ТЕКУЩИЙ блок (от 0.0 до 1.0)
-            // totalTime идет от 0 до 30. 
-            // i=0 -> заполняется с 0 по 6 сек.
-            // i=1 -> заполняется с 6 по 12 сек.
             float blockStart = i * timePerBlock;
             float blockEnd = (i + 1.0) * timePerBlock;
-            
             float progress = clamp((totalTime - blockStart) / (blockEnd - blockStart), 0.0, 1.0);
             
-            // Маска заполнения внутри бокса (слева направо)
-            // uv.x должен быть меньше чем левый край + ширина * прогресс
             float boxLeft = center.x - (boxW * 0.5);
             float fillMask = step(uv.x, boxLeft + (boxW * progress));
-            
-            // Само "тело" блока (внутренность)
             float shape = 1.0 - smoothstep(0.0, 0.002, dist);
-            
             result += max(outline, shape * fillMask);
         }
-        
         return result;
     }
 
     void main() {
-        float shadowStart = 800.0;
-        float shadowEnd = 1600.0;
-        float lightFactor = 1.0 - smoothstep(shadowStart, shadowEnd, vDist);
-        float brightness = 0.15 + (0.85 * lightFactor);
-
+        // Расчет прозрачности по дистанции
         float opacityStart = 1500.0; 
         float opacityEnd = 2200.0;   
         float opacity = 1.0 - smoothstep(opacityStart, opacityEnd, vDist);
         if (opacity <= 0.01) discard; 
+
+        // --- ИЗМЕНЕНИЕ: БЕЛАЯ ОБРАТНАЯ СТОРОНА ---
+        if (!gl_FrontFacing) {
+            gl_FragColor = vec4(1.0, 1.0, 1.0, opacity);
+            return;
+        }
+
+        // Логика яркости для лицевой стороны
+        float shadowStart = 800.0;
+        float shadowEnd = 1600.0;
+        float lightFactor = 1.0 - smoothstep(shadowStart, shadowEnd, vDist);
+        float brightness = 0.15 + (0.85 * lightFactor);
 
         vec3 rgbColor;
 
@@ -242,23 +231,20 @@ const paperFragmentShader = `
         } else {
             vec3 bg = vec3(0.05, 0.09, 0.18); 
             
-            // Точка
             vec2 center = vec2(0.5, 0.5);
             float distToCenter = distance(vUv, center);
             float pulse = 0.5 + 0.5 * sin(uTime * 8.0); 
             float dotRadius = 0.015 + 0.005 * pulse; 
             float centerDot = 1.0 - smoothstep(dotRadius, dotRadius + 0.002, distToCenter);
             
-            // Приоритет (цвет контура полосок)
             vec3 toObj = normalize(vWorldPos - uCamPos);
             float align = dot(toObj, uCamDir); 
             float dist = distance(vWorldPos, uCamPos);
 
             vec3 priorityColor = (align > 0.5 && dist < 1200.0) ? vec3(1.0) : vec3(1.0, 0.85, 0.0);
 
-            // Прогресс (Медленный цикл 30 секунд)
-            float localTime = uTime + uPhase * 5.0; // Phase сдвигает старт
-            float t = mod(localTime, 35.0); // 30 сек заполнение + 5 сек пауза полной полоски
+            float localTime = uTime + uPhase * 5.0; 
+            float t = mod(localTime, 35.0); 
             
             float barsMask = drawProgressBar(vUv, t);
             
@@ -1901,19 +1887,34 @@ function createPlaceholderTexture() {
 
 // Максимальная дистанция для загрузки (чуть больше дальности видимости)
 const MAX_LOAD_DIST = 2000;
-
+let isStartupMode = true;
+setTimeout(() => { 
+    isStartupMode = false; 
+    console.log("[LOADER] Startup mode ended. Kill switch armed.");
+}, 10000); // 10 секунд "тишины" на старте
 const state = {
     chunks: new Map(),
     targetPos: new THREE.Vector3(0, 0, 1000), 
     currentPos: new THREE.Vector3(0, 0, 1000), 
     isDragging: false,
+    isLooking: false, // Флаг для правой кнопки мыши
     lastMouse: { x: 0, y: 0 },
     currentChunk: { x: null, y: null, z: null },
     
-    // Очередь ожидания
+    // Параметры для клавиатуры
+    keys: { w: false, a: false, s: false, d: false, up: false, down: false, left: false, right: false },
+    
+    // Параметры для наклона камеры (Look)
+    look: {
+        targetX: 0, // Yaw (Влево-вправо)
+        targetY: 0, // Pitch (Вверх-вниз)
+        currentX: 0, 
+        currentY: 0
+    },
+
     loadQueue: [],
-    // Активные задачи: Map(postId -> { controller, pos, timestamp })
-    activeTasks: new Map() 
+    activeTasks: new Map(),
+    queueTimeout: null
 };
 
 // Функция оценки важности задачи (меньше = важнее)
@@ -1944,7 +1945,7 @@ function getTaskScore(pos, cameraPos, cameraDir, frustum) {
 
 // Главная функция управления очередью
 function processLoadQueue() {
-    // 1. Подготовка данных камеры для расчетов
+    // 1. Подготовка данных
     camera.updateMatrixWorld();
     const projScreenMatrix = new THREE.Matrix4();
     projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
@@ -1955,63 +1956,83 @@ function processLoadQueue() {
     camera.getWorldDirection(cameraDir);
     const cameraPos = camera.position;
 
-    // 2. Сортировка очереди ожидания (Пересчитываем приоритеты каждый раз)
+    // 2. Сортировка очереди (пересчитываем приоритеты)
     state.loadQueue.forEach(item => {
         item.score = getTaskScore(item.pos, cameraPos, cameraDir, frustum);
     });
     state.loadQueue.sort((a, b) => a.score - b.score);
 
     // 3. АГРЕССИВНАЯ ОТМЕНА (KILL SWITCH)
-    // Если слоты заняты, проверяем, не грузим ли мы мусор
-    if (state.activeTasks.size >= MAX_CONCURRENT_LOADS && state.loadQueue.length > 0) {
-        const bestCandidate = state.loadQueue[0]; // Лучший ожидающий
+    // ИЗМЕНЕНИЕ: Не используем Kill Switch в режиме старта (isStartupMode)
+    if (!isStartupMode && state.activeTasks.size >= MAX_CONCURRENT_LOADS && state.loadQueue.length > 0) {
+        const bestCandidate = state.loadQueue[0]; 
         
-        // Ищем худшего активного
         let worstActiveId = null;
         let worstActiveScore = -1;
 
+        // Ищем кандидата на убийство
         for (const [id, task] of state.activeTasks) {
-            // Не отменяем задачи, которые начались только что (< 200мс), даем им шанс
-            if (Date.now() - task.startTime < 200) continue;
+            // Не убиваем задачи, которые живут меньше 2 секунд
+            if (Date.now() - task.startTime < 2000) continue;
 
-            const score = getTaskScore(task.pos, cameraPos, cameraDir, frustum);
-            if (score > worstActiveScore) {
-                worstActiveScore = score;
+            // Пересчитываем скор для активной задачи
+            const currentScore = getTaskScore(task.pos, cameraPos, cameraDir, frustum);
+            
+            if (currentScore > worstActiveScore) {
+                worstActiveScore = currentScore;
                 worstActiveId = id;
             }
         }
 
-        // Если худший активный сильно хуже (разница в очках > 2000), чем лучший ожидающий
-        // Например: Активный сзади (200000), а ожидающий перед носом (100)
-        if (worstActiveId && worstActiveScore > bestCandidate.score + 2000) {
-            console.log(`[LOADER] Preempting task ${worstActiveId} (Score: ${Math.round(worstActiveScore)}) for ${bestCandidate.postId}`);
-            
+        // Логика отмены: убиваем только если выигрыш в приоритете существенный
+        if (worstActiveId && worstActiveScore > bestCandidate.score + 3000) {
+            console.warn(`[LOADER KILL] Aborting ${worstActiveId} for ${bestCandidate.postId}`);
             const taskToKill = state.activeTasks.get(worstActiveId);
             if (taskToKill && taskToKill.controller) {
-                taskToKill.controller.abort(); // Отменяем Fetch
+                taskToKill.controller.abort();
             }
-            state.activeTasks.delete(worstActiveId);
-            // Слот освободился, идем дальше к запуску
+            return; 
         }
     }
 
-    // 4. Запуск новых задач, если есть слоты
+    // 4. Запуск новых задач
     while (state.activeTasks.size < MAX_CONCURRENT_LOADS && state.loadQueue.length > 0) {
         const task = state.loadQueue.shift();
         runTask(task);
     }
 }
 
+// --- ЗАМЕНИТЬ ФУНКЦИЮ runTask ЦЕЛИКОМ ---
 function runTask(task) {
     const controller = new AbortController();
     const taskId = task.postId;
     
-    // Регистрируем задачу как активную
+    // УВЕЛИЧЕНО до 20 секунд (было 8000), чтобы избежать сброса на старте
+    const safetyTimeout = setTimeout(() => {
+        if (state.activeTasks.has(taskId)) {
+            const t = state.activeTasks.get(taskId);
+            console.warn(`[WATCHDOG] Force killing stuck task: ${taskId}`);
+            
+            controller.abort();
+            if (task.onStatus) task.onStatus('TIMEOUT', '#ff3333');
+            
+            // ВАЖНО: Вызываем onError, чтобы удалить меш со сцены
+            if (t && t.onError) t.onError();
+            
+            finishTask(taskId);
+        }
+    }, 20000);
+
+    // Регистрируем задачу + СОХРАНЯЕМ onError
     state.activeTasks.set(taskId, {
         controller: controller,
         pos: task.pos,
-        startTime: Date.now()
+        startTime: Date.now(),
+        timeoutId: safetyTimeout,
+        onError: task.onError // <--- ДОБАВЛЕНО: сохраняем коллбек ошибки
     });
+
+    if (task.onStatus) task.onStatus(`API REQ: ${taskId}`, '#ffff00');
 
     const urlParams = new URLSearchParams(window.location.search);
     const customChannel = urlParams.get('channel_id');
@@ -2021,24 +2042,35 @@ function runTask(task) {
         .then(r => r.json())
         .then(data => {
             if (data.error === 'access_denied') {
-                task.onError();
+                if (task.onStatus) task.onStatus('ERR: ACCESS DENIED', '#ff0000');
+                task.onError(); 
+                finishTask(taskId); 
                 return;
             }
             
             if (data.found && data.url) {
-                // Если задача была отменена пока мы ждали JSON, выходим
                 if (controller.signal.aborted) return;
+
+                if (task.onStatus) task.onStatus('LOADING IMG...', '#00ffff');
 
                 const loader = new THREE.ImageLoader();
                 loader.setCrossOrigin('anonymous');
-                
-                // ВАЖНО: ImageLoader в Three.js сложнее отменить, но мы можем проверить сигнал перед стартом
+                const imgTimeout = setTimeout(() => {
+                    if (controller.signal.aborted) return;
+                    console.warn(`[IMG TIMEOUT] ${taskId} took too long to decode.`);
+                    if (task.onStatus) task.onStatus('IMG TIMEOUT', '#ff0000');
+                    task.onError(); // Удаляем пустышку
+                    finishTask(taskId);
+                }, 15000); // 15 секунд на саму картинку                
                 loader.load(
                     data.url,
                     (image) => {
-                        if (controller.signal.aborted) return; // Проверка перед созданием текстуры
+                        clearTimeout(imgTimeout); // <--- ОТМЕНЯЕМ ТАЙМАУТ ПРИ УСПЕХЕ
+                        if (controller.signal.aborted) return;
                         
-                        // --- ГЕНЕРАЦИЯ ПОЛАРОИДА (Ваш код) ---
+                        if (task.onStatus) task.onStatus('GENERATING...', '#00ff00');
+                        
+                        // --- ГЕНЕРАЦИЯ ПОЛАРОИДА ---
                         const canvas = document.createElement('canvas');
                         const ctx = canvas.getContext('2d');
                         const cardWidth = 512;
@@ -2049,11 +2081,13 @@ function runTask(task) {
                         const drawWidth = cardWidth - (borderSide * 2);
                         const drawHeight = drawWidth / imgRatio;
                         const cardHeight = borderTop + drawHeight + borderBottom;
+                        
                         canvas.width = cardWidth;
                         canvas.height = cardHeight;
                         ctx.fillStyle = '#ffffff';
                         ctx.fillRect(0, 0, canvas.width, canvas.height);
                         ctx.drawImage(image, borderSide, borderTop, drawWidth, drawHeight);
+                        
                         if (data.date) {
                             ctx.fillStyle = '#888888';
                             ctx.font = '500 14px "Helvetica Neue", Arial, sans-serif';
@@ -2088,36 +2122,62 @@ function runTask(task) {
 
                         const tex = new THREE.CanvasTexture(canvas);
                         const totalRatio = cardWidth / cardHeight;
-                        task.onSuccess(tex, totalRatio);
                         
+                        if (task.onStatus) task.onStatus(`OK: ${image.width}x${image.height}`, '#00ff00');
+                        
+                        task.onSuccess(tex, totalRatio);
                         finishTask(taskId);
-                    },
-                    undefined,
-                    () => { 
-                        task.onError(); 
-                        finishTask(taskId); 
-                    }
-                );
+                            },
+                            undefined, // progress
+                            (err) => {
+                                clearTimeout(imgTimeout); // <--- ОТМЕНЯЕМ ТАЙМАУТ ПРИ ОШИБКЕ
+                                console.error(`[IMG ERROR] ${taskId}`, err);
+                                if (task.onStatus) task.onStatus('IMG ERR', '#ff0000');
+                                task.onError();
+                                finishTask(taskId);
+                            }
+                        );
             } else {
-                task.onError();
+                if (task.onStatus) task.onStatus('API: NOT FOUND', '#ff0000');
+                
+                // Передаем true (isFatal), чтобы PostRecovery сразу заменил ID,
+                // не тратя время на 2 повторные попытки того, чего нет.
+                task.onError(true); 
+                
                 finishTask(taskId);
             }
         })
         .catch((err) => {
-            // Игнорируем ошибки отмены
-            if (err.name !== 'AbortError') {
-                task.onError();
+            if (err.name === 'AbortError') {
+                console.warn(`[TASK ABORTED] ${taskId} was aborted.`);
+                if (task.onStatus) task.onStatus('ABORTED (PRIORITY)', '#ffaa00');
+            } else {
+                console.error(`[TASK ERROR] ${taskId} failed:`, err);
+                if (task.onStatus) task.onStatus(`FETCH ERR: ${err.message}`, '#ff0000');
+                task.onError(); // Удаляем объект только при реальной ошибке
             }
             finishTask(taskId);
         });
-}
-
+} // Конец функции runTask
 function finishTask(id) {
-    state.activeTasks.delete(id);
-    // Сразу пытаемся взять следующую задачу
-    processLoadQueue();
-}
+    // Безопасное получение
+    if (!state.activeTasks.has(id)) {
+        // Если задачи уже нет, просто запускаем очередь дальше (на всякий случай)
+        // Делаем это асинхронно, чтобы избежать переполнения стека
+        setTimeout(processLoadQueue, 0); 
+        return;
+    }
 
+    const task = state.activeTasks.get(id);
+    if (task && task.timeoutId) {
+        clearTimeout(task.timeoutId); // Убираем таймер
+    }
+    
+    state.activeTasks.delete(id);
+    
+    // ВАЖНО: Небольшая задержка перед следующим, чтобы дать браузеру выдохнуть
+    setTimeout(processLoadQueue, 10);
+}
 // Добавляем задачу и сразу вызываем обработчик
 function queueImageLoad(postId, pos, onSuccess, onError) {
     // Проверка дубликатов в очереди
@@ -2145,11 +2205,42 @@ function queueImageLoad(postId, pos, onSuccess, onError) {
 // ВАЖНО: Добавьте этот вызов в ваш основной цикл animate(), 
 // чтобы пересчитывать приоритеты когда камера движется
 setInterval(() => {
-    // Если очередь не пуста или есть активные задачи — перепроверяем приоритеты
-    if (state.loadQueue.length > 0 || state.activeTasks.size > 0) {
-        processLoadQueue();
+    // Если очередь переполнена, не вмешиваемся, даем ей разгрестись
+    if (state.loadQueue.length > 5 || state.activeTasks.size >= MAX_CONCURRENT_LOADS) return;
+
+    // Сканируем все загруженные чанки
+    let restartedCount = 0;
+    
+    state.chunks.forEach(chunk => {
+        if (!chunk.group) return;
+        
+        chunk.group.traverse(obj => {
+            if (obj.isMesh && obj.userData && obj.userData.reload) {
+                // Проверяем: это заглушка? (hasTexture == false)
+                const uniforms = obj.material.uniforms;
+                if (uniforms && uniforms.hasTexture && !uniforms.hasTexture.value) {
+                    
+                    const pid = obj.userData.postId;
+                    
+                    // Проверяем: грузится ли оно прямо сейчас?
+                    const isQueued = state.loadQueue.some(t => t.postId === pid);
+                    const isActive = state.activeTasks.has(pid);
+                    
+                    // Если это заглушка И она нигде не числится в работе — она зависла.
+                    if (!isQueued && !isActive) {
+                        // ПЕРЕЗАПУСКАЕМ!
+                        obj.userData.reload();
+                        restartedCount++;
+                    }
+                }
+            }
+        });
+    });
+
+    if (restartedCount > 0) {
+        console.log(`🐕 Watchdog: Restarted ${restartedCount} stuck placeholders.`);
     }
-}, 500); // Проверка каждые 0.5 сек (достаточно часто для UI, но не грузит CPU)
+}, 2000); // Проверка каждые 2 секунды
 
 // --- КОНЕЦ НОВОГО БЛОКА ---
 
@@ -2220,20 +2311,65 @@ const globalUniforms = {
     uCamDir: { value: new THREE.Vector3() }  // <--- НОВОЕ
 };
 
+
+const PostRecovery = {
+    // Хранит кол-во ошибок для каждого ID: { 101: 1, 101: 2, ... }
+    failures: new Map(),
+    // Кэш замен, чтобы не пересчитывать (оптимизация)
+    replacements: new Map(),
+    // Максимум ID в вашей базе (для формулы математического кольца)
+    MAX_ID: 8509, 
+    // Лимит попыток перед заменой
+    RETRY_LIMIT: 2, 
+
+    /**
+     * Возвращает True, если нужно попробовать этот ID еще раз.
+     * Возвращает False, если пора менять ID.
+     */
+    registerFailure: function(id) {
+        const current = this.failures.get(id) || 0;
+        const next = current + 1;
+        this.failures.set(id, next);
+        
+        // Если ошибок меньше лимита - пробуем снова этот же ID
+        return next <= this.RETRY_LIMIT;
+    },
+
+    /**
+     * Детерминированная магия.
+     * Вычисляет "следующий" ID на основе "плохого" ID.
+     * Формула всегда выдает один и тот же результат для одного и того же входа.
+     */
+    getReplacement: function(badId) {
+        // Если мы уже знаем замену, возвращаем её
+        if (this.replacements.has(badId)) {
+            return this.replacements.get(badId);
+        }
+
+        // Псевдо-случайный скачок (Linear Congruential Generator)
+        // Используем простые числа для хорошего разброса, чтобы не попадать в соседние (возможно тоже удаленные) ID
+        // Формула: (ID * Большое_Простое_Число + Смещение) % Макс_ID
+        let nextId = (badId * 48271 + 1) % this.MAX_ID;
+        
+        if (nextId === 0) nextId = 1; // ID не может быть 0
+        if (nextId === badId) nextId += 1; // Защита от самозамыкания
+
+        // Запоминаем связь "Плохой -> Новый"
+        this.replacements.set(badId, nextId);
+        return nextId;
+    }
+};
+
+
 function createHangingArt(group, data, chunkKey) {
     const baseScale = data.scale[0] * 1.5; 
     const geometry = currentPaperGeometry;
-
-    // Генерируем уникальный сид для этого объекта
-    const objSeed = cyrb128(data.id || Math.random().toString()); 
-    
+    const objSeed = cyrb128(data.id || Math.random().toString());
     const phase = seededRandom(objSeed) * 10;
     const swaySpeed = 0.5 + seededRandom(objSeed + 1) * 0.5;
-
-    // Вектор текущей позиции - БЕЗ СМЕЩЕНИЙ И КОЛЛИЗИЙ
-    // Мы доверяем координатам с сервера
+    
     const pos = new THREE.Vector3(data.pos[0], data.pos[1] + (baseScale / 2), data.pos[2]);
-
+    
     const material = new THREE.ShaderMaterial({
         vertexShader: paperVertexShader,
         fragmentShader: paperFragmentShader,
@@ -2257,39 +2393,90 @@ function createHangingArt(group, data, chunkKey) {
     mesh.renderOrder = 5;
     mesh.position.copy(pos);
     mesh.scale.set(baseScale, baseScale, baseScale); 
-    mesh.frustumCulled = true; 
+    mesh.frustumCulled = true;
+
+    // Сохраняем ID поста, чтобы Watchdog мог проверить статус
+    mesh.userData.postId = data.post_id; 
 
     const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.3 });
     const line = new THREE.Line(commonLineGeometry, lineMat);
     mesh.add(line);
-
     group.add(mesh);
 
-    queueImageLoad(data.post_id, data.pos, (tex, ratio) => {
-        tex.minFilter = THREE.LinearFilter;
-        tex.generateMipmaps = false;
-        renderer.initTexture(tex); 
-        
-        material.uniforms.map.value = tex;
-        material.uniforms.hasTexture.value = true;
-        material.uniforms.uAspectRatio.value = ratio; 
+    // --- ЛОГИКА ЗАГРУЗКИ (ВЫНЕСЕНА В ФУНКЦИЮ) ---
+    const startLoading = () => {
+        // Берем ID из userData. Важно брать именно оттуда, так как мы будем его менять!
+        const currentPostId = mesh.userData.postId;
 
-        let scaleX = 1;
-        let scaleY = 1;
-        if (ratio > 1) { 
-            scaleX = ratio;
-        } else {
-            scaleY = 1 / ratio;
-        }
-        material.uniforms.uImageScale.value.set(scaleX, scaleY);
-        
-    }, () => { 
-        group.remove(mesh); 
-        material.dispose();
-        if(material.uniforms.map.value && material.uniforms.map.value.dispose) {
-            material.uniforms.map.value.dispose();
-        }
-    });
+        queueImageLoad(currentPostId, data.pos, 
+            // onSuccess
+            (tex, ratio) => {
+                // Если успешно загрузилось - очищаем счетчик ошибок для этого ID (на всякий случай)
+                if (PostRecovery.failures.has(currentPostId)) {
+                    PostRecovery.failures.delete(currentPostId);
+                }
+
+                tex.minFilter = THREE.LinearFilter;
+                tex.generateMipmaps = false;
+                renderer.initTexture(tex); 
+                
+                if (mesh.material) { 
+                    mesh.material.uniforms.map.value = tex;
+                    mesh.material.uniforms.hasTexture.value = true;
+                    mesh.material.uniforms.uAspectRatio.value = ratio; 
+
+                    let scaleX = 1, scaleY = 1;
+                    if (ratio > 1) scaleX = ratio;
+                    else scaleY = 1 / ratio;
+                    
+                    mesh.material.uniforms.uImageScale.value.set(scaleX, scaleY);
+                    
+                    // ВАЖНО: Обновляем текст/описание в userData, если оно пришло с сервера
+                    // (Если ваша функция queueImageLoad возвращает метаданные, их стоит тут обновить)
+                }
+            }, 
+            // onError
+            (isFatal = false) => { 
+                // 1. Проверяем фатальность (например, 403 Forbidden или явный 404 от API)
+                // Или просто считаем попытки
+                const shouldRetrySame = PostRecovery.registerFailure(currentPostId);
+
+                if (shouldRetrySame && !isFatal) {
+                    // СЦЕНАРИЙ 1: Просто сетевой сбой, пробуем тот же ID еще раз
+                    console.warn(`[ART] Retry ${PostRecovery.failures.get(currentPostId)}/2 for ID ${currentPostId}`);
+                    // Оставляем как есть, Watchdog перезапустит или можно вызвать startLoading() через таймаут
+                } else {
+                    // СЦЕНАРИЙ 2: ID мертв (попытки исчерпаны или фатальная ошибка)
+                    const newId = PostRecovery.getReplacement(currentPostId);
+                    
+                    console.warn(`[RECOVERY] 💀 ID ${currentPostId} is dead. Swapping to -> ${newId}`);
+
+                    // А. Меняем ID внутри объекта
+                    mesh.userData.postId = newId;
+
+                    // Б. Сбрасываем счетчик для НОВОГО ID (он чист перед законом)
+                    // (Старый ID останется в памяти failures, что предотвратит повторное использование, если мы наткнемся на него снова)
+                    
+                    // В. Меняем "Seed" для анимации покачивания (опционально), 
+                    // чтобы визуально карточка чуть изменилась и не казалось, что она просто зависла
+                    const newSeed = cyrb128(newId.toString());
+                    if(mesh.material.uniforms.uPhase) {
+                        mesh.material.uniforms.uPhase.value = seededRandom(newSeed) * 10;
+                    }
+
+                    // Г. Немедленно запускаем загрузку нового ID
+                    // Используем setTimeout, чтобы разорвать стек вызовов
+                    setTimeout(startLoading, 100);
+                }
+            }
+        );
+    };
+
+    // Сохраняем функцию перезапуска в меш
+    mesh.userData.reload = startLoading;
+
+    // Запускаем первую попытку
+    startLoading();
 }
 
 function unloadChunk(key) {
@@ -2372,6 +2559,33 @@ function getPinchDistance(e) {
     return Math.sqrt(dx * dx + dy * dy);
 }
 
+
+
+window.addEventListener('keydown', (e) => {
+    switch(e.code) {
+        case 'KeyW': state.keys.w = true; break;
+        case 'KeyS': state.keys.s = true; break;
+        case 'KeyA': state.keys.a = true; break;
+        case 'KeyD': state.keys.d = true; break;
+        case 'ArrowUp': state.keys.up = true; break;
+        case 'ArrowDown': state.keys.down = true; break;
+        case 'ArrowLeft': state.keys.left = true; break;
+        case 'ArrowRight': state.keys.right = true; break;
+    }
+});
+
+window.addEventListener('keyup', (e) => {
+    switch(e.code) {
+        case 'KeyW': state.keys.w = false; break;
+        case 'KeyS': state.keys.s = false; break;
+        case 'KeyA': state.keys.a = false; break;
+        case 'KeyD': state.keys.d = false; break;
+        case 'ArrowUp': state.keys.up = false; break;
+        case 'ArrowDown': state.keys.down = false; break;
+        case 'ArrowLeft': state.keys.left = false; break;
+        case 'ArrowRight': state.keys.right = false; break;
+    }
+});
 // 2. Начало касания
 window.addEventListener('touchstart', (e) => {
     // Если касание двумя пальцами — инициализируем щипок
@@ -2437,27 +2651,52 @@ window.addEventListener('set-navigation-target', (e) => {
     console.log(`New Target Set: ${x}, ${y}, ${z}`);
 });
 
+window.addEventListener('contextmenu', e => e.preventDefault());
+
 window.addEventListener('mousedown', e => { 
-    // Если клик по интерфейсу — выходим, не запуская драг
     if (isUIInteraction(e)) return;
 
-    state.isDragging = true; 
-    state.lastMouse = { x: e.clientX, y: e.clientY }; 
-    document.body.style.cursor = 'grabbing'; 
+    // Левая кнопка (0) - Перемещение (Drag)
+    if (e.button === 0) {
+        state.isDragging = true; 
+        state.lastMouse = { x: e.clientX, y: e.clientY }; 
+        document.body.style.cursor = 'grabbing'; 
+    }
+    
+    // Правая кнопка (2) - Осмотр (Look)
+    if (e.button === 2) {
+        state.isLooking = true;
+        document.body.style.cursor = 'all-scroll';
+    }
 });
 
 window.addEventListener('mouseup', () => { 
     state.isDragging = false; 
+    state.isLooking = false; // При отпускании камера начнет возвращаться в центр
     document.body.style.cursor = 'default'; 
 });
 
 window.addEventListener('mousemove', e => {
-    if (!state.isDragging) return;
-    const dx = e.clientX - state.lastMouse.x;
-    const dy = e.clientY - state.lastMouse.y;
-    state.targetPos.x -= dx * 2.5;
-    state.targetPos.y += dy * 2.5; 
-    state.lastMouse = { x: e.clientX, y: e.clientY };
+    // Логика перетаскивания (Pan) - ЛКМ
+    if (state.isDragging) {
+        const dx = e.clientX - state.lastMouse.x;
+        const dy = e.clientY - state.lastMouse.y;
+        state.targetPos.x -= dx * 2.5;
+        state.targetPos.y += dy * 2.5; 
+        state.lastMouse = { x: e.clientX, y: e.clientY };
+    }
+
+    // Логика осмотра (Look) - ПКМ
+    if (state.isLooking) {
+        const sensitivity = 0.003;
+        // Инвертируем или нет - зависит от предпочтений, обычно так:
+        state.look.targetX -= e.movementX * sensitivity; 
+        state.look.targetY -= e.movementY * sensitivity;
+
+        // Ограничиваем угол наклона вверх/вниз (чтобы не сломать шею)
+        const maxAngle = Math.PI / 4; // 45 градусов
+        state.look.targetY = Math.max(-maxAngle, Math.min(maxAngle, state.look.targetY));
+    }
 });
 
 window.addEventListener('wheel', e => { 
@@ -2830,26 +3069,97 @@ window.addEventListener('toggle-pause', (e) => {
     }
 });
 
+
+// Глобальный дебаггер для консоли браузера
+window.AnemoneDebug = {
+    // 1. Посмотреть состояние очереди
+    status: () => {
+        console.group("🕵️ ANEMONE LOADER STATUS");
+        console.log(`Queue Pending: ${state.loadQueue.length}`);
+        console.log(`Active Tasks:  ${state.activeTasks.size} / ${MAX_CONCURRENT_LOADS}`);
+        console.log(`Startup Mode:  ${isStartupMode}`);
+        
+        if (state.activeTasks.size > 0) {
+            console.log("%c--- STUCK TASKS details ---", "color: orange; font-weight: bold;");
+            state.activeTasks.forEach((task, id) => {
+                const duration = ((Date.now() - task.startTime) / 1000).toFixed(1);
+                console.log(`🆔 ${id} | ⏱️ ${duration}s | 📍 ${task.pos}`);
+            });
+        }
+        console.groupEnd();
+    },
+
+    // 2. Принудительный пинок очереди (если зависла)
+    kick: () => {
+        console.warn("👊 Kicking the queue...");
+        processLoadQueue();
+    },
+
+    // 3. Жесткий сброс (если ничего не помогает)
+    flush: () => {
+        console.error("🧨 FLUSHING ALL TASKS");
+        state.activeTasks.forEach((t) => {
+            if (t.controller) t.controller.abort();
+        });
+        state.activeTasks.clear();
+        processLoadQueue();
+    }
+};
+
+// Авто-лог при старте, если через 5 секунд всё еще висит
+setTimeout(() => {
+    if (state.activeTasks.size > 0 && state.activeTasks.size === MAX_CONCURRENT_LOADS) {
+        console.error("⚠️ POTENTIAL DEADLOCK DETECTED AT STARTUP");
+        window.AnemoneDebug.status();
+    }
+}, 5000);
+
+
 function animate() {
     requestAnimationFrame(animate);
-    
-    // <--- 3. Если пауза, выходим из функции (ничего не считаем, не рендерим)
     if (isRenderPaused) return;
 
     frameCount++; 
-
-    // НОВОЕ: Проверка активных загрузок на дальность
-    if (state.activeLoads > 0 && frameCount % 30 === 0) { // Теперь frameCount существует
-        const camPos = camera.position;
-        // Логика очистки (если нужна)
-    }
-
-    // УДАЛЕНО: Второй вызов requestAnimationFrame(animate); (он был лишним и вызывал бы лаги)
-    
     const dt = clock.getDelta();
     const time = clock.getElapsedTime();
 
-    // Плавное движение камеры
+    // --- НОВОЕ: Обработка клавиатуры ---
+    const moveSpeed = 15.0; 
+    
+    // Получаем векторы направления камеры
+    const forward = new THREE.Vector3();
+    camera.getWorldDirection(forward); // Вектор "вперед" (куда смотрим)
+    
+    const right = new THREE.Vector3();
+    right.crossVectors(forward, camera.up).normalize(); // Вектор "вправо"
+
+    // Движение Вперед/Назад (включая высоту)
+    if (state.keys.w || state.keys.up) state.targetPos.addScaledVector(forward, moveSpeed);
+    if (state.keys.s || state.keys.down) state.targetPos.addScaledVector(forward, -moveSpeed);
+    
+    // Движение Влево/Вправо (стрейф)
+    if (state.keys.d || state.keys.right) state.targetPos.addScaledVector(right, moveSpeed);
+    if (state.keys.a || state.keys.left) state.targetPos.addScaledVector(right, -moveSpeed);
+
+    // --- НОВОЕ: Интерполяция вращения камеры ---
+    // Если мы не смотрим (не зажата ПКМ), цель плавно возвращается в 0
+    if (!state.isLooking) {
+        state.look.targetX *= 0.9; // Плавное затухание к центру
+        state.look.targetY *= 0.9;
+    }
+
+    // Lerp текущего угла к целевому (сглаживание рывков мыши)
+    const lookSmoothness = 0.2;
+    state.look.currentX += (state.look.targetX - state.look.currentX) * lookSmoothness;
+    state.look.currentY += (state.look.targetY - state.look.currentY) * lookSmoothness;
+
+    // Применяем вращение к камере
+    // rotation.y - поворот влево/вправо
+    // rotation.x - наклон вверх/вниз
+    camera.rotation.set(state.look.currentY, state.look.currentX, 0);
+
+
+    // Плавное движение камеры (существующий код)
     state.currentPos.lerp(state.targetPos, 0.08);
     camera.position.copy(state.currentPos);
     
