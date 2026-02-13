@@ -401,16 +401,32 @@ def get_art_post(channel_id, post_id):
         return None
 
 
+
+# Глобальные переменные кэша
 _ALL_POSTS_CACHE = None
 _LAST_CACHE_UPDATE = 0
 
-def get_all_art_posts_cached(channel_id="@anemonn"):
+def get_all_art_posts_cached(channel_id):
     global _ALL_POSTS_CACHE, _LAST_CACHE_UPDATE
 
+    # 1. Нормализация ID канала
+    if channel_id == 'default_world':
+        channel_id = '@anemonn'
+    
+    # 2. ВАЖНОЕ ИЗМЕНЕНИЕ: Если это не anemonn, мы не используем базу вообще.
+    # Возвращаем пустой список, чтобы логика дальше поняла, что базы нет.
+    if channel_id != '@anemonn':
+        return []
+
+    # --- Дальше стандартная логика для anemonn ---
     current_time = time.time()
 
     if _ALL_POSTS_CACHE is None or (current_time - _LAST_CACHE_UPDATE) > 300:
         try:
+            if 'db' not in globals():
+                logging.error("CRITICAL: 'db' variable is not found!")
+                return []
+
             chan_key = channel_id.replace('@', '')
             ref = db.reference(f'art_posts/{chan_key}')
             data = ref.get()
@@ -420,24 +436,58 @@ def get_all_art_posts_cached(channel_id="@anemonn"):
             if isinstance(data, dict):
                 for pid, pdata in data.items():
                     if isinstance(pdata, dict):
-                        pdata['post_id'] = int(pid)
-                        posts_list.append(pdata)
-
+                        try:
+                            pdata['post_id'] = int(pid)
+                            posts_list.append(pdata)
+                        except ValueError:
+                            continue 
             elif isinstance(data, list):
                 for idx, pdata in enumerate(data):
-                    if isinstance(pdata, dict):
+                    if isinstance(pdata, dict) and pdata:
                         pdata['post_id'] = idx
                         posts_list.append(pdata)
 
             _ALL_POSTS_CACHE = posts_list
             _LAST_CACHE_UPDATE = current_time
-            logging.info(f"Posts Cache Updated: {len(posts_list)} items")
+            logging.info(f"[CACHE] Loaded {len(posts_list)} posts for {channel_id}")
 
         except Exception as e:
-            logging.error(f"Error fetching all posts: {e}")
+            logging.error(f"[CACHE ERROR] {e}")
             return []
 
     return _ALL_POSTS_CACHE
+
+
+def get_valid_ids_list(channel_id):
+    """
+    Возвращает список ID только для @anemonn.
+    Для остальных возвращает пустой список (сигнал для генератора использовать математику).
+    """
+    if channel_id == 'default_world':
+        channel_id = '@anemonn'
+
+    # Если канал чужой — базы нет, список ID пуст
+    if channel_id != '@anemonn':
+        return []
+
+    posts = get_all_art_posts_cached(channel_id)
+    
+    if not posts:
+        return []
+    
+    valid_ids = []
+    for p in posts:
+        if p.get('status', 'ok') != 'ok': continue
+        
+        # Считаем фото, если тип явно фото или не указан (старые записи)
+        p_type = p.get('type', 'photo') 
+        if p_type == 'photo':
+            valid_ids.append(p['post_id'])
+
+    valid_ids.sort()
+    return valid_ids
+
+
 
 
 
