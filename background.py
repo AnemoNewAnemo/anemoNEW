@@ -644,7 +644,6 @@ def smart_match(query, text_fields):
     return True
 
 # --- ОБНОВЛЕННЫЙ ЭНДПОИНТ ПОИСКА ---
-
 @app.route('/api/anemone/search', methods=['GET'])
 def api_search_gallery():
     from gpt_helper import get_all_art_posts_cached
@@ -654,9 +653,12 @@ def api_search_gallery():
     color_filter = request.args.get('color', '').lower().strip()
     offset = int(request.args.get('offset', 0))
     limit = int(request.args.get('limit', 50))
+    # JS галереи не шлет channel_id, поэтому задаем жестко @anemonn, 
+    # так как ваша новая функция get_all_art_posts_cached работает только с ним.
+    channel_id = '@anemonn'
     
-    # 1. Получаем все посты
-    all_posts = get_all_art_posts_cached()
+    # 1. Получаем все посты (ИСПРАВЛЕНО: передаем channel_id)
+    all_posts = get_all_art_posts_cached(channel_id)
     
     # 2. Фильтрация
     filtered = []
@@ -666,7 +668,7 @@ def api_search_gallery():
         if p.get('status') != 'ok' or p.get('type') != 'photo':
             continue
             
-        # --- УМНЫЙ ПОИСК (Заменяет старый блок if query in caption) ---
+        # --- УМНЫЙ ПОИСК ---
         if query:
             # Собираем все текстовые поля в кучу
             text_content = [
@@ -675,12 +677,12 @@ def api_search_gallery():
                 str(p.get('ai_style_ru', ''))
             ]
             
-            # Используем нашу умную функцию
+            # Используем нашу умную функцию (она должна быть определена выше в файле)
             if not smart_match(query, text_content):
                 continue
         # -------------------------------------------------------------
         
-        # Фильтр по цвету (оставляем как было)
+        # Фильтр по цвету
         if color_filter:
             analysis = p.get('analysis', {})
             dom = str(analysis.get('dom_color', '')).lower()
@@ -692,7 +694,7 @@ def api_search_gallery():
             
         filtered.append(p)
 
-    # 3. Сортировка (Код сортировки оставляем без изменений)
+    # 3. Сортировка
     if color_filter:
         def color_sort_key(item):
             analysis = item.get('analysis', {})
@@ -726,7 +728,7 @@ def api_search_gallery():
             "post_id": item.get('post_id'),
             "file_id": item.get('file_id'),
             "caption": item.get('caption'),
-            "post_link": f"https://t.me/{item.get('channel_id', '').replace('@', '')}/{item.get('post_id')}",
+            "post_link": f"https://t.me/{item.get('channel_id', 'anemonn').replace('@', '')}/{item.get('post_id')}",
             "ai_des": item.get('ai_des_ru'),
             "ai_style": item.get('ai_style_ru'),
             "date": datetime.fromtimestamp(item.get('date', 0)).strftime('%d.%m.%Y') if item.get('date') else "",
@@ -737,10 +739,6 @@ def api_search_gallery():
         "total": total,
         "items": result_items
     })
-
-
-
-
 
 
 
