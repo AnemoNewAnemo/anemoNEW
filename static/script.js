@@ -38,7 +38,18 @@ const CONFIG = {
         dotSize: 4.0,                      // Близко к максимуму
         lineWidth: 0.5,                    // Минимальный
         glowStr: 0.0                       // Свечение выключено по умолчанию
-    }
+    },
+    spheres: {
+        count: 3,            // Количество сфер
+        baseSize: 45.0,     // <--- УВЕЛИЧЕНО (было 60.0). Сферы теперь крупные.
+        speed: 0.2,          // Скорость полета
+        colors: [            // 3 цвета на выбор
+            new THREE.Color('#ff0055'), // Маджента
+            new THREE.Color('#00ccff'), // Циан
+            new THREE.Color('#ffcc00')  // Золотой
+        ]
+    },
+
 };
 
 
@@ -696,7 +707,7 @@ function spawnCommentObject(id, text, x, y, z) {
     
     sprite.scale.set(baseHeight * aspect, baseHeight, 1);
     sprite.position.set(x, y, z);
-    sprite.renderOrder = 5; 
+
     
     sprite.userData = { id: id, text: text };
     
@@ -1922,23 +1933,26 @@ function getTaskScore(pos, cameraPos, cameraDir, frustum) {
     const p = new THREE.Vector3(pos[0], pos[1], pos[2]);
     const dist = p.distanceTo(cameraPos);
     
-    // Проверка на попадание в камеру
-    const isVisible = frustum.intersectsSphere(new THREE.Sphere(p, 100)); // Радиус сферы проверки
+    // Проверка на попадание в камеру (с небольшим запасом radius 50)
+    const isVisible = frustum.intersectsSphere(new THREE.Sphere(p, 50));
     
     if (isVisible) {
-        // Если видно — приоритет равен дистанции (чем ближе, тем важнее)
+        // ПРИОРИТЕТ 1: На экране.
+        // Оценка равна дистанции (0...2000). Чем ближе, тем меньше число, тем важнее.
         return dist; 
     } else {
-        // Если не видно — проверяем, спереди ли оно вообще
+        // Проверяем, спереди ли оно
         const toItem = new THREE.Vector3().subVectors(p, cameraPos).normalize();
         const dot = cameraDir.dot(toItem);
         
         if (dot > 0.5) { 
-            // Спереди, но далеко или за краем экрана (штраф +10000)
-            return 10000 + dist; 
+            // ПРИОРИТЕТ 2: Спереди, но за кадром (или далеко).
+            // Добавляем 100 000, чтобы они грузились строго после видимых.
+            return 100000 + dist; 
         } else {
-            // Сзади (штраф +200000) - самый низкий приоритет
-            return 200000 + dist;
+            // ПРИОРИТЕТ 3: Сзади.
+            // Добавляем 500 000. Грузим в последнюю очередь.
+            return 500000 + dist;
         }
     }
 }
@@ -2007,43 +2021,60 @@ function runTask(task) {
     const controller = new AbortController();
     const taskId = task.postId;
     
-    // УВЕЛИЧЕНО до 20 секунд (было 8000), чтобы избежать сброса на старте
+    // --- ДИНАМИЧЕСКИЙ ТАЙМАУТ ---
+    // Проверяем видимость прямо перед стартом задачи
+    const p = new THREE.Vector3(task.pos[0], task.pos[1], task.pos[2]);
+    camera.updateMatrixWorld(); 
+    const frustum = new THREE.Frustum().setFromProjectionMatrix(
+        new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+    );
+    const isUrgent = frustum.intersectsSphere(new THREE.Sphere(p, 50));
+
+    // Если срочно (на экране) - ждем всего 4 сек API, иначе 20 сек
+    const apiTimeoutMs = isUrgent ? 4000 : 20000;
+    // Если срочно - ждем картинку 6 сек, иначе 15 сек
+    const imgTimeoutMs = isUrgent ? 6000 : 15000;
+
     const safetyTimeout = setTimeout(() => {
         if (state.activeTasks.has(taskId)) {
             const t = state.activeTasks.get(taskId);
-            console.warn(`[WATCHDOG] Force killing stuck task: ${taskId}`);
+            // Если это срочная задача - помечаем красным, что "слишком медленно"
+            const msg = isUrgent ? '[URGENT TIMEOUT]' : '[WATCHDOG]';
+            console.warn(`${msg} Force killing stuck task: ${taskId}`);
             
             controller.abort();
             if (task.onStatus) task.onStatus('TIMEOUT', '#ff3333');
             
-            // ВАЖНО: Вызываем onError, чтобы удалить меш со сцены
-            if (t && t.onError) t.onError();
+            // Вызываем ошибку, чтобы запустить механизм замены ID
+            if (t && t.onError) t.onError(true); // true = fatal, меняем сразу
             
             finishTask(taskId);
         }
-    }, 20000);
+    }, apiTimeoutMs + imgTimeoutMs); // Общий предохранитель
 
-    // Регистрируем задачу + СОХРАНЯЕМ onError
     state.activeTasks.set(taskId, {
         controller: controller,
         pos: task.pos,
         startTime: Date.now(),
         timeoutId: safetyTimeout,
-        onError: task.onError // <--- ДОБАВЛЕНО: сохраняем коллбек ошибки
+        onError: task.onError
     });
 
-    if (task.onStatus) task.onStatus(`API REQ: ${taskId}`, '#ffff00');
+    if (task.onStatus) task.onStatus(isUrgent ? '!!! URGENT !!!' : `API REQ: ${taskId}`, isUrgent ? '#ff00ff' : '#ffff00');
 
     const urlParams = new URLSearchParams(window.location.search);
     const customChannel = urlParams.get('channel_id');
+    
+    // 2. Формируем строку параметра (убедитесь, что эта часть у вас есть)
     const channelParam = customChannel ? `&channel_id=${customChannel}` : '';
 
+    // 3. Добавляем в запрос
     fetch(`/api/anemone/resolve_image?post_id=${taskId}${channelParam}`, { signal: controller.signal })
         .then(r => r.json())
         .then(data => {
             if (data.error === 'access_denied') {
                 if (task.onStatus) task.onStatus('ERR: ACCESS DENIED', '#ff0000');
-                task.onError(); 
+                task.onError(true); // Fatal
                 finishTask(taskId); 
                 return;
             }
@@ -2055,22 +2086,25 @@ function runTask(task) {
 
                 const loader = new THREE.ImageLoader();
                 loader.setCrossOrigin('anonymous');
+                
+                // Таймер чисто на загрузку картинки
                 const imgTimeout = setTimeout(() => {
                     if (controller.signal.aborted) return;
-                    console.warn(`[IMG TIMEOUT] ${taskId} took too long to decode.`);
+                    console.warn(`[IMG TIMEOUT] ${taskId} took too long.`);
                     if (task.onStatus) task.onStatus('IMG TIMEOUT', '#ff0000');
-                    task.onError(); // Удаляем пустышку
+                    task.onError(true); // Считаем фатальным, меняем ID
                     finishTask(taskId);
-                }, 15000); // 15 секунд на саму картинку                
+                }, imgTimeoutMs);                
+
                 loader.load(
                     data.url,
                     (image) => {
-                        clearTimeout(imgTimeout); // <--- ОТМЕНЯЕМ ТАЙМАУТ ПРИ УСПЕХЕ
+                        clearTimeout(imgTimeout);
                         if (controller.signal.aborted) return;
                         
                         if (task.onStatus) task.onStatus('GENERATING...', '#00ff00');
                         
-                        // --- ГЕНЕРАЦИЯ ПОЛАРОИДА ---
+                        // --- ГЕНЕРАЦИЯ ПОЛАРОИДА (без изменений) ---
                         const canvas = document.createElement('canvas');
                         const ctx = canvas.getContext('2d');
                         const cardWidth = 512;
@@ -2123,42 +2157,37 @@ function runTask(task) {
                         const tex = new THREE.CanvasTexture(canvas);
                         const totalRatio = cardWidth / cardHeight;
                         
-                        if (task.onStatus) task.onStatus(`OK: ${image.width}x${image.height}`, '#00ff00');
+                        if (task.onStatus) task.onStatus(`OK`, '#00ff00');
                         
                         task.onSuccess(tex, totalRatio);
                         finishTask(taskId);
-                            },
-                            undefined, // progress
-                            (err) => {
-                                clearTimeout(imgTimeout); // <--- ОТМЕНЯЕМ ТАЙМАУТ ПРИ ОШИБКЕ
-                                console.error(`[IMG ERROR] ${taskId}`, err);
-                                if (task.onStatus) task.onStatus('IMG ERR', '#ff0000');
-                                task.onError();
-                                finishTask(taskId);
-                            }
-                        );
+                    },
+                    undefined, 
+                    (err) => {
+                        clearTimeout(imgTimeout);
+                        if (task.onStatus) task.onStatus('IMG ERR', '#ff0000');
+                        // Если ошибка загрузки картинки и это срочно - меняем ID сразу
+                        task.onError(isUrgent); 
+                        finishTask(taskId);
+                    }
+                );
             } else {
                 if (task.onStatus) task.onStatus('API: NOT FOUND', '#ff0000');
-                
-                // Передаем true (isFatal), чтобы PostRecovery сразу заменил ID,
-                // не тратя время на 2 повторные попытки того, чего нет.
+                // Если не найдено - это всегда фатально
                 task.onError(true); 
-                
                 finishTask(taskId);
             }
         })
         .catch((err) => {
             if (err.name === 'AbortError') {
-                console.warn(`[TASK ABORTED] ${taskId} was aborted.`);
-                if (task.onStatus) task.onStatus('ABORTED (PRIORITY)', '#ffaa00');
+                if (task.onStatus) task.onStatus('ABORTED', '#ffaa00');
             } else {
-                console.error(`[TASK ERROR] ${taskId} failed:`, err);
-                if (task.onStatus) task.onStatus(`FETCH ERR: ${err.message}`, '#ff0000');
-                task.onError(); // Удаляем объект только при реальной ошибке
+                if (task.onStatus) task.onStatus('FETCH ERR', '#ff0000');
+                task.onError(isUrgent); // Если срочно - фатально
             }
             finishTask(taskId);
         });
-} // Конец функции runTask
+}
 function finishTask(id) {
     // Безопасное получение
     if (!state.activeTasks.has(id)) {
@@ -2201,7 +2230,350 @@ function queueImageLoad(postId, pos, onSuccess, onError) {
         }, 50);
     }
 }
+// --- МАТЕРИАЛ ДЛЯ ОРЕОЛА (HALO) ---
+const haloMaterial = new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture((() => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 128; 
+        canvas.height = 128;
+        const ctx = canvas.getContext('2d');
+        
+        // Рисуем "Glow" - плотный центр, мягкие края
+        const grad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+        
+        // Центр: горячий белый
+        grad.addColorStop(0.0, 'rgba(255, 255, 255, 1.0)');
+        // Ближнее ядро: очень плотный белый с оттенком
+        grad.addColorStop(0.2, 'rgba(255, 255, 255, 0.9)'); 
+        // Основное тело света
+        grad.addColorStop(0.4, 'rgba(255, 255, 255, 0.4)');
+        // Мягкий хвост
+        grad.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
+        
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 128, 128);
+        return canvas;
+    })()),
+    blending: THREE.AdditiveBlending,
+    depthWrite: false, 
+    transparent: true,
+    opacity: 1.0 // Увеличили прозрачность материала (альфа управляется текстурой)
+});
+class FloatingSphereSystem {
+    constructor(scene, camera) {
+        this.scene = scene;
+        this.camera = camera;
+        
+        // Лимиты
+        this.activeCount = CONFIG.spheres.count;
+        this.trailLimit = 1000;
+        
+        // Массивы хранения
+        this.sprites = []; // Здесь храним Меши (сферы)
+        this.halos = [];   // Здесь храним Спрайты (ореолы)
+        this.items = [];   // Логические данные
 
+        // --- 1. МАТЕРИАЛ ЯДРА (3D SPHERE) ---
+        this.baseSphereMat = new THREE.ShaderMaterial({
+            uniforms: {
+                uColor: { value: new THREE.Color() },
+                uTime: { value: 0 },
+                uFadeStart: { value: 2400.0 },
+                uFadeEnd: { value: 1000.0 }
+            },
+            vertexShader: `
+                varying vec3 vNormal;
+                varying vec3 vViewDir;
+                varying float vDist;
+                void main() {
+                    vNormal = normalize(normalMatrix * normal);
+                    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                    vViewDir = normalize(-mvPosition.xyz);
+                    gl_Position = projectionMatrix * mvPosition;
+                    vDist = length(mvPosition.xyz); 
+                }
+            `,
+            fragmentShader: `
+                uniform vec3 uColor;
+                uniform float uFadeStart;
+                uniform float uFadeEnd;
+                varying vec3 vNormal;
+                varying vec3 vViewDir;
+                varying float vDist;
+                
+                void main() {
+                    float viewDot = dot(vNormal, vViewDir);
+                    viewDot = clamp(viewDot, 0.0, 1.0);
+                    float coreIntensity = pow(viewDot, 0.8); 
+                    vec3 finalColor = mix(uColor, vec3(1.0), coreIntensity * 0.8);
+                    finalColor *= 1.5;
+                    float softEdge = smoothstep(0.0, 0.4, viewDot);
+                    float distAlpha = smoothstep(uFadeStart, uFadeEnd, vDist);
+                    gl_FragColor = vec4(finalColor, softEdge * distAlpha);
+                }
+            `,
+            transparent: true,
+            blending: THREE.AdditiveBlending, 
+            depthWrite: false, 
+            side: THREE.FrontSide
+        });
+
+        // --- 2. ШЛЕЙФ ---
+        const tGeo = new THREE.BufferGeometry();
+        tGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.trailLimit * 3), 3));
+        tGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(this.trailLimit * 3), 3));
+        tGeo.setAttribute('opacity', new THREE.BufferAttribute(new Float32Array(this.trailLimit), 1));
+        
+        this.trailMat = new THREE.PointsMaterial({
+            size: 4.0, vertexColors: true, transparent: true, opacity: 1,
+            blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true,
+            map: createPlaceholderTexture() 
+        });
+        
+        this.trails = new THREE.Points(tGeo, this.trailMat);
+        this.trails.frustumCulled = false;
+        scene.add(this.trails);
+        this.trailItems = []; 
+        
+        this.initSpheres();
+    }
+
+    initSpheres() {
+        // Очистка старых объектов
+        this.sprites.forEach(s => {
+            this.scene.remove(s);
+            if(s.geometry) s.geometry.dispose();
+        });
+        this.halos.forEach(h => {
+            this.scene.remove(h);
+            if(h.material && h.material !== haloMaterial) h.material.dispose();
+        });
+
+        this.sprites = [];
+        this.halos = [];
+        this.items = [];
+
+        const geometry = new THREE.SphereGeometry(1, 32, 32); 
+        const center = this.camera.position;
+        // Увеличим буфер, чтобы был запас объектов
+        const maxBuffer = 30; 
+
+        for(let i=0; i<maxBuffer; i++) {
+            // Создаем объект с дефолтными значениями, позицию настроим ниже
+            const itemData = {
+                pos: new THREE.Vector3(),
+                vel: new THREE.Vector3(),
+                scaleMult: 1.0, 
+                color: new THREE.Color(),
+                phase: Math.random() * Math.PI * 2
+            };
+            
+            // Генерируем начальную позицию вокруг камеры
+            this.randomizeItem(itemData, center, 5000); 
+
+            this.items.push(itemData);
+
+            // 1. Создаем СФЕРУ
+            const mat = this.baseSphereMat.clone();
+            mat.uniforms.uColor.value.copy(itemData.color);
+            const mesh = new THREE.Mesh(geometry, mat);
+            
+            // Начальный масштаб
+            const initialSize = CONFIG.spheres.baseSize * itemData.scaleMult;
+            mesh.scale.set(initialSize, initialSize, initialSize);
+            mesh.position.copy(itemData.pos);
+            mesh.visible = i < this.activeCount;
+            this.scene.add(mesh);
+            this.sprites.push(mesh); 
+            
+            // 2. Создаем ОРЕОЛ
+            const halo = new THREE.Sprite(haloMaterial.clone());
+            halo.material.color.copy(itemData.color); 
+            const haloSize = initialSize * 5.0; 
+            
+            halo.scale.set(haloSize, haloSize, 1);
+            halo.position.copy(itemData.pos);
+            halo.visible = i < this.activeCount;
+            this.scene.add(halo);
+            this.halos.push(halo);
+        }
+    }
+
+    // --- НОВАЯ ФУНКЦИЯ: Полная рандомизация параметров ---
+    randomizeItem(item, centerPos, range) {
+        // Позиция: полный рандом в кубе range
+        item.pos.set(
+            centerPos.x + (Math.random() - 0.5) * range,
+            centerPos.y + (Math.random() - 0.5) * 2000, // Высота варьируется сильнее
+            centerPos.z + (Math.random() - 0.5) * range
+        );
+        
+        // Скорость: медленный дрейф
+        item.vel.set(
+            (Math.random()-0.5) * 0.4, 
+            (Math.random()-0.5) * 0.4, 
+            (Math.random()-0.5) * 0.4
+        );
+
+        // Размер: от 0.5 до 1.8 от базового
+        item.scaleMult = 0.5 + Math.random() * 1.3;
+        
+        // Цвет: случайный из палитры
+        item.color = CONFIG.spheres.colors[Math.floor(Math.random() * 3)];
+    }
+
+    // --- НОВАЯ ФУНКЦИЯ: Частичное обновление при переходе границы ---
+    respawnItem(item) {
+        // Меняем высоту случайным образом, чтобы сфера появилась в другом месте по вертикали
+        item.pos.y = this.camera.position.y + (Math.random() - 0.5) * 2000;
+        
+        // Немного сдвигаем перпендикулярно движению (чтобы не летели линией)
+        // Например, если wrap был по X, сдвигаем Z и наоборот, но здесь просто рандомим оба
+        item.pos.z += (Math.random() - 0.5) * 500;
+        item.pos.x += (Math.random() - 0.5) * 500;
+
+        // Меняем размер, чтобы казалось, что это другая сфера
+        item.scaleMult = 0.5 + Math.random() * 1.3;
+        
+        // Можно даже сменить цвет
+        item.color = CONFIG.spheres.colors[Math.floor(Math.random() * 3)];
+    }
+
+    update() {
+        const time = performance.now() / 1000;
+        const center = this.camera.position;
+        const range = 5000; 
+        const halfRange = range / 2;
+        const configBaseSize = CONFIG.spheres.baseSize;
+
+        for(let i=0; i<this.sprites.length; i++) {
+            const mesh = this.sprites[i];
+            const halo = this.halos[i];
+            const item = this.items[i];
+            
+            const isVisible = i < this.activeCount;
+            mesh.visible = isVisible;
+            halo.visible = isVisible;
+            
+            if (!isVisible) continue;
+
+            // Обновление униформов
+            mesh.material.uniforms.uTime.value = time;
+            mesh.material.uniforms.uColor.value.copy(item.color);
+            halo.material.color.copy(item.color);
+            
+            // Движение
+            item.pos.add(item.vel);
+
+            // --- УЛУЧШЕННАЯ ЛОГИКА WRAP (БЕСКОНЕЧНЫЙ МИР) ---
+            let dx = item.pos.x - center.x;
+            let dz = item.pos.z - center.z;
+            let dy = item.pos.y - center.y;
+            
+            let didWrap = false;
+
+            // Если улетел далеко по X
+            if (dx > halfRange) { 
+                item.pos.x -= range; 
+                didWrap = true; 
+            } else if (dx < -halfRange) { 
+                item.pos.x += range; 
+                didWrap = true; 
+            }
+
+            // Если улетел далеко по Z
+            if (dz > halfRange) { 
+                item.pos.z -= range; 
+                didWrap = true; 
+            } else if (dz < -halfRange) { 
+                item.pos.z += range; 
+                didWrap = true; 
+            }
+            
+            // По вертикали тоже зацикливаем, но реже
+            if (dy > 2500) { item.pos.y -= 5000; didWrap = true; }
+            else if (dy < -2500) { item.pos.y += 5000; didWrap = true; }
+
+            // !!! ГЛАВНОЕ ИЗМЕНЕНИЕ !!!
+            // Если сфера переместилась на другой край мира, 
+            // мы меняем её параметры, чтобы она выглядела как новая.
+            if (didWrap) {
+                this.respawnItem(item);
+            }
+
+            // Применяем позицию
+            mesh.position.copy(item.pos);
+            halo.position.copy(item.pos);
+            
+            // Масштаб
+            const targetSize = configBaseSize * item.scaleMult;
+            
+            // Грубая проверка, чтобы не обновлять каждый кадр, если слайдер не трогали
+            if (Math.abs(mesh.scale.x - targetSize) > 0.01) {
+                mesh.scale.set(targetSize, targetSize, targetSize);
+                const haloSize = targetSize * 5.0; 
+                halo.scale.set(haloSize, haloSize, 1);
+            }
+
+            // Шлейф
+            if (Math.random() > 0.3) {
+                const distToCam = mesh.position.distanceTo(center);
+                if (distToCam < 2300) { 
+                    this.spawnTrail(item.pos, item.color);
+                }
+            }
+        }
+        this.updateTrails();
+    }
+
+    spawnTrail(sourcePos, color) {
+        let p = this.trailItems.find(t => t.life <= 0);
+        if (!p) {
+            if (this.trailItems.length < this.trailLimit) {
+                p = { pos: new THREE.Vector3(), vel: new THREE.Vector3(), life: 0, color: new THREE.Color() };
+                this.trailItems.push(p);
+            } else return;
+        }
+        const offset = new THREE.Vector3(
+            (Math.random()-0.5)*20, (Math.random()-0.5)*20, (Math.random()-0.5)*20
+        );
+        p.pos.copy(sourcePos).add(offset);
+        p.vel.set(0, -0.2, 0); 
+        p.life = 1.0; 
+        p.color.copy(color);
+    }
+
+    updateTrails() {
+        const tPos = this.trails.geometry.attributes.position;
+        const tCol = this.trails.geometry.attributes.color;
+        const tOp = this.trails.geometry.attributes.opacity;
+
+        for(let i=0; i<this.trailItems.length; i++) {
+            const p = this.trailItems[i];
+            if (p.life > 0) {
+                p.pos.add(p.vel);
+                p.life -= 0.015;
+                tPos.setXYZ(i, p.pos.x, p.pos.y, p.pos.z);
+                tCol.setXYZ(i, p.color.r, p.color.g, p.color.b);
+                tOp.setX(i, Math.max(0, p.life));
+            } else {
+                tOp.setX(i, 0);
+            }
+        }
+        tPos.needsUpdate = true;
+        tCol.needsUpdate = true;
+        tOp.needsUpdate = true;
+    }
+    
+    refresh() {
+        this.activeCount = CONFIG.spheres.count;
+        for(let i=0; i<this.items.length; i++) {
+             // При изменении настроек можно сразу перераскидать
+             // this.respawnItem(this.items[i]); // Раскомментируйте, если хотите мгновенного хаоса
+             this.items[i].color = CONFIG.spheres.colors[Math.floor(Math.random() * 3)];
+        }
+    }
+}
 // ВАЖНО: Добавьте этот вызов в ваш основной цикл animate(), 
 // чтобы пересчитывать приоритеты когда камера движется
 setInterval(() => {
@@ -2243,7 +2615,7 @@ setInterval(() => {
 }, 2000); // Проверка каждые 2 секунды
 
 // --- КОНЕЦ НОВОГО БЛОКА ---
-
+const sphereSystem = new FloatingSphereSystem(scene, camera);
 
 // --- ОБНОВЛЕННАЯ ФУНКЦИЯ loadChunk ---
 async function loadChunk(cx, cy, cz) {
@@ -2256,17 +2628,20 @@ async function loadChunk(cx, cy, cz) {
     state.chunks.set(key, { group: g });
 
     try {
-        // 1. Получаем параметры из URL браузера
+        // 1. Получаем параметры из URL браузера (ТО, ЧТО В АДРЕСНОЙ СТРОКЕ)
         const urlParams = new URLSearchParams(window.location.search);
         
-        // Читаем channel_id (если нет, сервер использует дефолтный, но параметр можно не слать)
-        // Но нам нужен max_id для генерации чисел
-        const maxId = urlParams.get('max_id') || 8509; // Дефолт 8509, если в ссылке нет
+        const maxId = urlParams.get('max_id') || 8509;
+        
+        // !!! ДОБАВЛЯЕМ ЭТО !!!
+        // Считываем channel_id из адресной строки браузера
+        const channelId = urlParams.get('channel_id') || 'default_world';
 
-        // 2. Передаем max_id в запрос чанка
-        // Обратите внимание: channel_id тут не обязателен, 
-        // так как чанк просто генерирует числа. Channel нужен при resolve_image.
-        const res = await fetch(`/api/anemone/get_chunk?x=${cx}&y=${cy}&z=${cz}&max_id=${maxId}`);
+        // 2. Передаем channel_id ВНУТРЬ запроса к API
+        // Было: const res = await fetch(`/api/anemone/get_chunk?x=${cx}&y=${cy}&z=${cz}&max_id=${maxId}`);
+        // Стало:
+        const res = await fetch(`/api/anemone/get_chunk?x=${cx}&y=${cy}&z=${cz}&max_id=${maxId}&channel_id=${channelId}`);
+        
         const data = await res.json();
         
         if (data.items) data.items.forEach(item => createHangingArt(g, item, key));
@@ -2274,7 +2649,6 @@ async function loadChunk(cx, cy, cz) {
         console.error(e);
     }
 }
-
 
 // --- ОПТИМИЗАЦИЯ: ОБЩИЕ РЕСУРСЫ ---
 
@@ -2390,7 +2764,7 @@ function createHangingArt(group, data, chunkKey) {
     });
 
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.renderOrder = 5;
+
     mesh.position.copy(pos);
     mesh.scale.set(baseScale, baseScale, baseScale); 
     mesh.frustumCulled = true;
@@ -2404,18 +2778,15 @@ function createHangingArt(group, data, chunkKey) {
     group.add(mesh);
 
     // --- ЛОГИКА ЗАГРУЗКИ (ВЫНЕСЕНА В ФУНКЦИЮ) ---
-    const startLoading = () => {
-        // Берем ID из userData. Важно брать именно оттуда, так как мы будем его менять!
+const startLoading = () => {
         const currentPostId = mesh.userData.postId;
 
         queueImageLoad(currentPostId, data.pos, 
             // onSuccess
             (tex, ratio) => {
-                // Если успешно загрузилось - очищаем счетчик ошибок для этого ID (на всякий случай)
                 if (PostRecovery.failures.has(currentPostId)) {
                     PostRecovery.failures.delete(currentPostId);
                 }
-
                 tex.minFilter = THREE.LinearFilter;
                 tex.generateMipmaps = false;
                 renderer.initTexture(tex); 
@@ -2424,49 +2795,48 @@ function createHangingArt(group, data, chunkKey) {
                     mesh.material.uniforms.map.value = tex;
                     mesh.material.uniforms.hasTexture.value = true;
                     mesh.material.uniforms.uAspectRatio.value = ratio; 
-
                     let scaleX = 1, scaleY = 1;
                     if (ratio > 1) scaleX = ratio;
                     else scaleY = 1 / ratio;
-                    
                     mesh.material.uniforms.uImageScale.value.set(scaleX, scaleY);
-                    
-                    // ВАЖНО: Обновляем текст/описание в userData, если оно пришло с сервера
-                    // (Если ваша функция queueImageLoad возвращает метаданные, их стоит тут обновить)
                 }
             }, 
             // onError
             (isFatal = false) => { 
-                // 1. Проверяем фатальность (например, 403 Forbidden или явный 404 от API)
-                // Или просто считаем попытки
+                // --- АГРЕССИВНАЯ ЗАМЕНА ДЛЯ ВИДИМЫХ ---
+                // Проверяем видимость объекта
+                const p = new THREE.Vector3(data.pos[0], data.pos[1], data.pos[2]);
+                const frustum = new THREE.Frustum().setFromProjectionMatrix(
+                    new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+                );
+                // Если объект на экране, мы считаем любую ошибку ФАТАЛЬНОЙ, 
+                // чтобы не тратить время на повторную попытку мертвого ID.
+                const isVisible = frustum.intersectsSphere(new THREE.Sphere(p, 50));
+                
+                if (isVisible) isFatal = true;
+
+                // 1. Регистрируем ошибку
                 const shouldRetrySame = PostRecovery.registerFailure(currentPostId);
 
                 if (shouldRetrySame && !isFatal) {
-                    // СЦЕНАРИЙ 1: Просто сетевой сбой, пробуем тот же ID еще раз
+                    // Фоновая задача, можно попробовать еще раз тот же ID
                     console.warn(`[ART] Retry ${PostRecovery.failures.get(currentPostId)}/2 for ID ${currentPostId}`);
-                    // Оставляем как есть, Watchdog перезапустит или можно вызвать startLoading() через таймаут
+                    // Важно: перезапуск через watchdog, либо можно setTimeout(startLoading, 1000)
                 } else {
-                    // СЦЕНАРИЙ 2: ID мертв (попытки исчерпаны или фатальная ошибка)
+                    // Видимая задача или лимит исчерпан -> МЕНЯЕМ ID
                     const newId = PostRecovery.getReplacement(currentPostId);
                     
-                    console.warn(`[RECOVERY] 💀 ID ${currentPostId} is dead. Swapping to -> ${newId}`);
+                    if (isVisible) console.warn(`[URGENT SWAP] 🚀 Visible item failed. Swapping ${currentPostId} -> ${newId}`);
+                    else console.warn(`[RECOVERY] 💀 ID ${currentPostId} dead. Swapping -> ${newId}`);
 
-                    // А. Меняем ID внутри объекта
                     mesh.userData.postId = newId;
-
-                    // Б. Сбрасываем счетчик для НОВОГО ID (он чист перед законом)
-                    // (Старый ID останется в памяти failures, что предотвратит повторное использование, если мы наткнемся на него снова)
                     
-                    // В. Меняем "Seed" для анимации покачивания (опционально), 
-                    // чтобы визуально карточка чуть изменилась и не казалось, что она просто зависла
                     const newSeed = cyrb128(newId.toString());
                     if(mesh.material.uniforms.uPhase) {
                         mesh.material.uniforms.uPhase.value = seededRandom(newSeed) * 10;
                     }
 
-                    // Г. Немедленно запускаем загрузку нового ID
-                    // Используем setTimeout, чтобы разорвать стек вызовов
-                    setTimeout(startLoading, 100);
+                    setTimeout(startLoading, 50);
                 }
             }
         );
@@ -2796,6 +3166,19 @@ document.getElementById('sky-blur').addEventListener('input', e => CONFIG.sky.bl
 document.getElementById('comet-freq').addEventListener('input', e => CONFIG.sky.cometFreq = parseFloat(e.target.value));
 document.getElementById('slow-comet-freq').addEventListener('input', e => CONFIG.sky.slowCometFreq = parseFloat(e.target.value));
 
+
+// Слушатели для сфер
+document.getElementById('sphere-count').addEventListener('input', (e) => {
+    CONFIG.spheres.count = parseInt(e.target.value);
+    sphereSystem.refresh(); // Нужно обновить activeCount
+});
+document.getElementById('sphere-size').addEventListener('input', (e) => {
+    CONFIG.spheres.baseSize = parseFloat(e.target.value);
+    sphereSystem.refresh();
+});
+
+
+
 // Частицы
 document.getElementById('dust-count').addEventListener('input', e => CONFIG.details.dustCount = parseInt(e.target.value));
 document.getElementById('dust-size').addEventListener('input', e => CONFIG.details.dustSize = parseFloat(e.target.value));
@@ -2899,6 +3282,9 @@ function setupColorPickers() {
         { id: 'col-bot', target: CONFIG.colors.bottom, cb: updateBackgroundGradient },
         { id: 'col-mid', target: CONFIG.colors.mid, cb: updateBackgroundGradient },
         { id: 'col-top', target: CONFIG.colors.top, cb: updateBackgroundGradient },
+        { id: 'sphere-col-1', target: CONFIG.spheres.colors[0], cb: () => sphereSystem.refresh() },
+        { id: 'sphere-col-2', target: CONFIG.spheres.colors[1], cb: () => sphereSystem.refresh() },
+        { id: 'sphere-col-3', target: CONFIG.spheres.colors[2], cb: () => sphereSystem.refresh() },        
         { id: 'col-fire', target: null, cb: (hex) => fireflyMat.uniforms.color.value.set(hex) },
         { id: 'col-constellation', target: CONFIG.constellation.color, cb: (hex) => {
             constellationTubeMat.color.set(hex);
@@ -2914,6 +3300,26 @@ function setupColorPickers() {
         inputEl.style.opacity = 0; 
         inputEl.style.position = 'absolute';
         inputEl.style.pointerEvents = 'none';
+        // Добавляем пикеры для сфер в массив inputs функции setupColorPickers()
+        // Или, если вы не хотите лезть внутрь той функции, просто добавьте их вручную:
+        const sphereColors = [
+            { id: 'sphere-col-1', idx: 0 },
+            { id: 'sphere-col-2', idx: 1 },
+            { id: 'sphere-col-3', idx: 2 }
+        ];
+
+        sphereColors.forEach(conf => {
+            const el = document.getElementById(conf.id);
+            // Логика аналогична вашей функции setupColorPickers, 
+            // здесь упрощенный вариант обновления конфига:
+            el.addEventListener('change', (e) => {
+                CONFIG.spheres.colors[conf.idx].set(e.target.value);
+                sphereSystem.refresh();
+            });
+            // Если вы используете ваш кастомный пикер, добавьте эти ID в массив inputs внутри setupColorPickers
+        });
+
+
 
         // Создаем "swatch" (цветной квадратик)
         const swatch = document.createElement('div');
@@ -3234,7 +3640,7 @@ function animate() {
 
     // Добавляем вызов навигации
     updateNavigationHUD();
-
+    sphereSystem.update();
     renderer.render(scene, camera);
 }
 
@@ -3242,6 +3648,7 @@ animate();
 setTimeout(() => document.getElementById('status').style.opacity = 0, 1000);
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth/window.innerHeight;
+    sphereSystem.sphereMat.uniforms.uScale.value = window.innerHeight;    
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
     constellationDotMat.uniforms.uScale.value = window.innerHeight;    
