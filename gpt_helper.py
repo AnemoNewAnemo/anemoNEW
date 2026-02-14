@@ -4644,11 +4644,10 @@ async def generate_inpaint_gemini(image_file_path: str, instructions: str):
         logger.error("Ошибка при обработке изображения с Gemini:", exc_info=True)
         return None, "Ошибка при обработке изображения."
 
-async def analyze_and_save_background(bot, channel_id, message_id, file_id, caption, date_timestamp):
+async def analyze_and_save_background(bot, channel_id, message_id, file_id, caption, date_timestamp, original_link=None):
     """
     Фоновая задача для анализа изображения и сохранения в Firebase.
-
-    Не блокирует основной поток бота.
+    Добавлен аргумент original_link.
     """
     from bot import analyze_image_colors
     from bot import calculate_normalized_brightness    
@@ -4788,14 +4787,15 @@ async def analyze_and_save_background(bot, channel_id, message_id, file_id, capt
             "file_id": file_id,
             "post_id": message_id,
             "status": "ok",
-            "type": "photo"
+            "type": "photo",
+            "original_link": original_link  # <--- ДОБАВЛЕНО ПОЛЕ
         }
 
         # Используем существующую функцию сохранения
         save_success = save_art_post(channel_id, message_id, final_data)
         
         if save_success:
-            logging.info(f"Background: Пост {message_id} успешно сохранен в базу галереи.")
+            logging.info(f"Background: Пост {message_id} успешно сохранен (original_link={original_link is not None}).")
         else:
             logging.error(f"Background: Ошибка записи в Firebase для {message_id}.")
 
