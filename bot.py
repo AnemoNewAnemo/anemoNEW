@@ -11886,7 +11886,9 @@ async def publish(update: Update, context: CallbackContext) -> None:
 
             if response_json.get('ok'):
                 article_url = f"https://telegra.ph/{response_json['result']['path']}"
+                webappurl = f"https://anemonne.onrender.com/anemonearts?channel_id=@anemonn&gallery=true&proxy=true"
 
+                
                 article_response = requests.get(f'https://api.telegra.ph/getPage?access_token={TELEGRAPH_TOKEN}&path={response_json["result"]["path"]}&return_content=true')
                 article_response.raise_for_status()
                 article_data = article_response.json()
@@ -11914,7 +11916,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
                             
                             # Если текст ещё не добавлен, добавляем подпись к первому изображению
                             if not text_added:
-                                caption = f'{author_line}\n<a href="{article_url}">Оригинал</a>{links_string}'
+                                caption = f'{author_line}\n<a href="{webappurl}">Галерея</a>{links_string}'
                                 text_added = True
 
                             # Добавляем только изображения в медиа-группу
@@ -11961,7 +11963,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 if image_count == 1:
                     single_image = next((item for item in media if item['type'] == 'image'), None)
                     if single_image:
-                        caption = f'{author_line}\n<a href="{article_url}">Оригинал</a>{links_string}'
+                        caption = f'{author_line}\n<a href="{webappurl}">Галерея</a>{links_string}'
                         
                         # Формируем временный ключ
                         temp_key = f"{user_id}_0"  # Используем временный ключ до получения message_id
@@ -13514,6 +13516,15 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
                 post_caption = msg.caption if msg.caption else ""
                 post_date = int(msg.date.timestamp())
 
+                # --- ИЗВЛЕЧЕНИЕ ССЫЛКИ НА ОРИГИНАЛ (Telegra.ph) ---
+                original_link = None
+                if msg.caption_entities:
+                    for entity in msg.caption_entities:
+                        if entity.type == 'text_link' and entity.url and 'telegra.ph' in entity.url:
+                            original_link = entity.url
+                            break
+                # --------------------------------------------------
+
                 asyncio.create_task(
                     gpt_helper.analyze_and_save_background(
                         bot, 
@@ -13521,7 +13532,8 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
                         new_post_id, 
                         new_file_id, 
                         post_caption, 
-                        post_date
+                        post_date,
+                        original_link=original_link  # <--- ПЕРЕДАЕМ ССЫЛКУ
                     )
                 )
         # ==============================
@@ -14661,18 +14673,24 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
             # Проходим по каждому сообщению (каждой картинке альбома)
             for msg in sent_messages:
                 # Проверяем, есть ли фото (у send_animation фото может быть в thumb, но логика ниже для photo)
-                # Если это InputMediaPhoto, msg.photo будет списком размеров
                 if msg.photo:
                     new_post_id = msg.message_id
                     # Берем самое большое фото (последнее в списке)
                     best_photo = msg.photo[-1]
                     new_file_id = best_photo.file_id
                     
-                    # Подпись обычно есть только у первого фото в альбоме, у остальных None (или берем пустую строку)
                     post_caption = msg.caption if msg.caption else ""
                     post_date = int(msg.date.timestamp())
 
-                    # Запускаем задачу в фоне ("Fire and forget") ДЛЯ КАЖДОГО ФОТО
+                    # --- ИЗВЛЕЧЕНИЕ ССЫЛКИ НА ОРИГИНАЛ (Telegra.ph) ---
+                    original_link = None
+                    if msg.caption_entities:
+                        for entity in msg.caption_entities:
+                            if entity.type == 'text_link' and entity.url and 'telegra.ph' in entity.url:
+                                original_link = entity.url
+                                break
+                    # --------------------------------------------------
+
                     asyncio.create_task(
                         gpt_helper.analyze_and_save_background(
                             context.bot, 
@@ -14680,7 +14698,8 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
                             new_post_id, 
                             new_file_id, 
                             post_caption, 
-                            post_date
+                            post_date,
+                            original_link=original_link # <--- ПЕРЕДАЕМ ССЫЛКУ
                         )
                     )
             # ==================================================
