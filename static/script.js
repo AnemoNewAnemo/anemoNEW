@@ -1951,6 +1951,12 @@ const state = {
         currentY: 0
     },
 
+    joystick: {
+        left: { x: 0, y: 0, active: false },
+        right: { x: 0, y: 0, active: false }
+    },
+    // --------------------
+
     loadQueue: [],
     activeTasks: new Map(),
     queueTimeout: null
@@ -3135,6 +3141,18 @@ const btn = document.getElementById('settings-btn');
 const panel = document.getElementById('settings-panel');
 let panelOpen = false;
 
+// --- ЛОГИКА ВЫЕЗЖАЮЩЕГО МЕНЮ ---
+const expandBtn = document.getElementById('expand-btn');
+const sideControls = document.getElementById('side-controls');
+let menuExpanded = false;
+
+expandBtn.addEventListener('click', () => {
+    menuExpanded = !menuExpanded;
+    sideControls.classList.toggle('active', menuExpanded);
+    expandBtn.classList.toggle('active', menuExpanded);
+});
+
+
 btn.addEventListener('click', () => {
     panelOpen = !panelOpen;
     panel.classList.toggle('active', panelOpen);
@@ -3206,7 +3224,22 @@ document.getElementById('sphere-size').addEventListener('input', (e) => {
     sphereSystem.refresh();
 });
 
+// Настройка видимости джойстиков
+document.getElementById('ui-joystick-toggle').addEventListener('change', (e) => {
+    const zones = document.querySelectorAll('.joystick-zone');
+    zones.forEach(el => {
+        if (e.target.checked) el.classList.add('visible');
+        else el.classList.remove('visible');
+    });
+});
 
+// Настройка размера джойстиков
+document.getElementById('ui-joystick-size').addEventListener('input', (e) => {
+    const size = e.target.value;
+    const knobSize = size * 0.4; // Кноб всегда 40% от размера
+    document.documentElement.style.setProperty('--joy-size', size + 'px');
+    document.documentElement.style.setProperty('--joy-knob', knobSize + 'px');
+});
 
 // Частицы
 document.getElementById('dust-count').addEventListener('input', e => CONFIG.details.dustCount = parseInt(e.target.value));
@@ -3556,6 +3589,129 @@ setTimeout(() => {
     }
 }, 5000);
 
+// --- СИСТЕМА ДЖОЙСТИКОВ ---
+function initTouchControls() {
+    // 1. Стили с CSS переменными для размеров
+    const style = document.createElement('style');
+    // По умолчанию 100px зона (было 140px) и 40px стик (было 50px)
+    style.innerHTML = `
+        :root {
+            --joy-size: 100px;
+            --joy-knob: 40px;
+        }
+        .joystick-zone {
+            position: fixed; bottom: 40px; 
+            width: var(--joy-size); height: var(--joy-size);
+            z-index: 1000; display: none; /* Скрыто по CSS, управляется JS */
+            user-select: none; -webkit-user-select: none; touch-action: none;
+            transition: opacity 0.3s;
+        }
+        .joystick-zone.left { left: 40px; }
+        .joystick-zone.right { right: 40px; }
+        .joystick-knob {
+            position: absolute; left: 50%; top: 50%; 
+            width: var(--joy-knob); height: var(--joy-knob);
+            margin-left: calc(var(--joy-knob) / -2);
+            margin-top: calc(var(--joy-knob) / -2);
+            background: rgba(255, 255, 255, 0.3);
+            border: 2px solid rgba(255, 255, 255, 0.5); border-radius: 50%;
+            pointer-events: none; transition: transform 0.1s;
+        }
+        .joystick-base {
+            width: 100%; height: 100%; border-radius: 50%;
+            background: rgba(0, 0, 0, 0.2); border: 2px solid rgba(255, 255, 255, 0.1);
+        }
+        /* Показываем только на тач-устройствах ЕСЛИ включен класс visible */
+        @media (pointer: coarse) { 
+            .joystick-zone.visible { display: block; } 
+        }
+    `;
+    document.head.appendChild(style);
+
+    // 2. HTML
+    const createStick = (cls) => {
+        const zone = document.createElement('div');
+        zone.className = `joystick-zone ${cls} visible`; // Добавили класс visible по умолчанию
+        zone.innerHTML = '<div class="joystick-base"></div><div class="joystick-knob"></div>';
+        document.body.appendChild(zone);
+        return { zone, knob: zone.querySelector('.joystick-knob') };
+    };
+
+    const leftStick = createStick('left');
+    const rightStick = createStick('right');
+
+    // 3. Обработчики событий (без изменений логики движения)
+    const handleStick = (stickObj, stateKey, isLook) => {
+        let touchId = null;
+        
+        // Динамический расчет радиуса при касании (чтобы работало после ресайза)
+        const getMaxDist = () => {
+            return stickObj.zone.clientWidth / 2 - 10; 
+        };
+
+        stickObj.zone.addEventListener('touchstart', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            if (touchId !== null) return;
+            const touch = e.changedTouches[0];
+            touchId = touch.identifier;
+            state.joystick[stateKey].active = true;
+            if (isLook) state.isLooking = true; 
+        }, { passive: false });
+
+        const onMove = (e) => {
+            if (touchId === null) return;
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                if (e.changedTouches[i].identifier === touchId) {
+                    const t = e.changedTouches[i];
+                    const rect = stickObj.zone.getBoundingClientRect();
+                    const centerX = rect.left + rect.width / 2;
+                    const centerY = rect.top + rect.height / 2;
+                    const maxDist = getMaxDist(); // Используем актуальный размер
+
+                    let dx = t.clientX - centerX;
+                    let dy = t.clientY - centerY;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    
+                    if (dist > maxDist) {
+                        dx = (dx / dist) * maxDist;
+                        dy = (dy / dist) * maxDist;
+                    }
+                    
+                    stickObj.knob.style.transform = `translate(${dx}px, ${dy}px)`;
+                    state.joystick[stateKey].x = dx / maxDist;
+                    state.joystick[stateKey].y = dy / maxDist;
+                    break;
+                }
+            }
+        };
+
+        const onEnd = (e) => {
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                if (e.changedTouches[i].identifier === touchId) {
+                    touchId = null;
+                    state.joystick[stateKey].active = false;
+                    state.joystick[stateKey].x = 0;
+                    state.joystick[stateKey].y = 0;
+                    stickObj.knob.style.transform = `translate(0px, 0px)`;
+                    if (isLook) state.isLooking = false;
+                    break;
+                }
+            }
+        };
+
+        stickObj.zone.addEventListener('touchmove', (e) => { e.preventDefault(); e.stopPropagation(); onMove(e); }, { passive: false });
+        stickObj.zone.addEventListener('touchend', onEnd);
+        stickObj.zone.addEventListener('touchcancel', onEnd);
+    };
+
+    handleStick(leftStick, 'left', false);
+    handleStick(rightStick, 'right', true);
+}
+
+// Запускаем инициализацию
+initTouchControls();
+
+
 
 function animate() {
     requestAnimationFrame(animate);
@@ -3566,27 +3722,54 @@ function animate() {
     const time = clock.getElapsedTime();
 
     // --- НОВОЕ: Обработка клавиатуры ---
+    // --- ОБНОВЛЕННАЯ ЛОГИКА ДВИЖЕНИЯ (Клавиатура + Левый Стик) ---
     const moveSpeed = 15.0; 
     
-    // Получаем векторы направления камеры
     const forward = new THREE.Vector3();
-    camera.getWorldDirection(forward); // Вектор "вперед" (куда смотрим)
+    camera.getWorldDirection(forward);
+    // Обнуляем Y, чтобы движение было строго в горизонтальной плоскости (опционально, если хотите летать - уберите эту строку)
+    // forward.y = 0; forward.normalize(); 
     
     const right = new THREE.Vector3();
-    right.crossVectors(forward, camera.up).normalize(); // Вектор "вправо"
+    right.crossVectors(forward, camera.up).normalize();
 
-    // Движение Вперед/Назад (включая высоту)
-    if (state.keys.w || state.keys.up) state.targetPos.addScaledVector(forward, moveSpeed);
-    if (state.keys.s || state.keys.down) state.targetPos.addScaledVector(forward, -moveSpeed);
+    // 1. Ввод с клавиатуры
+    let inputZ = 0; // Вперед/Назад
+    let inputX = 0; // Влево/Вправо
+
+    if (state.keys.w || state.keys.up) inputZ += 1;
+    if (state.keys.s || state.keys.down) inputZ -= 1;
+    if (state.keys.d || state.keys.right) inputX += 1;
+    if (state.keys.a || state.keys.left) inputX -= 1;
+
+    // 2. Ввод с Левого Стика (добавляем к клавиатуре)
+    if (state.joystick.left.active) {
+        // Джойстик вверх дает -y, джойстик вправо дает +x
+        inputZ -= state.joystick.left.y; 
+        inputX += state.joystick.left.x;
+    }
+
+    // Применяем движение
+    if (Math.abs(inputZ) > 0.01) state.targetPos.addScaledVector(forward, inputZ * moveSpeed);
+    if (Math.abs(inputX) > 0.01) state.targetPos.addScaledVector(right, inputX * moveSpeed);
+
+
+    // --- ОБНОВЛЕННАЯ ЛОГИКА ВРАЩЕНИЯ (Мышь + Правый Стик) ---
     
-    // Движение Влево/Вправо (стрейф)
-    if (state.keys.d || state.keys.right) state.targetPos.addScaledVector(right, moveSpeed);
-    if (state.keys.a || state.keys.left) state.targetPos.addScaledVector(right, -moveSpeed);
+    // Если мы используем джойстик, обновляем целевые углы
+    if (state.joystick.right.active) {
+        const lookSpeed = 0.01; // Чувствительность стика
+        state.look.targetX -= state.joystick.right.x * lookSpeed;
+        state.look.targetY -= state.joystick.right.y * lookSpeed;
+        
+        // Ограничение по вертикали (как и для мыши)
+        const maxAngle = Math.PI / 4;
+        state.look.targetY = Math.max(-maxAngle, Math.min(maxAngle, state.look.targetY));
+    }
 
-    // --- НОВОЕ: Интерполяция вращения камеры ---
-    // Если мы не смотрим (не зажата ПКМ), цель плавно возвращается в 0
-    if (!state.isLooking) {
-        state.look.targetX *= 0.9; // Плавное затухание к центру
+    // Интерполяция и центрирование (ЭТОТ БЛОК УЖЕ БЫЛ, ОСТАВЛЯЕМ ЕГО КАК ЕСТЬ)
+    if (!state.isLooking) { // isLooking теперь управляется и ПКМ, и Правым Стиком
+        state.look.targetX *= 0.9; 
         state.look.targetY *= 0.9;
     }
 
