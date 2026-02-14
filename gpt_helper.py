@@ -406,6 +406,15 @@ def get_art_post(channel_id, post_id):
 _ALL_POSTS_CACHE = None
 _LAST_CACHE_UPDATE = 0
 
+# --- ДОБАВИТЬ ЭТУ ФУНКЦИЮ ---
+def reset_posts_cache():
+    """Сбрасывает кэш постов, заставляя сервер перечитать базу при следующем запросе."""
+    global _ALL_POSTS_CACHE
+    _ALL_POSTS_CACHE = None
+    logging.info("[CACHE] Кэш постов сброшен принудительно.")
+# -----------------------------
+
+
 def get_all_art_posts_cached(channel_id):
     global _ALL_POSTS_CACHE, _LAST_CACHE_UPDATE
 
@@ -4650,7 +4659,7 @@ async def analyze_and_save_background(bot, channel_id, message_id, file_id, capt
     Добавлен аргумент original_link.
     """
     from bot import analyze_image_colors
-    from bot import calculate_normalized_brightness    
+    from bot import calculate_normalized_brightness  
     try:
         logging.info(f"Background: Начинаю обработку поста {message_id} для {channel_id}")
 
@@ -4792,10 +4801,19 @@ async def analyze_and_save_background(bot, channel_id, message_id, file_id, capt
         }
 
         # Используем существующую функцию сохранения
+        
         save_success = save_art_post(channel_id, message_id, final_data)
         
         if save_success:
             logging.info(f"Background: Пост {message_id} успешно сохранен (original_link={original_link is not None}).")
+            
+            # --- ДОБАВИТЬ ЭТОТ БЛОК ---
+            try:
+                reset_posts_cache() # Сбрасываем кэш, чтобы пост сразу появился в галерее
+            except Exception as e:
+                logging.error(f"Background: Не удалось сбросить кэш: {e}")
+            # --------------------------
+            
         else:
             logging.error(f"Background: Ошибка записи в Firebase для {message_id}.")
 
