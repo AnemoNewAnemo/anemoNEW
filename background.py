@@ -314,9 +314,12 @@ def api_resolve_image():
                 
                 # Подменяем URL на локальный
                 # host берется из request.host_url, чтобы работало и локально, и на render
-                local_url = f"{request.host_url}temp_cache/{local_filename}"
+                base_url = request.host_url
+                if 'render.com' in base_url and not base_url.startswith('https'):
+                    base_url = base_url.replace('http://', 'https://')
+                
+                local_url = f"{base_url}temp_cache/{local_filename}"
                 img_data['url'] = local_url
-                logger.info(f"[{req_id}] Proxy: Serving local URL.")
                 
             except Exception as e:
                 logger.error(f"[{req_id}] Proxy Error: {e}")
