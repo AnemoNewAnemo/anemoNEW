@@ -13524,7 +13524,7 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
                             original_link = entity.url
                             break
                 # --------------------------------------------------
-
+                logging.info(f"Cсылка на телеграф=========================================== {original_link} ")
                 asyncio.create_task(
                     gpt_helper.analyze_and_save_background(
                         bot, 
@@ -14690,7 +14690,7 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
                                 original_link = entity.url
                                 break
                     # --------------------------------------------------
-
+                    logging.info(f"Cсылка на телеграф=========================================== {original_link} ")
                     asyncio.create_task(
                         gpt_helper.analyze_and_save_background(
                             context.bot, 
