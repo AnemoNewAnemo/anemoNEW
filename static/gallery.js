@@ -5,49 +5,94 @@ function setupFullscreenUI() {
     const fsPreview = document.getElementById('fs-preview');
     if (!fsPreview) return;
 
-    // Очищаем, чтобы пересоздать структуру правильно
     fsPreview.innerHTML = '';
 
     // 1. Контейнер для картинки
     const imgContainer = document.createElement('div');
-    imgContainer.style.position = 'relative';
-    imgContainer.style.width = '100%';
-    imgContainer.style.height = '100%';
-    imgContainer.style.display = 'flex';
-    imgContainer.style.justifyContent = 'center';
-    imgContainer.style.alignItems = 'center';
+    imgContainer.style.cssText = 'position:relative; width:100%; height:100%; display:flex; justify-content:center; align-items:center;';
 
-    // 2. Элемент картинки
+    // Элемент картинки
     const img = document.createElement('img');
     img.id = 'fs-img';
-    img.style.maxWidth = '95%';
-    img.style.maxHeight = '95%';
-    img.style.boxShadow = '0 0 50px rgba(0,0,0,0.5)';
-    img.style.opacity = '0'; // Скрыта пока грузится
-    img.style.transition = 'opacity 0.5s ease';
+    img.style.cssText = 'max-width:95%; max-height:95%; box-shadow:0 0 50px rgba(0,0,0,0.5); opacity:0; transition:opacity 0.5s ease;';
     
-    // 3. Лоадер (Пульсирующий круг)
+    // Лоадер
     const loader = document.createElement('div');
     loader.id = 'fs-loader';
-    loader.className = 'fs-loader'; // Стили описаны в CSS
+    loader.className = 'fs-loader';
 
     imgContainer.appendChild(loader);
     imgContainer.appendChild(img);
     fsPreview.appendChild(imgContainer);
 
-    // 4. Кнопка "i" (Информация)
-    const infoBtn = document.createElement('div');
-    infoBtn.className = 'fs-info-trigger-btn';
-    infoBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>`;
-    fsPreview.appendChild(infoBtn);
+    // --- КНОПКИ УПРАВЛЕНИЯ (Справа в столбик) ---
+    
+    // Общий стиль для круглых кнопок справа
+    const btnStyle = `
+        position: absolute; right: 30px; width: 50px; height: 50px;
+        background: rgba(20, 20, 25, 0.6); backdrop-filter: blur(10px);
+        border: 1px solid rgba(255,255,255,0.15); border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        cursor: pointer; z-index: 3001; transition: all 0.2s ease;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3); color: #eee;
+    `;
 
-    // 5. Панель информации
+    // 1. Кнопка ЗАКРЫТЬ (Самая верхняя)
+    const closeBtn = document.createElement('div');
+    closeBtn.id = 'fs-close-btn';
+    closeBtn.style.cssText = btnStyle + 'top: 30px;';
+    closeBtn.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+    
+    // 2. Кнопка ИНФО (Ниже закрытия)
+    const infoBtn = document.createElement('div');
+    infoBtn.className = 'fs-info-trigger-btn'; // Оставляем класс для совместимости стилей
+    infoBtn.style.cssText = btnStyle + 'top: 90px;';
+    infoBtn.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>`;
+
+    // 3. Кнопка СКАЧАТЬ (Ниже инфо) - показывается только если есть ссылка
+    const downloadBtn = document.createElement('div');
+    downloadBtn.id = 'fs-download-btn';
+    downloadBtn.style.cssText = btnStyle + 'top: 150px; display: none;'; // Скрыта по умолчанию
+    downloadBtn.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
+
+    // --- КНОПКИ НАВИГАЦИИ (Стрелки) ---
+    const navStyle = `
+        position: absolute; top: 50%; transform: translateY(-50%);
+        width: 60px; height: 100px; display: flex; align-items: center; justify-content: center;
+        cursor: pointer; z-index: 3001; opacity: 0.5; transition: opacity 0.2s;
+        color: white; font-size: 20px;
+    `;
+    
+    const prevBtn = document.createElement('div');
+    prevBtn.id = 'fs-prev';
+    prevBtn.style.cssText = navStyle + 'left: 10px;';
+    prevBtn.innerHTML = `<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>`;
+    
+    const nextBtn = document.createElement('div');
+    nextBtn.id = 'fs-next';
+    nextBtn.style.cssText = navStyle + 'right: 10px;';
+    nextBtn.innerHTML = `<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`;
+
+    // Эффекты ховера для навигации
+    [prevBtn, nextBtn].forEach(btn => {
+        btn.onmouseenter = () => btn.style.opacity = '1';
+        btn.onmouseleave = () => btn.style.opacity = '0.5';
+    });
+
+    // Добавляем все элементы
+    fsPreview.appendChild(closeBtn);
+    fsPreview.appendChild(infoBtn);
+    fsPreview.appendChild(downloadBtn);
+    fsPreview.appendChild(prevBtn);
+    fsPreview.appendChild(nextBtn);
+
+    // 5. Панель информации (без изменений)
     const infoPanel = document.createElement('div');
     infoPanel.id = 'fs-info-panel';
     infoPanel.innerHTML = `
         <div class="fs-info-header">
             <div class="fs-info-title">INFO</div>
-            <div class="fs-close-panel">
+            <div class="fs-close-panel" style="cursor:pointer;">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
             </div>
         </div>
@@ -55,33 +100,28 @@ function setupFullscreenUI() {
     `;
     fsPreview.appendChild(infoPanel);
 
-    // --- ОБРАБОТЧИКИ СОБЫТИЙ ---
-
-    // Клик по кнопке "i"
-    infoBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        infoPanel.classList.toggle('active');
-    });
-
-    // Клик по крестику внутри панели
-    infoPanel.querySelector('.fs-close-panel').addEventListener('click', (e) => {
-        e.stopPropagation();
-        infoPanel.classList.remove('active');
-    });
-
-    // Клик внутри панели не должен закрывать превью
-    infoPanel.addEventListener('click', e => e.stopPropagation());
-
-    // Закрытие всего фулскрина по клику на фон
-    fsPreview.addEventListener('click', () => {
+    // --- ОБРАБОТЧИКИ ---
+    
+    const closeFullscreen = () => {
         fsPreview.style.display = 'none';
         infoPanel.classList.remove('active');
         img.src = '';
         img.style.opacity = '0';
-        loader.classList.remove('active'); // Спрятать лоадер если закрыли во время загрузки
+        loader.classList.remove('active');
+        window.currentFsIndex = -1; // Сброс индекса
+    };
+
+    closeBtn.addEventListener('click', (e) => { e.stopPropagation(); closeFullscreen(); });
+    infoBtn.addEventListener('click', (e) => { e.stopPropagation(); infoPanel.classList.toggle('active'); });
+    infoPanel.querySelector('.fs-close-panel').addEventListener('click', (e) => { e.stopPropagation(); infoPanel.classList.remove('active'); });
+    infoPanel.addEventListener('click', e => e.stopPropagation());
+    
+    // Перехват кликов по стрелкам будет в renderMasonry (через глобальную функцию)
+    // Фоновый клик
+    fsPreview.addEventListener('click', (e) => {
+        if(e.target === fsPreview || e.target === imgContainer) closeFullscreen();
     });
 }
-
 // Функция заполнения панели данных
 function populateFSInfo(data) {
     const body = document.getElementById('fs-info-content-body');
@@ -364,25 +404,159 @@ export function initGallery() {
     overlay.addEventListener('mousedown', stopProp);
     overlay.addEventListener('mouseup', stopProp);
     overlay.addEventListener('click', stopProp);
+
+    const urlParams = new URLSearchParams(window.location.search);
+
+    // Логика для чекбокса "Серверная загрузка" (?proxy=true)
+    if (urlParams.get('proxy') === 'true') {
+        const proxyToggle = document.getElementById('proxy-toggle');
+        if (proxyToggle) {
+            proxyToggle.checked = true;
+            // Важно: вызываем событие change, чтобы обновился и глобальный CONFIG в основном скрипте
+            proxyToggle.dispatchEvent(new Event('change'));
+        }
+    }
+
+    // Логика для мгновенного открытия галереи (?gallery=true)
+    if (urlParams.get('gallery') === 'true') {
+        const overlay = document.getElementById('gallery-overlay');
+        if (overlay) {
+            overlay.style.display = 'flex';
+            // Ставим сцену на паузу, как при клике на кнопку
+            window.dispatchEvent(new CustomEvent('toggle-pause', { detail: true }));
+            // Запускаем загрузку
+            if (state.offset === 0) loadItems(true);
+        }
+    }
+} // <--- Это закрывающая скобка функции initGallery
+
+// Глобальная переменная для хранения текущего списка
+let currentGalleryItems = [];
+window.currentFsIndex = -1;
+
+function openGalleryFullscreen(index) {
+    if (index < 0 || index >= currentGalleryItems.length) return;
+    
+    window.currentFsIndex = index;
+    const item = currentGalleryItems[index];
+    
+    const fsPreview = document.getElementById('fs-preview');
+    const fsImg = document.getElementById('fs-img');
+    const fsLoader = document.getElementById('fs-loader'); 
+    const downloadBtn = document.getElementById('fs-download-btn');
+    
+    fsPreview.style.display = 'flex';
+    fsImg.style.opacity = '0';
+    fsImg.src = '';
+    fsLoader.classList.add('active');
+
+    // Обновляем информацию
+    populateFSInfo(item);
+    
+    // Логика кнопки скачивания (Telegra.ph)
+    if (item.original_link) {
+        downloadBtn.style.display = 'flex';
+        downloadBtn.onclick = (e) => {
+            e.stopPropagation();
+            window.open(item.original_link, '_blank');
+        };
+        downloadBtn.title = "Скачать оригинал";
+    } else {
+        downloadBtn.style.display = 'none';
+    }
+
+    // Загрузка полного изображения
+    // Если есть данные из кэша resolve, берем url оттуда, иначе item.url (обычно там thumbnail)
+    // Для высокого качества лучше использовать отдельный запрос resolve или менять параметры wsrv
+    let fullUrl = item.url;
+    if (RESOLVE_CACHE.has(item.post_id)) {
+        fullUrl = RESOLVE_CACHE.get(item.post_id).url;
+    }
+    
+    // Улучшаем качество если это wsrv
+    if (fullUrl.includes('wsrv.nl')) {
+        fullUrl = fullUrl.replace('&w=500', '&w=1600').replace('&w=1000', '&w=1600');
+    }
+
+    const fullImgLoader = new Image();
+    fullImgLoader.src = fullUrl;
+    
+    fullImgLoader.onload = () => {
+        fsImg.src = fullUrl;
+        fsLoader.classList.remove('active'); 
+        fsImg.style.opacity = '1';
+    };
+    fullImgLoader.onerror = () => {
+        fsLoader.classList.remove('active');
+        // alert("Ошибка загрузки");
+    };
 }
+
+// Навешиваем обработчики на стрелки (один раз при инициализации скрипта)
+document.addEventListener('DOMContentLoaded', () => {
+    const prev = document.getElementById('fs-prev');
+    const next = document.getElementById('fs-next');
+    
+    // Проверка на существование, т.к. setupFullscreenUI вызывается позже
+    // Лучше использовать делегирование или проверить внутри click
+    document.addEventListener('click', (e) => {
+        if (e.target.closest('#fs-prev')) {
+            e.stopPropagation();
+            if (window.currentFsIndex > 0) openGalleryFullscreen(window.currentFsIndex - 1);
+        }
+        if (e.target.closest('#fs-next')) {
+            e.stopPropagation();
+            if (window.currentFsIndex < currentGalleryItems.length - 1) openGalleryFullscreen(window.currentFsIndex + 1);
+        }
+    });
+    
+    // Стрелки клавиатуры
+    document.addEventListener('keydown', (e) => {
+        const fsPreview = document.getElementById('fs-preview');
+        if (fsPreview.style.display === 'flex') {
+            if (e.key === 'ArrowLeft' && window.currentFsIndex > 0) openGalleryFullscreen(window.currentFsIndex - 1);
+            if (e.key === 'ArrowRight' && window.currentFsIndex < currentGalleryItems.length - 1) openGalleryFullscreen(window.currentFsIndex + 1);
+            if (e.key === 'Escape') document.getElementById('fs-close-btn').click();
+        }
+    });
+});
+
 
 // --- 5. Рендер с КЭШИРОВАНИЕМ ---
 function renderMasonry(items, columns) {
-    // === ИСПРАВЛЕНИЕ: Получаем состояние чекбокса ===
     const useProxy = document.getElementById('proxy-toggle')?.checked || false; 
 
-    items.forEach(item => {
+    // --- ВАЖНО: Обновляем глобальный список для навигации ---
+    // Если это первая страница, перезаписываем, если подгрузка - добавляем?
+    // В текущей реализации loadItems очищает колонки при reset=true.
+    // Для корректной работы стрелок при подгрузке нужно хитро объединять массивы.
+    // Упрощение: мы просто пушим новые items в currentGalleryItems, если это не сброс.
+    
+    // Проверка: это новые данные или добавление? 
+    // Поскольку renderMasonry вызывается с куском данных (chunk), нам нужно понимать контекст.
+    // Самый простой способ: в loadItems при reset=true делать currentGalleryItems = [];
+    // А здесь делать currentGalleryItems.push(...items).
+    // НО: renderMasonry вызывается внутри loadItems. 
+    // Давай изменим это прямо здесь, предполагая, что items - это ТОЛЬКО ЧТО загруженные.
+    
+    // Однако индексы в DOM и в массиве должны совпадать.
+    // ПРИМЕЧАНИЕ: Чтобы не ломать архитектуру, добавим проверку в loadItems (см. ниже),
+    // а здесь просто будем использовать items как есть, но нам нужен GLOBAL OFFSET.
+    
+    // РЕШЕНИЕ: Привяжем данные прямо к DOM элементу div.gallery-item
+    
+    items.forEach((item, index) => {
         if (!item.post_id) return;
 
-        // Находим самую короткую колонку
         let minCol = columns[0];
-        columns.forEach(col => {
-            if (col.offsetHeight < minCol.offsetHeight) minCol = col;
-        });
+        columns.forEach(col => { if (col.offsetHeight < minCol.offsetHeight) minCol = col; });
 
         const div = document.createElement('div');
         div.className = 'gallery-item';
         div.style.minHeight = '200px'; 
+        
+        // Сохраняем данные для клика
+        div.__galleryItem = item;
         
         const img = document.createElement('img');
         div.appendChild(img);
@@ -393,19 +567,17 @@ function renderMasonry(items, columns) {
 
         minCol.appendChild(div);
 
-        // Функция применения данных к карточке
         const applyData = (d) => {
-            if (!d.url || d.url.includes('via.placeholder.com')) {
-                div.remove(); return;
-            }
+            if (!d.url || d.url.includes('via.placeholder.com')) { div.remove(); return; }
 
+            // Обновляем данные item с учетом resolve (url, sizes)
+            Object.assign(item, d); // Важно обновить объект, чтобы в фулскрине была правильная ссылка
+            
             let thumbUrl = d.url;
-            // Если прокси не включен, но ссылка от wsrv, оптимизируем её для превью
             if (thumbUrl.includes('wsrv.nl')) {
                 thumbUrl = thumbUrl.replace('&n=-1', '') + '&w=500&q=75&output=webp';
             }
 
-            // Таймаут на случай битой картинки
             const safetyTimeout = setTimeout(() => { if(!img.complete) div.remove(); }, 8000); 
 
             img.src = thumbUrl;
@@ -422,44 +594,28 @@ function renderMasonry(items, columns) {
                     <div class="g-caption-preview">${captionText}</div>
                     <div class="g-actions">
                         <div class="g-btn-action g-btn-target">Цель</div>
-                            <a href="${linkUrl}" target="_blank" class="g-btn-action g-btn-link" style="${linkStyle}" onclick="event.stopPropagation();">
-                                <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                                    <path d="M20.665 3.717l-17.73 6.837c-1.21.486-1.203 1.161-.222 1.462l4.552 1.42 10.532-6.645c.498-.303.953-.14.579.192l-8.533 7.701h-.002l-.002.001-.314 4.692c.46 0 .663-.211.921-.46l2.211-2.15 4.599 3.397c.848.467 1.457.227 1.668-.785l3.019-14.228c.309-1.239-.473-1.8-1.282-1.432z"/>
-                                </svg>
-                            </a>
+                        <a href="${linkUrl}" target="_blank" class="g-btn-action g-btn-link" style="${linkStyle}" onclick="event.stopPropagation();">
+                            <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M20.665 3.717l-17.73 6.837c-1.21.486-1.203 1.161-.222 1.462l4.552 1.42 10.532-6.645c.498-.303.953-.14.579.192l-8.533 7.701h-.002l-.002.001-.314 4.692c.46 0 .663-.211.921-.46l2.211-2.15 4.599 3.397c.848.467 1.457.227 1.668-.785l3.019-14.228c.309-1.239-.473-1.8-1.282-1.432z"/></svg>
+                        </a>
                     </div>
                 `;
                 
-                // Обработчики кликов (те же, что и были)
+                // --- ОБРАБОТЧИК КЛИКА ПО КАРТИНКЕ ---
                 div.addEventListener('click', (e) => {
                     if (e.target.closest('.g-btn-target') || e.target.closest('.g-btn-link')) return;
                     
-                    const fsPreview = document.getElementById('fs-preview');
-                    const fsImg = document.getElementById('fs-img');
-                    const fsLoader = document.getElementById('fs-loader'); 
+                    // Собираем актуальный список всех элементов в DOM для правильной навигации
+                    // Это нужно, потому что Masonry перемешивает порядок в DOM (разные колонки), 
+                    // но нам нужен логический порядок или визуальный? 
+                    // Для простоты соберем currentGalleryItems из всех .gallery-item в DOM
                     
-                    fsPreview.style.display = 'flex';
-                    fsImg.style.opacity = '0';
-                    fsImg.src = '';
-                    fsLoader.classList.add('active');
-
-                    const fullData = { ...item, ...d };
-                    populateFSInfo(fullData);
+                    const allDivs = Array.from(document.querySelectorAll('.gallery-item'));
+                    currentGalleryItems = allDivs.map(el => el.__galleryItem).filter(x => x);
                     
-                    const fullUrl = d.url.includes('wsrv.nl') ? d.url.replace('&w=500', '&w=1600') : d.url;
+                    // Находим индекс текущего
+                    const myIndex = allDivs.indexOf(div);
                     
-                    const fullImgLoader = new Image();
-                    fullImgLoader.src = fullUrl;
-                    
-                    fullImgLoader.onload = () => {
-                        fsImg.src = fullUrl;
-                        fsLoader.classList.remove('active'); 
-                        fsImg.style.opacity = '1';
-                    };
-                    fullImgLoader.onerror = () => {
-                        fsLoader.classList.remove('active');
-                        alert("Ошибка загрузки полной версии");
-                    };
+                    openGalleryFullscreen(myIndex);
                 });
 
                 const targetBtn = overlayInfo.querySelector('.g-btn-target');
@@ -488,11 +644,9 @@ function renderMasonry(items, columns) {
             img.onerror = () => div.remove();
         };
 
-        // --- ЛОГИКА КЭШИРОВАНИЯ ---
         if (RESOLVE_CACHE.has(item.post_id)) {
             applyData(RESOLVE_CACHE.get(item.post_id));
         } else {
-            // ТЕПЕРЬ useProxy ОПРЕДЕЛЕН И ОШИБКИ НЕ БУДЕТ
             fetch(`/api/anemone/resolve_image?post_id=${item.post_id}&channel_id=@anemonn&use_proxy=${useProxy}`)
                 .then(r => r.json())
                 .then(d => {
