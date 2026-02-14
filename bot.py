@@ -11951,6 +11951,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
                             "media": media_group_data,
                             "scheduled": 'Отсутствует',
                             "time": time,
+                            "original_link": article_url,  # <--- ДОБАВИТЬ ЭТУ СТРОКУ
                             # === ДОБАВЛЯЕМ МУЗЫКУ В БАЗУ ===
                             "music_post": music_post_flag,
                             "musicmedia": music_media_data
@@ -11980,6 +11981,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
                             ],
                             "scheduled": 'Отсутствует',
                             "time": time,
+                            "original_link": article_url,  # <--- ДОБАВИТЬ ЭТУ СТРОКУ
                             # === ДОБАВЛЯЕМ МУЗЫКУ В БАЗУ ===
                             "music_post": music_post_flag,
                             "musicmedia": music_media_data
@@ -12026,6 +12028,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
                         ],
                         "scheduled": 'Отсутствует',
                         "time": time,
+                        "original_link": article_url,  # <--- ДОБАВИТЬ ЭТУ СТРОКУ
                         # === ДОБАВЛЯЕМ МУЗЫКУ В БАЗУ ===
                         "music_post": music_post_flag,
                         "musicmedia": music_media_data
@@ -13412,6 +13415,8 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
 
     key = f"{user_id}_{message_id}"
     media_group_data = user_data.get(key)
+    logging.info(f"--- Анализ сообщения ID: {msg.message_id} ---")
+    
     if not media_group_data:
         logging.error(f"Данные для публикации {key} не найдены.")
         return
@@ -13536,22 +13541,8 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
                 post_date = int(msg.date.timestamp())
 
                 # --- ИЗВЛЕЧЕНИЕ ССЫЛКИ НА ОРИГИНАЛ (Telegra.ph) ---
-                original_link = None
-                if msg.caption_entities and msg.caption:
-                    for entity in msg.caption_entities:
-                        # Вариант 1: Гиперссылка (вшита в слово)
-                        if entity.type == 'text_link' and entity.url and 'telegra.ph' in entity.url:
-                            original_link = entity.url
-                            break
-                        
-                        # Вариант 2: Обычная ссылка (текстом)
-                        elif entity.type == 'url':
-                            # Для типа 'url' сама ссылка находится в тексте сообщения
-                            link_text = msg.caption[entity.offset : entity.offset + entity.length]
-                            if 'telegra.ph' in link_text:
-                                original_link = link_text
-                                break
-                # --------------------------------------------------
+                original_link = media_group_data.get('original_link')
+                # -------------------------------------
                 logging.info(f"Cсылка на телеграф=========================================== {original_link} ")
                 asyncio.create_task(
                     gpt_helper.analyze_and_save_background(
@@ -14730,22 +14721,8 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
                     post_date = int(msg.date.timestamp())
 
                     # --- ИЗВЛЕЧЕНИЕ ССЫЛКИ НА ОРИГИНАЛ (Telegra.ph) ---
-                    original_link = None
-                    if msg.caption_entities and msg.caption:
-                        for entity in msg.caption_entities:
-                            # Вариант 1: Гиперссылка (вшита в слово)
-                            if entity.type == 'text_link' and entity.url and 'telegra.ph' in entity.url:
-                                original_link = entity.url
-                                break
-                            
-                            # Вариант 2: Обычная ссылка (текстом)
-                            elif entity.type == 'url':
-                                # Для типа 'url' сама ссылка находится в тексте сообщения
-                                link_text = msg.caption[entity.offset : entity.offset + entity.length]
-                                if 'telegra.ph' in link_text:
-                                    original_link = link_text
-                                    break
-                    # --------------------------------------------------
+                    original_link = media_group_data.get('original_link')
+                    # -------------------------------------
                     logging.info(f"Cсылка на телеграф=========================================== {original_link} ")
                     asyncio.create_task(
                         gpt_helper.analyze_and_save_background(
