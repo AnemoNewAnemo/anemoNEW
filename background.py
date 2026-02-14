@@ -115,11 +115,11 @@ def get_image_from_telegram(post_id, custom_channel_id=None, req_id="Unknown"):
                         "height": 1000,
                         "caption": db_data.get('caption', "")[:100],
                         "date": date_str,
-                        "post_link": post_link
+                        "post_link": post_link,
+                        "original_link": db_data.get('original_link')  # <--- ДОБАВЛЕНО ЭТО ПОЛЕ
                     }
                 else:
                      logger.error(f"[{req_id}] DB file_id expired or invalid: {file_id}")
-                     # Если file_id протух (редко для бота), можно попробовать упасть в fallback (ниже)
             except Exception as e:
                 logger.error(f"[{req_id}] Error resolving DB file_id: {e}")
 
@@ -785,6 +785,7 @@ def api_search_gallery():
             "file_id": item.get('file_id'),
             "caption": item.get('caption'),
             "post_link": f"https://t.me/{item.get('channel_id', 'anemonn').replace('@', '')}/{item.get('post_id')}",
+            "original_link": item.get('original_link'), # <--- ДОБАВЛЕНО ЭТО ПОЛЕ
             "ai_des": item.get('ai_des_ru'),
             "ai_style": item.get('ai_style_ru'),
             "date": datetime.fromtimestamp(item.get('date', 0)).strftime('%d.%m.%Y') if item.get('date') else "",
