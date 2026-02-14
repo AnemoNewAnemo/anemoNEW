@@ -50,6 +50,54 @@
         .side-btn svg, #settings-btn svg { fill: var(--text-main); stroke: var(--text-main); width: 20px; height: 20px; transition: transform 0.5s ease; }
         
         #settings-btn { top: 24px; }
+        
+        /* Кнопка-стрелка (разворачивание меню) */
+        #expand-btn {
+            position: absolute; right: 24px; top: 74px; /* 24px + 44px + 6px отступ */
+            width: 44px; height: 22px; /* Высота в 2 раза меньше */
+            border-radius: 8px; /* Чуть меньше скругление */
+            background: rgba(20, 20, 25, 0.6); 
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+            z-index: 99; /* Чуть ниже настроек */
+        }
+        #expand-btn:hover { background: rgba(40, 40, 45, 0.9); }
+        #expand-btn svg { 
+            width: 16px; height: 16px; stroke: var(--text-dim); 
+            transition: transform 0.4s ease; 
+        }
+        /* Класс для поворота стрелки вверх */
+        #expand-btn.active svg { transform: rotate(180deg); stroke: var(--text-main); }
+
+        /* Контейнер для выезжающих кнопок */
+        #side-controls {
+            position: absolute; 
+            top: 104px; /* Позиция под стрелкой */
+            right: 24px;
+            display: flex; flex-direction: column; gap: 12px;
+            z-index: 98;
+            
+            /* Скрытое состояние */
+            opacity: 0;
+            transform: translateY(-20px);
+            pointer-events: none;
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        /* Видимое состояние */
+        #side-controls.active {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+
+        /* Переопределяем стили кнопок внутри контейнера, чтобы они были relative */
+        #side-controls .side-btn {
+            position: relative; 
+            top: auto; right: auto; /* Сбрасываем абсолют */
+        }
         #settings-btn.active svg { transform: rotate(90deg); }
         
         /* Панель настроек */
@@ -805,6 +853,26 @@
         <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     </div>
 
+    <!-- НОВАЯ КНОПКА-СТРЕЛКА (прямо под настройками) -->
+    <div id="expand-btn" title="Показать меню">
+        <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+
+    <!-- ВЫЕЗЖАЮЩАЯ ПАНЕЛЬ С КНОПКАМИ -->
+    <div id="side-controls">
+        <div id="add-btn" class="side-btn" title="Добавить котомментарий">
+            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
+
+        <div id="search-btn" class="side-btn" title="Найти котомментарий">
+            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2" fill="none"/><path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
+
+        <div id="home-btn" class="side-btn" title="Вернуться к началу">
+            <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="9 22 9 12 15 12 15 22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+    </div>
+
     <!-- Панель -->
     <div id="settings-panel">
         <div class="panel-header">Настройки</div>
@@ -884,9 +952,20 @@
                         <span style="font-size: 11px; color: #888;">Показать сферу</span>
                         <input type="checkbox" id="ui-chaos-toggle" style="width: auto; height: auto;">
                     </div>
-                    <div style="font-size: 10px; color: #aaa; margin-top: 5px; line-height: 1.2;">
-                        Показать границы хаоса. За пределами этой зоны конетнт может меняться со временем, поэтому там не лучшее место для комментариев. Контент внутри зоны стабилен и постоянен.
+                </div>
+                <!-- НОВЫЕ НАСТРОЙКИ ДЖОЙСТИКОВ -->
+                <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 12px 0;"></div>
+                <div class="control-group">
+                    <div class="label-row"><label>Джойстики (Сенсор)</label></div>
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <span style="font-size: 11px; color: #888;">Включены</span>
+                        <input type="checkbox" id="ui-joystick-toggle" checked style="width: auto; height: auto;">
                     </div>
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Размер джойстиков</label></div>
+                    <!-- value=100 - это новый уменьшенный дефолт -->
+                    <input type="range" id="ui-joystick-size" min="60" max="180" step="10" value="100">
                 </div>
             </div>
         </details>
@@ -1026,17 +1105,6 @@
         </details>
     </div>
 
-    <!-- НОВЫЕ КНОПКИ -->
-    <div id="add-btn" class="side-btn" style="top: 80px;" title="Добавить котомментарий">
-        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-    </div>
-
-    <div id="search-btn" class="side-btn" style="top: 136px;" title="Найти котомментарий">
-        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2" fill="none"/><path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-    </div>
-    <div id="home-btn" class="side-btn" style="top: 192px;" title="Вернуться к началу">
-        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="9 22 9 12 15 12 15 22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    </div>
 
     <div id="gallery-btn" title="Открыть базу данных">
         <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
