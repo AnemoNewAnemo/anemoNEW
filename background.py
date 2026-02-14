@@ -48,6 +48,19 @@ DEFAULT_MAX_POST_ID = 8504
 IMAGE_CACHE = {} 
 from datetime import datetime
 
+
+# --- НАСТРОЙКА ВРЕМЕННОГО КЭША ---
+TEMP_CACHE_DIR = os.path.join(os.getcwd(), 'temp_cache')
+if not os.path.exists(TEMP_CACHE_DIR):
+    os.makedirs(TEMP_CACHE_DIR)
+
+# Маршрут для раздачи кэшированных картинок
+@app.route('/temp_cache/<path:filename>')
+def serve_temp_cache(filename):
+    return send_from_directory(TEMP_CACHE_DIR, filename)
+
+
+
 # --- ЗАМЕНА ФУНКЦИИ get_image_from_telegram ---
 # --- ЗАМЕНА ФУНКЦИИ get_image_from_telegram ---
 # --- ЗАМЕНА ФУНКЦИИ get_image_from_telegram ---
@@ -252,14 +265,17 @@ def get_image_from_telegram(post_id, custom_channel_id=None, req_id="Unknown"):
 
 @app.route('/api/anemone/resolve_image')
 def api_resolve_image():
-    # Генерируем короткий ID запроса (например, a1b2) для удобства чтения логов
+    # Генерируем короткий ID запроса
     req_id = str(uuid.uuid4())[:8]
     
     post_id = request.args.get('post_id')
     channel_id = request.args.get('channel_id')
+    # Читаем флаг прокси (строка 'true' -> bool)
+    use_proxy = request.args.get('use_proxy') == 'true'
     
-    logger.info(f"[{req_id}] START Resolve: Post {post_id} (Chan: {channel_id})")
+    logger.info(f"[{req_id}] START Resolve: Post {post_id} (Chan: {channel_id}) Proxy: {use_proxy}")
     
+    # 1. Получаем прямую ссылку (через wsrv или telegram)
     img_data = get_image_from_telegram(post_id, custom_channel_id=channel_id, req_id=req_id)
     
     if img_data and "error" in img_data and img_data["error"] == "access_denied":
@@ -267,9 +283,46 @@ def api_resolve_image():
         return jsonify({"found": False, "error": "access_denied"})
 
     if img_data:
-        from urllib.parse import quote
-        encoded = quote(img_data['url'])
-        # Мы добавляем req_id в ссылку прокси, чтобы отследить и второй этап загрузки!
+        final_url = img_data['url']
+
+        # --- ЛОГИКА СЕРВЕРНОГО КЭШИРОВАНИЯ ---
+        if use_proxy:
+            try:
+                # Генерируем имя файла: {post_id}.jpg (или webp, если wsrv отдает webp)
+                # Для простоты сохраняем как jpg, но wsrv обычно отдает webp, если не указано иное
+                local_filename = f"{post_id}.webp" 
+                local_path = os.path.join(TEMP_CACHE_DIR, local_filename)
+
+                # Если файла нет — скачиваем
+                if not os.path.exists(local_path):
+                    logger.info(f"[{req_id}] Proxy: Downloading to server cache...")
+                    # Добавляем output=webp для гарантии формата, если качаем через wsrv
+                    download_url = final_url
+                    if "wsrv.nl" in final_url and "output=webp" not in final_url:
+                        download_url += "&output=webp"
+
+                    r = requests_session.get(download_url, stream=True, timeout=15)
+                    if r.status_code == 200:
+                        with open(local_path, 'wb') as f:
+                            for chunk in r.iter_content(1024):
+                                f.write(chunk)
+                        logger.info(f"[{req_id}] Proxy: Cached successfully.")
+                    else:
+                        logger.error(f"[{req_id}] Proxy Download Failed: {r.status_code}")
+                        # Fallback: возвращаем прямую ссылку, если не смогли скачать
+                        return jsonify(img_data)
+                
+                # Подменяем URL на локальный
+                # host берется из request.host_url, чтобы работало и локально, и на render
+                local_url = f"{request.host_url}temp_cache/{local_filename}"
+                img_data['url'] = local_url
+                logger.info(f"[{req_id}] Proxy: Serving local URL.")
+                
+            except Exception as e:
+                logger.error(f"[{req_id}] Proxy Error: {e}")
+                # Fallback при ошибке файловой системы
+        # -------------------------------------
+
         return jsonify({
             "found": True,
             "url": img_data['url'],
