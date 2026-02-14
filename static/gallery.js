@@ -491,7 +491,7 @@ function renderMasonry(items, columns) {
             applyData(RESOLVE_CACHE.get(item.post_id));
         } else {
             // Если нет, делаем запрос
-            fetch(`/api/anemone/resolve_image?post_id=${item.post_id}&channel_id=@anemonn`)
+            fetch(`/api/anemone/resolve_image?post_id=${item.post_id}&channel_id=@anemonn&use_proxy=${useProxy}`)
                 .then(r => r.json())
                 .then(d => {
                     // Сохраняем в кэш
