@@ -13509,6 +13509,25 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
         # === ЦИКЛ СОХРАНЕНИЯ В ФОНЕ ===
         # Обрабатываем КАЖДУЮ картинку из альбома
         for msg in sent_messages:
+            logging.info(f"--- Анализ сообщения ID: {msg.message_id} ---")
+            logging.info(f"Caption (raw): {msg.caption}")
+            
+            if msg.caption_entities:
+                logging.info(f"Найдено сущностей: {len(msg.caption_entities)}")
+                for i, ent in enumerate(msg.caption_entities):
+                    # Извлекаем текст, на который указывает сущность (для проверки)
+                    full_text = msg.caption if msg.caption else ""
+                    entity_text = full_text[ent.offset : ent.offset + ent.length]
+                    
+                    logging.info(
+                        f"Entity #{i}: Type='{ent.type}', "
+                        f"URL='{ent.url}', "
+                        f"Text='{entity_text}'"
+                    )
+            else:
+                logging.info("Сущностей (entities) в этом сообщении нет.")
+            # ===============================
+            
             if msg.photo:
                 new_post_id = msg.message_id
                 best_photo = msg.photo[-1]
@@ -13518,11 +13537,20 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
 
                 # --- ИЗВЛЕЧЕНИЕ ССЫЛКИ НА ОРИГИНАЛ (Telegra.ph) ---
                 original_link = None
-                if msg.caption_entities:
+                if msg.caption_entities and msg.caption:
                     for entity in msg.caption_entities:
+                        # Вариант 1: Гиперссылка (вшита в слово)
                         if entity.type == 'text_link' and entity.url and 'telegra.ph' in entity.url:
                             original_link = entity.url
                             break
+                        
+                        # Вариант 2: Обычная ссылка (текстом)
+                        elif entity.type == 'url':
+                            # Для типа 'url' сама ссылка находится в тексте сообщения
+                            link_text = msg.caption[entity.offset : entity.offset + entity.length]
+                            if 'telegra.ph' in link_text:
+                                original_link = link_text
+                                break
                 # --------------------------------------------------
                 logging.info(f"Cсылка на телеграф=========================================== {original_link} ")
                 asyncio.create_task(
@@ -14673,6 +14701,25 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
             # Проходим по каждому сообщению (каждой картинке альбома)
             for msg in sent_messages:
                 # Проверяем, есть ли фото (у send_animation фото может быть в thumb, но логика ниже для photo)
+                logging.info(f"--- Анализ сообщения ID: {msg.message_id} ---")
+                logging.info(f"Caption (raw): {msg.caption}")
+                
+                if msg.caption_entities:
+                    logging.info(f"Найдено сущностей: {len(msg.caption_entities)}")
+                    for i, ent in enumerate(msg.caption_entities):
+                        # Извлекаем текст, на который указывает сущность (для проверки)
+                        full_text = msg.caption if msg.caption else ""
+                        entity_text = full_text[ent.offset : ent.offset + ent.length]
+                        
+                        logging.info(
+                            f"Entity #{i}: Type='{ent.type}', "
+                            f"URL='{ent.url}', "
+                            f"Text='{entity_text}'"
+                        )
+                else:
+                    logging.info("Сущностей (entities) в этом сообщении нет.")
+                # ===============================
+                    
                 if msg.photo:
                     new_post_id = msg.message_id
                     # Берем самое большое фото (последнее в списке)
@@ -14684,11 +14731,20 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
 
                     # --- ИЗВЛЕЧЕНИЕ ССЫЛКИ НА ОРИГИНАЛ (Telegra.ph) ---
                     original_link = None
-                    if msg.caption_entities:
+                    if msg.caption_entities and msg.caption:
                         for entity in msg.caption_entities:
+                            # Вариант 1: Гиперссылка (вшита в слово)
                             if entity.type == 'text_link' and entity.url and 'telegra.ph' in entity.url:
                                 original_link = entity.url
                                 break
+                            
+                            # Вариант 2: Обычная ссылка (текстом)
+                            elif entity.type == 'url':
+                                # Для типа 'url' сама ссылка находится в тексте сообщения
+                                link_text = msg.caption[entity.offset : entity.offset + entity.length]
+                                if 'telegra.ph' in link_text:
+                                    original_link = link_text
+                                    break
                     # --------------------------------------------------
                     logging.info(f"Cсылка на телеграф=========================================== {original_link} ")
                     asyncio.create_task(
