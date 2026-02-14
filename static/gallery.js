@@ -368,6 +368,9 @@ export function initGallery() {
 
 // --- 5. Рендер с КЭШИРОВАНИЕМ ---
 function renderMasonry(items, columns) {
+    // === ИСПРАВЛЕНИЕ: Получаем состояние чекбокса ===
+    const useProxy = document.getElementById('proxy-toggle')?.checked || false; 
+
     items.forEach(item => {
         if (!item.post_id) return;
 
@@ -397,6 +400,7 @@ function renderMasonry(items, columns) {
             }
 
             let thumbUrl = d.url;
+            // Если прокси не включен, но ссылка от wsrv, оптимизируем её для превью
             if (thumbUrl.includes('wsrv.nl')) {
                 thumbUrl = thumbUrl.replace('&n=-1', '') + '&w=500&q=75&output=webp';
             }
@@ -473,7 +477,7 @@ function renderMasonry(items, columns) {
                                     detail: { x: locData.pos.x, y: locData.pos.y, z: locData.pos.z }
                                 }));
                                 document.getElementById('gallery-overlay').style.display = 'none';
-                                window.dispatchEvent(new CustomEvent('toggle-pause', { detail: false })); // <--- ПАУЗА ВЫКЛ
+                                window.dispatchEvent(new CustomEvent('toggle-pause', { detail: false })); 
                             } else {
                                 alert("Объект далеко.");
                             }
@@ -485,21 +489,17 @@ function renderMasonry(items, columns) {
         };
 
         // --- ЛОГИКА КЭШИРОВАНИЯ ---
-        // Проверяем, есть ли данные в кэше по ID поста
         if (RESOLVE_CACHE.has(item.post_id)) {
-            // Мгновенное применение данных из памяти
             applyData(RESOLVE_CACHE.get(item.post_id));
         } else {
-            // Если нет, делаем запрос
+            // ТЕПЕРЬ useProxy ОПРЕДЕЛЕН И ОШИБКИ НЕ БУДЕТ
             fetch(`/api/anemone/resolve_image?post_id=${item.post_id}&channel_id=@anemonn&use_proxy=${useProxy}`)
                 .then(r => r.json())
                 .then(d => {
-                    // Сохраняем в кэш
                     RESOLVE_CACHE.set(item.post_id, d);
                     applyData(d);
                 })
                 .catch(() => div.remove());
         }
     });
-
 }
