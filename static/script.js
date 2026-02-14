@@ -3696,4 +3696,3 @@ window.addEventListener('resize', () => {
 });
 
 initGallery();
-
