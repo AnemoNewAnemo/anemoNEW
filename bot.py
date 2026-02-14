@@ -11916,7 +11916,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
                             
                             # Если текст ещё не добавлен, добавляем подпись к первому изображению
                             if not text_added:
-                                caption = f'{author_line}\n<a href="{webappurl}">Галерея</a>{links_string}'
+                                caption = f'{author_line}\n<a href="{article_url}">Оригинал</a> • <a href="{webappurl}">Галерея</a>{links_string}'
                                 text_added = True
 
                             # Добавляем только изображения в медиа-группу
@@ -11964,7 +11964,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
                 if image_count == 1:
                     single_image = next((item for item in media if item['type'] == 'image'), None)
                     if single_image:
-                        caption = f'{author_line}\n<a href="{webappurl}">Галерея</a>{links_string}'
+                        caption = f'{author_line}\n<a href="{article_url}">Оригинал</a> • <a href="{webappurl}">Галерея</a>{links_string}'
                         
                         # Формируем временный ключ
                         temp_key = f"{user_id}_0"  # Используем временный ключ до получения message_id
