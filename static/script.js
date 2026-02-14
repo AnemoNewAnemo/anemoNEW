@@ -49,7 +49,9 @@ const CONFIG = {
             new THREE.Color('#ffcc00')  // Золотой
         ]
     },
-
+    network: {
+        useProxy: false // По умолчанию выключено
+    },
 };
 
 
@@ -85,7 +87,7 @@ const CHUNK_SIZE = 1500;
 const RENDER_DISTANCE = 1;
 const FADE_DISTANCE = 1600;
 // ОПТИМИЗАЦИЯ: Увеличиваем с 2 до 6, так как файлы теперь загружаются быстрее
-const MAX_CONCURRENT_LOADS = 6;  
+const MAX_CONCURRENT_LOADS = 4;  
 const MAX_TEXTURE_SIZE = 512;
 // --- SHADERS (Шейдеры) ---
 
@@ -223,17 +225,43 @@ const paperFragmentShader = `
         float opacity = 1.0 - smoothstep(opacityStart, opacityEnd, vDist);
         if (opacity <= 0.01) discard; 
 
-        // --- ИЗМЕНЕНИЕ: БЕЛАЯ ОБРАТНАЯ СТОРОНА ---
+        // --- РАСЧЕТ ТЕНЕЙ ОТ ИЗГИБОВ (Новая логика) ---
+        // Вычисляем нормаль поверхности на основе изменения позиции пикселей
+        // Это автоматически учитывает волны от ветра из Vertex Shader
+        vec3 fdx = dFdx(vWorldPos);
+        vec3 fdy = dFdy(vWorldPos);
+        vec3 normal = normalize(cross(fdx, fdy));
+
+        // Если это задняя сторона, инвертируем нормаль
         if (!gl_FrontFacing) {
-            gl_FragColor = vec4(1.0, 1.0, 1.0, opacity);
+            normal = -normal;
+        }
+
+        // Источник света (сверху-слева-спереди) для создания объема
+        vec3 lightDir = normalize(vec3(-0.5, 0.8, 0.6));
+        
+        // Расчет освещенности (Lambertian diffuse)
+        float diff = max(dot(normal, lightDir), 0.0);
+        
+        // Мягкая тень: не черная, а слегка затененная (Ambient + Diffuse)
+        // 0.7 - базовая яркость в тени, 0.3 - добавка от света
+        float waveShadow = 0.75 + 0.25 * diff;
+
+
+        // --- ИЗМЕНЕНИЕ: БЕЛАЯ ОБРАТНАЯ СТОРОНА + ТЕНИ ---
+        if (!gl_FrontFacing) {
+            // Применяем тень к задней стороне
+            gl_FragColor = vec4(vec3(0.95) * waveShadow, opacity);
             return;
         }
 
-        // Логика яркости для лицевой стороны
+        // Логика яркости для лицевой стороны (дистанция)
         float shadowStart = 800.0;
         float shadowEnd = 1600.0;
-        float lightFactor = 1.0 - smoothstep(shadowStart, shadowEnd, vDist);
-        float brightness = 0.15 + (0.85 * lightFactor);
+        float distFactor = 1.0 - smoothstep(shadowStart, shadowEnd, vDist);
+        
+        // Комбинируем яркость от дистанции и тень от волн
+        float brightness = (0.15 + (0.85 * distFactor)) * waveShadow;
 
         vec3 rgbColor;
 
@@ -2064,12 +2092,13 @@ function runTask(task) {
 
     const urlParams = new URLSearchParams(window.location.search);
     const customChannel = urlParams.get('channel_id');
-    
-    // 2. Формируем строку параметра (убедитесь, что эта часть у вас есть)
     const channelParam = customChannel ? `&channel_id=${customChannel}` : '';
+    
+    // ДОБАВЛЕНО: Параметр прокси
+    const proxyParam = `&use_proxy=${CONFIG.network.useProxy}`;
 
-    // 3. Добавляем в запрос
-    fetch(`/api/anemone/resolve_image?post_id=${taskId}${channelParam}`, { signal: controller.signal })
+    // Измененная строка запроса:
+    fetch(`/api/anemone/resolve_image?post_id=${taskId}${channelParam}${proxyParam}`, { signal: controller.signal })
         .then(r => r.json())
         .then(data => {
             if (data.error === 'access_denied') {
@@ -3252,7 +3281,14 @@ document.getElementById('const-glow-str').addEventListener('input', (e) => {
         constellationTubeMat.uniforms.uGlowStr.value = val;
     }
 });
-
+// Слушатель для прокси-загрузки
+const proxyToggle = document.getElementById('proxy-toggle');
+if (proxyToggle) {
+    proxyToggle.addEventListener('change', (e) => {
+        CONFIG.network.useProxy = e.target.checked;
+        console.log(`Proxy Mode: ${CONFIG.network.useProxy ? 'ON' : 'OFF'}`);
+    });
+}
 // Слушатель для кнопки возврата домой
 document.getElementById('home-btn').addEventListener('click', () => {
     // Сбрасываем цель камеры на стартовую позицию (0, 0, 1000)
@@ -3660,4 +3696,3 @@ window.addEventListener('resize', () => {
 });
 
 initGallery();
-
