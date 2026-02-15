@@ -13514,23 +13514,21 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
         # === ЦИКЛ СОХРАНЕНИЯ В ФОНЕ ===
         # 1. Определяем общие данные из первого сообщения (если они есть)
         main_caption = ""
-        main_original_link = media_group_data.get('original_link') # Приоритет: ссылка из базы
+        main_original_link = media_group_data.get('original_link')
 
         if sent_messages:
-            # Берем подпись из первого сообщения, если она есть
             if sent_messages[0].caption:
                 main_caption = sent_messages[0].caption
             
-            # Если ссылки нет в базе, пытаемся найти её в entities первого сообщения
             if not main_original_link and sent_messages[0].caption_entities:
                 for entity in sent_messages[0].caption_entities:
                     if entity.type == 'text_link' and entity.url and 'telegra.ph' in entity.url:
                         main_original_link = entity.url
                         break
 
-        # 2. Обрабатываем КАЖДУЮ картинку из альбома
+        # Формируем список задач
+        queue_data = []
         for msg in sent_messages:
-            # Пропускаем, если нет фото (например, это просто текстовое сообщение, хотя в медиагруппе это редкость)
             if not msg.photo:
                 continue
 
@@ -13538,22 +13536,23 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
             best_photo = msg.photo[-1]
             new_file_id = best_photo.file_id
             
-            # Если у текущей картинки нет своей подписи, берем общую (из первой)
             post_caption = msg.caption if msg.caption else main_caption
             post_date = int(msg.date.timestamp())
 
-            asyncio.create_task(
-                gpt_helper.analyze_and_save_background(
-                    bot, 
-                    str(chat_id), 
-                    new_post_id, 
-                    new_file_id, 
-                    post_caption, 
-                    post_date,
-                    original_link=main_original_link
-                )
-            )
+            queue_data.append({
+                'channel_id': str(chat_id),
+                'message_id': new_post_id,
+                'file_id': new_file_id,
+                'caption': post_caption,
+                'date_timestamp': post_date,
+                'original_link': main_original_link
+            })
+
+        # Запускаем последовательную обработку
+        if queue_data:
+            asyncio.create_task(gpt_helper.process_background_queue(bot, queue_data))
         # ==============================
+
 
         logging.info(f"Пост {key} успешно опубликован в Telegram канал {chat_id}.")
         
@@ -14693,46 +14692,45 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
             
             main_caption = ""
             main_original_link = None
-            
-            # Проверяем JSON на наличие ссылки (если она была сохранена при создании поста)
             if isinstance(media_group_data, dict):
                  main_original_link = media_group_data.get('original_link')
 
             if sent_messages:
-                # Берем подпись первого сообщения как основную
                 if sent_messages[0].caption:
                     main_caption = sent_messages[0].caption
                 
-                # Если ссылки нет в данных, ищем в первом сообщении
                 if not main_original_link and sent_messages[0].caption_entities:
                     for entity in sent_messages[0].caption_entities:
                         if entity.type == 'text_link' and entity.url and 'telegra.ph' in entity.url:
                             main_original_link = entity.url
                             break
-
-            # 2. Проходим по каждому сообщению (каждой картинке альбома)
+            
+            # 2. Формируем очередь задач
+            queue_data = []
             for msg in sent_messages:
                 if msg.photo:
                     new_post_id = msg.message_id
                     best_photo = msg.photo[-1]
                     new_file_id = best_photo.file_id
                     
-                    # Используем подпись текущего фото, либо, если пусто — подпись первого фото
                     post_caption = msg.caption if msg.caption else main_caption
                     post_date = int(msg.date.timestamp())
 
-                    asyncio.create_task(
-                        gpt_helper.analyze_and_save_background(
-                            context.bot, 
-                            str(chat_id), 
-                            new_post_id, 
-                            new_file_id, 
-                            post_caption, 
-                            post_date,
-                            original_link=main_original_link 
-                        )
-                    )
+                    # Собираем данные в словарь, но НЕ запускаем задачу
+                    queue_data.append({
+                        'channel_id': str(chat_id),
+                        'message_id': new_post_id,
+                        'file_id': new_file_id,
+                        'caption': post_caption,
+                        'date_timestamp': post_date,
+                        'original_link': main_original_link
+                    })
+            
+            # 3. Запускаем ОДНУ фоновую задачу для всей очереди
+            if queue_data:
+                asyncio.create_task(gpt_helper.process_background_queue(context.bot, queue_data))
             # ==================================================
+
 
 
             await temp_message.edit_text(f"✅ Пост успешно опубликован в канале {chat_id}!")
