@@ -13512,49 +13512,47 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
                 )
 
         # === ЦИКЛ СОХРАНЕНИЯ В ФОНЕ ===
-        # Обрабатываем КАЖДУЮ картинку из альбома
-        for msg in sent_messages:
-            logging.info(f"--- Анализ сообщения ID: {msg.message_id} ---")
-            logging.info(f"Caption (raw): {msg.caption}")
-            
-            if msg.caption_entities:
-                logging.info(f"Найдено сущностей: {len(msg.caption_entities)}")
-                for i, ent in enumerate(msg.caption_entities):
-                    # Извлекаем текст, на который указывает сущность (для проверки)
-                    full_text = msg.caption if msg.caption else ""
-                    entity_text = full_text[ent.offset : ent.offset + ent.length]
-                    
-                    logging.info(
-                        f"Entity #{i}: Type='{ent.type}', "
-                        f"URL='{ent.url}', "
-                        f"Text='{entity_text}'"
-                    )
-            else:
-                logging.info("Сущностей (entities) в этом сообщении нет.")
-            # ===============================
-            
-            if msg.photo:
-                new_post_id = msg.message_id
-                best_photo = msg.photo[-1]
-                new_file_id = best_photo.file_id
-                post_caption = msg.caption if msg.caption else ""
-                post_date = int(msg.date.timestamp())
+        # 1. Определяем общие данные из первого сообщения (если они есть)
+        main_caption = ""
+        main_original_link = media_group_data.get('original_link') # Приоритет: ссылка из базы
 
-                # --- ИЗВЛЕЧЕНИЕ ССЫЛКИ НА ОРИГИНАЛ (Telegra.ph) ---
-                original_link = media_group_data.get('original_link')
-                # -------------------------------------
-                logging.info(f"Cсылка на телеграф=========================================== {original_link} ")
-                asyncio.create_task(
-                    gpt_helper.analyze_and_save_background(
-                        bot, 
-                        str(chat_id), 
-                        new_post_id, 
-                        new_file_id, 
-                        post_caption, 
-                        post_date,
-                        original_link=original_link  # <--- ПЕРЕДАЕМ ССЫЛКУ
-                    )
+        if sent_messages:
+            # Берем подпись из первого сообщения, если она есть
+            if sent_messages[0].caption:
+                main_caption = sent_messages[0].caption
+            
+            # Если ссылки нет в базе, пытаемся найти её в entities первого сообщения
+            if not main_original_link and sent_messages[0].caption_entities:
+                for entity in sent_messages[0].caption_entities:
+                    if entity.type == 'text_link' and entity.url and 'telegra.ph' in entity.url:
+                        main_original_link = entity.url
+                        break
+
+        # 2. Обрабатываем КАЖДУЮ картинку из альбома
+        for msg in sent_messages:
+            # Пропускаем, если нет фото (например, это просто текстовое сообщение, хотя в медиагруппе это редкость)
+            if not msg.photo:
+                continue
+
+            new_post_id = msg.message_id
+            best_photo = msg.photo[-1]
+            new_file_id = best_photo.file_id
+            
+            # Если у текущей картинки нет своей подписи, берем общую (из первой)
+            post_caption = msg.caption if msg.caption else main_caption
+            post_date = int(msg.date.timestamp())
+
+            asyncio.create_task(
+                gpt_helper.analyze_and_save_background(
+                    bot, 
+                    str(chat_id), 
+                    new_post_id, 
+                    new_file_id, 
+                    post_caption, 
+                    post_date,
+                    original_link=main_original_link
                 )
+            )
         # ==============================
 
         logging.info(f"Пост {key} успешно опубликован в Telegram канал {chat_id}.")
@@ -14689,41 +14687,40 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
                     )
 
             # === ИНТЕГРАЦИЯ С БАЗОЙ ДАННЫХ (ЦИКЛ ПО ВСЕМ ФОТО) ===
-            # Проходим по каждому сообщению (каждой картинке альбома)
-            for msg in sent_messages:
-                # Проверяем, есть ли фото (у send_animation фото может быть в thumb, но логика ниже для photo)
-                logging.info(f"--- Анализ сообщения ID: {msg.message_id} ---")
-                logging.info(f"Caption (raw): {msg.caption}")
+            # 1. Определяем общие данные (Подпись и Ссылку)
+            # В handle_publish_button у нас может не быть media_group_data['original_link'] явно,
+            # поэтому надежнее парсить первое отправленное сообщение.
+            
+            main_caption = ""
+            main_original_link = None
+            
+            # Проверяем JSON на наличие ссылки (если она была сохранена при создании поста)
+            if isinstance(media_group_data, dict):
+                 main_original_link = media_group_data.get('original_link')
+
+            if sent_messages:
+                # Берем подпись первого сообщения как основную
+                if sent_messages[0].caption:
+                    main_caption = sent_messages[0].caption
                 
-                if msg.caption_entities:
-                    logging.info(f"Найдено сущностей: {len(msg.caption_entities)}")
-                    for i, ent in enumerate(msg.caption_entities):
-                        # Извлекаем текст, на который указывает сущность (для проверки)
-                        full_text = msg.caption if msg.caption else ""
-                        entity_text = full_text[ent.offset : ent.offset + ent.length]
-                        
-                        logging.info(
-                            f"Entity #{i}: Type='{ent.type}', "
-                            f"URL='{ent.url}', "
-                            f"Text='{entity_text}'"
-                        )
-                else:
-                    logging.info("Сущностей (entities) в этом сообщении нет.")
-                # ===============================
-                    
+                # Если ссылки нет в данных, ищем в первом сообщении
+                if not main_original_link and sent_messages[0].caption_entities:
+                    for entity in sent_messages[0].caption_entities:
+                        if entity.type == 'text_link' and entity.url and 'telegra.ph' in entity.url:
+                            main_original_link = entity.url
+                            break
+
+            # 2. Проходим по каждому сообщению (каждой картинке альбома)
+            for msg in sent_messages:
                 if msg.photo:
                     new_post_id = msg.message_id
-                    # Берем самое большое фото (последнее в списке)
                     best_photo = msg.photo[-1]
                     new_file_id = best_photo.file_id
                     
-                    post_caption = msg.caption if msg.caption else ""
+                    # Используем подпись текущего фото, либо, если пусто — подпись первого фото
+                    post_caption = msg.caption if msg.caption else main_caption
                     post_date = int(msg.date.timestamp())
 
-                    # --- ИЗВЛЕЧЕНИЕ ССЫЛКИ НА ОРИГИНАЛ (Telegra.ph) ---
-                    original_link = media_group_data.get('original_link')
-                    # -------------------------------------
-                    logging.info(f"Cсылка на телеграф=========================================== {original_link} ")
                     asyncio.create_task(
                         gpt_helper.analyze_and_save_background(
                             context.bot, 
@@ -14732,10 +14729,11 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
                             new_file_id, 
                             post_caption, 
                             post_date,
-                            original_link=original_link # <--- ПЕРЕДАЕМ ССЫЛКУ
+                            original_link=main_original_link 
                         )
                     )
             # ==================================================
+
 
             await temp_message.edit_text(f"✅ Пост успешно опубликован в канале {chat_id}!")
             
