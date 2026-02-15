@@ -4653,141 +4653,177 @@ async def generate_inpaint_gemini(image_file_path: str, instructions: str):
         logger.error("Ошибка при обработке изображения с Gemini:", exc_info=True)
         return None, "Ошибка при обработке изображения."
 
+
+
+
+# === НОВАЯ ФУНКЦИЯ ДЛЯ ПОСЛЕДОВАТЕЛЬНОЙ ОЧЕРЕДИ ===
+async def process_background_queue(bot, queue_data):
+    """
+    Принимает список задач на обработку и выполняет их последовательно,
+    чтобы не перегружать API Gemini и Telegram.
+    """
+    total = len(queue_data)
+    logging.info(f"Background: Начинаю последовательную обработку {total} файлов.")
+    
+    for index, item in enumerate(queue_data):
+        try:
+            # Вызываем анализ для одной картинки и ОБЯЗАТЕЛЬНО ждем завершения (await)
+            await analyze_and_save_background(
+                bot=bot,
+                channel_id=item['channel_id'],
+                message_id=item['message_id'],
+                file_id=item['file_id'],
+                caption=item['caption'],
+                date_timestamp=item['date_timestamp'],
+                original_link=item['original_link']
+            )
+            
+            # Пауза между обработками картинок (5-7 секунд), чтобы дать Gemini "отдохнуть"
+            if index < total - 1:
+                logging.info("Background: Пауза 6 секунд перед следующим файлом...")
+                await asyncio.sleep(6)
+                
+        except Exception as e:
+            logging.error(f"Background: Ошибка при обработке элемента очереди {item['message_id']}: {e}")
+
+# === ОБНОВЛЕННАЯ ФУНКЦИЯ АНАЛИЗА ===
 async def analyze_and_save_background(bot, channel_id, message_id, file_id, caption, date_timestamp, original_link=None):
     """
     Фоновая задача для анализа изображения и сохранения в Firebase.
-    Добавлен аргумент original_link.
+    Реализована устойчивость к ошибкам: если AI падает, пост все равно сохраняется.
     """
-    from bot import analyze_image_colors
-    from bot import calculate_normalized_brightness  
+    from bot import analyze_image_colors, calculate_normalized_brightness 
+    logging.info(f"Background: Обработка поста {message_id} для {channel_id}...")
+
+    # Инициализируем переменные по умолчанию (чтобы сохранить пост даже при сбое)
+    ai_des = ""
+    ai_style = ""
+    analysis_data = {"error": "analysis_pending"}
+    
+    # 1. Скачивание и Цветовой анализ
+    img_byte_arr = io.BytesIO()
     try:
-        logging.info(f"Background: Начинаю обработку поста {message_id} для {channel_id}")
+        file_info = await bot.get_file(file_id)
+        await file_info.download_to_memory(img_byte_arr)
+        img_byte_arr.seek(0)
+        image = Image.open(img_byte_arr)
 
-        # 1. Скачиваем изображение (уменьшенную версию, так как берем по file_id из Telegram)
-        try:
-            file_info = await bot.get_file(file_id)
-            img_byte_arr = io.BytesIO()
-            await file_info.download_to_memory(img_byte_arr)
-            img_byte_arr.seek(0)
-            image = Image.open(img_byte_arr)
-        except Exception as e:
-            logging.error(f"Background: Ошибка скачивания файла: {e}")
-            return
-
-        # 2. Анализ цвета (используем ваши функции)
-        # ВАЖНО: Убедитесь, что analyze_image_colors и calculate_normalized_brightness доступны в этом файле
+        # Цветовой анализ
         try:
             b_dist, s_dist, h_dist = analyze_image_colors(image, 'neutral')
             norm_brightness = calculate_normalized_brightness(b_dist, s_dist)
-            
             sorted_hues = sorted(h_dist.items(), key=lambda item: item[1]['tw'], reverse=True)
             dom_color = sorted_hues[0][0] if sorted_hues else None
             sec_color = sorted_hues[1][0] if len(sorted_hues) > 1 else None
-            
-            # Расчет насыщенности (упрощенно из вашего примера)
             total_saturation = (s_dist.get('gray', 0) * 0.0 + s_dist.get('medium', 0) * 0.5 + s_dist.get('high', 0) * 1.0)
             
             analysis_data = {
-                "br": round(norm_brightness, 2), # Сократил ключи как в вашем примере JSON
+                "br": round(norm_brightness, 2),
                 "dom_color": dom_color,
                 "sat": round(total_saturation, 2),
                 "sec_color": sec_color
             }
-        except Exception as e:
-            logging.error(f"Background: Ошибка цветового анализа: {e}")
-            # Если цветовой анализ упал, ставим заглушки, чтобы не прерывать процесс
-            analysis_data = {"error": "color_analysis_failed"}
+        except Exception as color_e:
+            logging.error(f"Background: Ошибка анализа цвета (игнорируем): {color_e}")
+            analysis_data = {"error": "color_failed"}
 
-        # 3. Анализ через Gemini (Описание и Стиль)
-        ai_des = ""
-        ai_style = ""
-        
-        system_instruction = (
-            "Ты искусствовед и помощник для онлайн-галереи. "
-            "Твоя задача: проанализировать изображение и вернуть JSON. "
-            "Поля JSON: 'description' (описание сюжета на русском языке, максимум 3 предложения, по данному тексту должна быть возможность найти это изображение в базе данных. Перечисли сюжет, атмоферу, детали, всё выделяет данное изображение) "
-            "и 'style' (художественный стиль или техника исполнения на русском языке, например: 'Масло', 'Акрил', 'Digital Art', 'Скетч'). "
-            "Не пиши ничего кроме JSON."
-        )
+    except Exception as dl_e:
+        logging.error(f"Background: Критическая ошибка скачивания файла: {dl_e}")
+        # Если не смогли скачать картинку, сохранять, вероятно, нет смысла, выходим
+        return
+
+    # 2. Анализ через Gemini (с перебором ключей)
+    system_instruction = (
+        "Ты искусствовед и помощник для онлайн-галереи. "
+        "Твоя задача: проанализировать изображение и вернуть JSON. "
+        "Поля JSON: 'description' (описание сюжета на русском языке, максимум 3 предложения, по данному тексту должна быть возможность найти это изображение в базе данных. Перечисли сюжет, атмоферу, детали, всё выделяет данное изображение) "
+        "и 'style' (художественный стиль или техника исполнения на русском языке, например: 'Масло', 'Акрил', 'Digital Art', 'Скетч'). "
+        "Не пиши ничего кроме JSON."
+    )
 
         # Сбрасываем указатель байтов перед отправкой в Gemini
+    temp_file_path = None
+    try:
+        # Создаем временный файл
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
+            image.save(temp_file, format="JPEG")
+            temp_file_path = temp_file.name
+
+        # Перебор ключей
         img_byte_arr.seek(0)
+        gemini_success = False
         
-        temp_file_path = None
-        try:
-            # Создаем временный файл ОДИН РАЗ перед циклом
-            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as temp_file:
-                image.save(temp_file, format="JPEG")
-                temp_file_path = temp_file.name
+        for api_key in key_manager.get_keys_to_try():
+            try:
+                client = genai.Client(api_key=api_key)
+                
+                # Загрузка
+                gemini_file = client.files.upload(file=pathlib.Path(temp_file_path))
+                
+                # Ожидание обработки (polling)
+                attempt = 0
+                while gemini_file.state == "PROCESSING" and attempt < 10:
+                    await asyncio.sleep(2)
+                    gemini_file = client.files.get(name=gemini_file.name)
+                    attempt += 1
+                
+                if gemini_file.state == "FAILED":
+                    raise Exception("Gemini File State: FAILED")
 
-            # --- Перебор ключей и моделей ---
-            for api_key in key_manager.get_keys_to_try():
-                gemini_file = None
-                try:
-                    # 1. Инициализируем клиент с текущим ключом
-                    client = genai.Client(api_key=api_key)
-                    
-                    # 2. Загружаем файл ИМЕННО ЭТИМ клиентом
-                    gemini_file = client.files.upload(file=pathlib.Path(temp_file_path))
-                    
-                    # Ждем обработки файла
-                    while gemini_file.state == "PROCESSING":
-                        await asyncio.sleep(2)
-                        gemini_file = client.files.get(name=gemini_file.name)
-                        
-                    if gemini_file.state == "FAILED":
-                        raise Exception("Gemini File Processing Failed")
-
-                    # 3. Запрос к модели (используем client.aio для асинхронности)
-                    response = await client.aio.models.generate_content(
-                        model=PRIMARY_MODEL,
-                        contents=[
-                            types.Content(
-                                role="user",
-                                parts=[
-                                    types.Part.from_uri(file_uri=gemini_file.uri, mime_type=gemini_file.mime_type),
-                                    types.Part(text="Return JSON with keys: description, style")
-                                ]
-                            )
-                        ],
-                        config=types.GenerateContentConfig(
-                            system_instruction=system_instruction,
-                            response_mime_type="application/json",
-                            temperature=0.5
+                # Генерация
+                response = await client.aio.models.generate_content(
+                    model=PRIMARY_MODEL,
+                    contents=[
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part.from_uri(file_uri=gemini_file.uri, mime_type=gemini_file.mime_type),
+                                types.Part(text="Return JSON with keys: description, style")
+                            ]
                         )
+                    ],
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        response_mime_type="application/json",
+                        temperature=0.5
                     )
-                    
-                    if response.candidates and response.candidates[0].content.parts:
-                        raw_json = response.candidates[0].content.parts[0].text
-                        parsed = json.loads(raw_json)
-                        ai_des = parsed.get("description", "")
-                        ai_style = parsed.get("style", "")
-                        
-                        await key_manager.set_successful_key(api_key)
-                        logging.info(f"Background: Gemini успешно обработал файл c ключом ...{api_key[-4:]}")
-                        break # Успех, выходим из цикла ключей
-                        
-                except Exception as ex:
-                    logging.warning(f"Background: Ошибка Gemini с ключом ...{api_key[-4:]}: {ex}")
-                    # Если файл был загружен, но генерация упала, можно попробовать удалить его (опционально)
-                    # Но важнее просто продолжить со следующим ключом
-                    continue
-                    
-        except Exception as e:
-            logging.error(f"Background: Общая ошибка подготовки файла или AI анализа: {e}")
-        finally:
-            # Удаляем локальный временный файл
-             if temp_file_path and os.path.exists(temp_file_path):
-                try:
-                    os.remove(temp_file_path)
-                except Exception as del_err:
-                    logging.error(f"Не удалось удалить временный файл: {del_err}")
+                )
 
+                if response.candidates and response.candidates[0].content.parts:
+                    raw_json = response.candidates[0].content.parts[0].text
+                    parsed = json.loads(raw_json)
+                    ai_des = parsed.get("description", "")
+                    ai_style = parsed.get("style", "")
+                    
+                    await key_manager.set_successful_key(api_key)
+                    logging.info(f"Background: Gemini успешно обработал файл c ключом ...{api_key[-4:]}")
+                    gemini_success = True
+                    break # Успех - выходим из цикла ключей
+
+            except Exception as gemini_e:
+                logging.warning(f"Background: Ошибка Gemini (...{api_key[-4:]}): {gemini_e}. Пробуем следующий ключ...")
+                # Не выходим, цикл продолжается со следующим ключом
+                await asyncio.sleep(1) # Небольшая задержка перед следующим ключом
+
+        if not gemini_success:
+            logging.error(f"Background: Не удалось получить описание от Gemini после перебора всех ключей. Сохраняем без AI данных.")
+            
+    except Exception as e:
+        logging.error(f"Background: Ошибка подготовки к AI анализу: {e}")
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except:
+                pass
+
+    # 3. Сохранение в Firebase (ВЫПОЛНЯЕТСЯ ВСЕГДА, ДАЖЕ ЕСЛИ GEMINI УПАЛ)
+    try:
         if str(channel_id) == "-1001479526905":
-            channel_id = "anemonn"
-        # 4. Сохранение в Firebase
+            channel_id = "anemonn" # или @anemonn, как у вас принято
+
         final_data = {
-            "ai_des_ru": ai_des,
+            "ai_des_ru": ai_des,   # Будет пустым, если Gemini не справился
             "ai_style_ru": ai_style,
             "analysis": analysis_data,
             "caption": caption,
@@ -4797,25 +4833,20 @@ async def analyze_and_save_background(bot, channel_id, message_id, file_id, capt
             "post_id": message_id,
             "status": "ok",
             "type": "photo",
-            "original_link": original_link  # <--- ДОБАВЛЕНО ПОЛЕ
+            "original_link": original_link
         }
 
-        # Используем существующую функцию сохранения
-        
         save_success = save_art_post(channel_id, message_id, final_data)
         
         if save_success:
-            logging.info(f"Background: Пост {message_id} успешно сохранен (original_link={original_link is not None}).")
-            
-            # --- ДОБАВИТЬ ЭТОТ БЛОК ---
+            logging.info(f"Background: Пост {message_id} успешно сохранен (AI desc: {'Yes' if ai_des else 'No'}).")
             try:
-                reset_posts_cache() # Сбрасываем кэш, чтобы пост сразу появился в галерее
-            except Exception as e:
-                logging.error(f"Background: Не удалось сбросить кэш: {e}")
-            # --------------------------
-            
+                reset_posts_cache()
+            except:
+                pass
         else:
             logging.error(f"Background: Ошибка записи в Firebase для {message_id}.")
+            
+    except Exception as save_e:
+        logging.error(f"Background: Критическая ошибка при сохранении в БД: {save_e}")
 
-    except Exception as global_e:
-        logging.error(f"Background: Критическая ошибка в фоновой задаче: {global_e}", exc_info=True)
