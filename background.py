@@ -704,65 +704,134 @@ def smart_match(query, text_fields):
 def api_search_gallery():
     from gpt_helper import get_all_art_posts_cached
     
-    # Получаем параметры
     query = request.args.get('q', '').strip()
     color_filter = request.args.get('color', '').lower().strip()
+    similar_to = request.args.get('similar_to', '').strip()
     offset = int(request.args.get('offset', 0))
     limit = int(request.args.get('limit', 50))
-    # JS галереи не шлет channel_id, поэтому задаем жестко @anemonn, 
-    # так как ваша новая функция get_all_art_posts_cached работает только с ним.
     channel_id = '@anemonn'
     
-    # 1. Получаем все посты (ИСПРАВЛЕНО: передаем channel_id)
-    all_posts = get_all_art_posts_cached(channel_id)
+    # --- НОВЫЕ ПАРАМЕТРЫ ФИЛЬТРАЦИИ ---
+    dom_color = request.args.get('dom_color', '').lower().strip()
+    sec_color = request.args.get('sec_color', '').lower().strip()
     
-    # 2. Фильтрация
+    def safe_float(val):
+        try: return float(val) if val else None
+        except: return None
+        
+    br_min = safe_float(request.args.get('br_min'))
+    br_max = safe_float(request.args.get('br_max'))
+    sat_min = safe_float(request.args.get('sat_min'))
+    sat_max = safe_float(request.args.get('sat_max'))
+    date_from = request.args.get('date_from', '').strip()
+    date_to = request.args.get('date_to', '').strip()
+
+    # --- ДОБАВИТЬ ЭТИ ДВЕ СТРОКИ ---
+    # Перевод значений UI (0.0 - 1.0) в реальный перевернутый диапазон БД (0.8 - 0.45)
+    db_br_max_allowed = 0.8 - (0.35 * br_min) if br_min is not None else 0.8
+    db_br_min_allowed = 0.8 - (0.35 * br_max) if br_max is not None else 0.45
+    
+    all_posts = get_all_art_posts_cached(channel_id)
     filtered = []
     
+    target_post = None
+    t_br, t_sat = 0.0, 0.0
+    
+    if similar_to:
+        target_post = next((p for p in all_posts if str(p.get('post_id')) == similar_to), None)
+        if target_post:
+            t_analysis = target_post.get('analysis', {})
+            t_br = float(t_analysis.get('br', 0))
+            t_sat = float(t_analysis.get('sat', 0))
+    
     for p in all_posts:
-        # Игнорируем удаленные или пустые
         if p.get('status') != 'ok' or p.get('type') != 'photo':
             continue
             
-        # --- УМНЫЙ ПОИСК ---
-        if query:
-            # Собираем все текстовые поля в кучу
-            text_content = [
-                str(p.get('caption', '')),
-                str(p.get('ai_des_ru', '')),
-                str(p.get('ai_style_ru', ''))
-            ]
-            
-            # Используем нашу умную функцию (она должна быть определена выше в файле)
-            if not smart_match(query, text_content):
-                continue
-        # -------------------------------------------------------------
-        
-        # Фильтр по цвету
-        if color_filter:
-            analysis = p.get('analysis', {})
-            dom = str(analysis.get('dom_color', '')).lower()
-            sec = str(analysis.get('sec_color', '')).lower()
-            
-            if color_filter not in ['black', 'white']:
-                if dom != color_filter and sec != color_filter:
+        if not similar_to:
+            if query:
+                text_content = [
+                    str(p.get('caption', '')),
+                    str(p.get('ai_des_ru', '')),
+                    str(p.get('ai_style_ru', ''))
+                ]
+                if not smart_match(query, text_content):
                     continue
             
+            analysis = p.get('analysis', {})
+            p_dom = str(analysis.get('dom_color', '')).lower()
+            p_sec = str(analysis.get('sec_color', '')).lower()
+            p_br = float(analysis.get('br', 0))
+            p_sat = float(analysis.get('sat', 0))
+            
+            # Старый color_filter
+            if color_filter and color_filter not in ['black', 'white']:
+                if p_dom != color_filter and p_sec != color_filter:
+                    continue
+            
+            # --- ПРИМЕНЕНИЕ НОВЫХ ФИЛЬТРОВ ---
+            if dom_color and p_dom != dom_color: continue
+            if sec_color and p_sec != sec_color: continue
+            if br_min is not None and p_br > db_br_max_allowed: continue
+            if br_max is not None and p_br < db_br_min_allowed: continue
+            if sat_min is not None and p_sat < sat_min: continue
+            if sat_max is not None and p_sat > sat_max: continue
+            
+            p_date = p.get('date', 0)
+            if date_from or date_to:
+                try:
+                    if date_from:
+                        dt_from = datetime.strptime(date_from, '%Y-%m-%d').timestamp()
+                        if p_date < dt_from: continue
+                    if date_to:
+                        dt_to = datetime.strptime(date_to, '%Y-%m-%d').timestamp() + 86399 # Конец дня
+                        if p_date > dt_to: continue
+                except Exception:
+                    pass
+        else:
+            if target_post and str(p.get('post_id')) != similar_to:
+                i_analysis = p.get('analysis', {})
+                i_br = float(i_analysis.get('br', 0))
+                i_sat = float(i_analysis.get('sat', 0))
+                if abs(t_br - i_br) > 0.05 or abs(t_sat - i_sat) > 0.05:
+                    continue
+        
         filtered.append(p)
 
-    # 3. Сортировка
-    if color_filter:
+    # Логика сортировки остается без изменений
+    if similar_to and target_post:
+        t_cap = str(target_post.get('caption', '')).strip().lower()
+        t_analysis = target_post.get('analysis', {})
+        t_dom = str(t_analysis.get('dom_color', '')).lower()
+        t_sec = str(t_analysis.get('sec_color', '')).lower()
+
+        def similar_sort_key(item):
+            if str(item.get('post_id')) == similar_to: return (0, 0.0)
+            i_cap = str(item.get('caption', '')).strip().lower()
+            i_analysis = item.get('analysis', {})
+            i_dom = str(i_analysis.get('dom_color', '')).lower()
+            i_sec = str(i_analysis.get('sec_color', '')).lower()
+            i_br = float(i_analysis.get('br', 0))
+            i_sat = float(i_analysis.get('sat', 0))
+            delta = abs(t_br - i_br) + abs(t_sat - i_sat)
+
+            if t_cap and i_cap == t_cap: return (1, delta)
+            if t_dom and t_sec and i_dom == t_dom and i_sec == t_sec: return (2, delta)
+            if t_dom and t_sec and i_dom == t_sec and i_sec == t_dom: return (3, delta)
+            if t_dom and i_dom == t_dom: return (4, delta)
+            if t_sec and i_dom == t_sec: return (5, delta)
+            return (6, delta)
+
+        filtered.sort(key=similar_sort_key)
+    elif color_filter:
         def color_sort_key(item):
             analysis = item.get('analysis', {})
             sat = float(analysis.get('sat', 0))
             br = float(analysis.get('br', 0))
             dom = str(analysis.get('dom_color', '')).lower()
             sec = str(analysis.get('sec_color', '')).lower()
-            
-            if color_filter == 'white':
-                return (br, sat)
-            elif color_filter == 'black':
-                return (-br, sat)
+            if color_filter == 'white': return (br, sat)
+            elif color_filter == 'black': return (-br, sat)
             else:
                 priority = 0
                 if dom == color_filter: priority = 2
@@ -771,10 +840,8 @@ def api_search_gallery():
 
         filtered.sort(key=color_sort_key, reverse=True)
     else:
-        # По умолчанию: самые свежие
         filtered.sort(key=lambda x: x.get('date', 0), reverse=True)
 
-    # 4. Пагинация
     total = len(filtered)
     chunk = filtered[offset : offset + limit]
     
@@ -785,17 +852,14 @@ def api_search_gallery():
             "file_id": item.get('file_id'),
             "caption": item.get('caption'),
             "post_link": f"https://t.me/{item.get('channel_id', 'anemonn').replace('@', '')}/{item.get('post_id')}",
-            "original_link": item.get('original_link'), # <--- ДОБАВЛЕНО ЭТО ПОЛЕ
+            "original_link": item.get('original_link'),
             "ai_des": item.get('ai_des_ru'),
             "ai_style": item.get('ai_style_ru'),
             "date": datetime.fromtimestamp(item.get('date', 0)).strftime('%d.%m.%Y') if item.get('date') else "",
             "analysis": item.get('analysis')
         })
 
-    return jsonify({
-        "total": total,
-        "items": result_items
-    })
+    return jsonify({"total": total, "items": result_items})
 
 
 
