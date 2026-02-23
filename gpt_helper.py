@@ -4692,7 +4692,9 @@ async def analyze_and_save_background(bot, channel_id, message_id, file_id, capt
     Фоновая задача для анализа изображения и сохранения в Firebase.
     Реализована устойчивость к ошибкам: если AI падает, пост все равно сохраняется.
     """
-    from bot import analyze_image_colors, calculate_normalized_brightness 
+    # ОБЯЗАТЕЛЬНО: Добавьте импорт get_smart_colors оттуда же, откуда импортируете остальное
+    from bot import analyze_image_colors, calculate_normalized_brightness, get_smart_colors 
+    
     logging.info(f"Background: Обработка поста {message_id} для {channel_id}...")
 
     # Инициализируем переменные по умолчанию (чтобы сохранить пост даже при сбое)
@@ -4708,24 +4710,26 @@ async def analyze_and_save_background(bot, channel_id, message_id, file_id, capt
         img_byte_arr.seek(0)
         image = Image.open(img_byte_arr)
 
-        # Цветовой анализ
+        # === ОБНОВЛЕННЫЙ ЦВЕТОВОЙ АНАЛИЗ (КАК В /updcolor) ===
         try:
             b_dist, s_dist, h_dist = analyze_image_colors(image, 'neutral')
             norm_brightness = calculate_normalized_brightness(b_dist, s_dist)
-            sorted_hues = sorted(h_dist.items(), key=lambda item: item[1]['tw'], reverse=True)
-            dom_color = sorted_hues[0][0] if sorted_hues else None
-            sec_color = sorted_hues[1][0] if len(sorted_hues) > 1 else None
             total_saturation = (s_dist.get('gray', 0) * 0.0 + s_dist.get('medium', 0) * 0.5 + s_dist.get('high', 0) * 1.0)
+            
+            # Вызываем умный алгоритм (распаковываем 5 возвращаемых значений, последние 2 игнорируем)
+            dom_color, sec_color, ter_color, *_ = get_smart_colors(b_dist, s_dist, h_dist, norm_brightness)
             
             analysis_data = {
                 "br": round(norm_brightness, 2),
-                "dom_color": dom_color,
                 "sat": round(total_saturation, 2),
-                "sec_color": sec_color
+                "dom_color": dom_color,
+                "sec_color": sec_color,
+                "ter_color": ter_color  # <-- ДОБАВЛЕН ТРЕТИЙ ЦВЕТ
             }
         except Exception as color_e:
             logging.error(f"Background: Ошибка анализа цвета (игнорируем): {color_e}")
             analysis_data = {"error": "color_failed"}
+        # =======================================================
 
     except Exception as dl_e:
         logging.error(f"Background: Критическая ошибка скачивания файла: {dl_e}")
@@ -4849,4 +4853,3 @@ async def analyze_and_save_background(bot, channel_id, message_id, file_id, capt
             
     except Exception as save_e:
         logging.error(f"Background: Критическая ошибка при сохранении в БД: {save_e}")
-
