@@ -313,7 +313,16 @@
 
 
 
-
+        .g-placeholder-loader {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 14px; height: 14px; background: rgba(255,255,255,0.15);
+            border-radius: 50%; animation: pulse-placeholder 1s infinite alternate;
+            z-index: 1; pointer-events: none;
+        }
+        @keyframes pulse-placeholder { 
+            from { transform: translate(-50%, -50%) scale(0.8); opacity: 0.2; } 
+            to { transform: translate(-50%, -50%) scale(1.2); opacity: 0.8; } 
+        }
 
 
         /* НАЧАЛО БЛОКА ГАЛЕРЕИ */
@@ -463,18 +472,45 @@
 
         /* Адаптив */
         @media (max-width: 768px) {
-            .gallery-header { padding: 16px 20px; gap: 16px; }
-            .gallery-title { font-size: 16px; letter-spacing: 4px; }
-            .gallery-close { position: absolute; right: 20px; top: 26px; transform: none; width: 30px; height: 30px; margin-left: 0; }
+            .gallery-header { 
+                padding: 16px 20px; 
+                gap: 12px; 
+                justify-content: space-between; 
+            }
+            
+            /* 1 строка: Заголовок слева и кнопка закрытия справа */
+            .gallery-title { font-size: 16px; letter-spacing: 4px; order: 1; }
+            .gallery-close { 
+                position: relative; right: auto; top: auto; transform: none; 
+                width: 30px; height: 30px; margin: 0; order: 2; 
+            }
+            
+            /* 2 строка: Поле поиска (переносится на новую строку на всю ширину) */
+            .gallery-search { 
+                order: 3; 
+                flex: 1 1 100%; 
+                max-width: 100%; 
+                margin: 4px 0; 
+            }
+            
+            /* 3 строка: Выбор цвета (слева) и кнопка фильтров (справа) */
+            .gallery-colors-wrapper { 
+                order: 4; 
+                flex: 1 1 0; 
+                min-width: 0; /* Обязательно для работы скролла цветов */
+                margin-top: 0; 
+            }
+            .gallery-colors-strip { justify-content: flex-start; gap: 12px; }
+            
+            .gallery-filter-btn { 
+                position: relative; right: auto; top: auto; transform: none; 
+                width: 36px; height: 36px; margin: 0; order: 5; 
+                flex: 0 0 auto; 
+            }
+
             .gallery-content { padding: 20px; gap: 16px; }
             .masonry-col { gap: 16px; }
-            .gallery-colors-wrapper { order: 10; width: 100%; margin-top: 4px; }
-            .gallery-colors-strip { justify-content: center; gap: 12px; }
             .g-btn-action { font-size: 10px; }
-           .gallery-filter-btn { 
-                position: absolute; right: 60px; top: 26px; 
-                transform: none; width: 30px; height: 30px; margin-left: 0; 
-            }
         }
 
 
@@ -528,9 +564,12 @@
 
         /* В медиа-запросе @media (max-width: 768px) добавьте: */
         @media (max-width: 768px) {
-            #gallery-filter-panel { right: 20px; left: 20px; width: auto; top: 75px; padding: 20px; }
+            #gallery-filter-panel { 
+                right: 20px; left: 20px; width: auto; 
+                top: 100%; /* Автоматически открывается сразу под всей высотой шапки */
+                padding: 20px; 
+            }
         }
-
 
 
 
@@ -962,7 +1001,7 @@
                             <option value="red">Red</option><option value="orange">Orange</option>
                             <option value="yellow">Yellow</option><option value="green">Green</option>
                             <option value="cyan">Cyan</option><option value="blue">Blue</option>
-                            <option value="purple">Purple</option>
+                            <option value="purple">Purple</option><option value="white">Белый</option><option value="gray">Серый</option><option value="black">Черный</option>
                         </select>
                     </div>
                     <div class="f-group">
@@ -972,7 +1011,7 @@
                             <option value="red">Red</option><option value="orange">Orange</option>
                             <option value="yellow">Yellow</option><option value="green">Green</option>
                             <option value="cyan">Cyan</option><option value="blue">Blue</option>
-                            <option value="purple">Purple</option>
+                            <option value="purple">Purple</option><option value="white">Белый</option><option value="gray">Серый</option><option value="black">Черный</option>
                         </select>
                     </div>
                 </div>
