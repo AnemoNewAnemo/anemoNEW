@@ -451,8 +451,38 @@ export function initGallery() {
     const overlay = document.getElementById('gallery-overlay');
     const content = document.getElementById('g-content');
     const searchInput = document.getElementById('g-search-input');
-    const searchContainer = document.querySelector('.gallery-search'); // Родитель инпута
+    const searchContainer = document.querySelector('.gallery-search'); 
     const colorStrip = document.getElementById('color-strip');
+    const header = document.querySelector('.gallery-header'); // Добавьте эту строку
+
+    // --- НАЧАЛО: Логика скрытия шапки при скролле на мобильных ---
+    let lastScrollTop = 0;
+    content.addEventListener('scroll', () => {
+        // На десктопе отключаем это поведение
+        if (window.innerWidth > 768) {
+            header.classList.remove('hide-controls');
+            return;
+        }
+        
+        let st = content.scrollTop;
+        if (st > lastScrollTop && st > 50) {
+            // Скролл вниз - прячем контролы
+            header.classList.add('hide-controls');
+            
+            // Также закрываем панель фильтров, если она была открыта
+            const filterPanel = document.getElementById('gallery-filter-panel');
+            const filterBtn = document.getElementById('g-filter-btn');
+            if (filterPanel && filterPanel.classList.contains('show')) {
+                filterPanel.classList.remove('show');
+                if (filterBtn) filterBtn.classList.remove('active');
+            }
+        } else if (st < lastScrollTop) {
+            // Скролл вверх - показываем контролы
+            header.classList.remove('hide-controls');
+        }
+        lastScrollTop = st <= 0 ? 0 : st; // Защита от отрицательного скролла (bounce-эффект)
+    }, { passive: true });
+    // --- КОНЕЦ: Логика скрытия шапки ---
     
     // --- 1. ДОБАВЛЕНИЕ КНОПКИ ОЧИСТКИ И ЛОАДЕРА ---
     
