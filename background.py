@@ -700,6 +700,7 @@ def smart_match(query, text_fields):
     return True
 
 # --- ОБНОВЛЕННЫЙ ЭНДПОИНТ ПОИСКА ---
+
 @app.route('/api/anemone/search', methods=['GET'])
 def api_search_gallery():
     from gpt_helper import get_all_art_posts_cached
@@ -761,17 +762,18 @@ def api_search_gallery():
             analysis = p.get('analysis', {})
             p_dom = str(analysis.get('dom_color', '')).lower()
             p_sec = str(analysis.get('sec_color', '')).lower()
+            p_ter = str(analysis.get('ter_color', '')).lower() # <--- ДОБАВЛЕНО
             p_br = float(analysis.get('br', 0))
             p_sat = float(analysis.get('sat', 0))
             
-            # Старый color_filter
+            # Обновленный color_filter
             if color_filter and color_filter not in ['black', 'white']:
-                if p_dom != color_filter and p_sec != color_filter:
+                if p_dom != color_filter and p_sec != color_filter and p_ter != color_filter:
                     continue
             
             # --- ПРИМЕНЕНИЕ НОВЫХ ФИЛЬТРОВ ---
             if dom_color and p_dom != dom_color: continue
-            if sec_color and p_sec != sec_color: continue
+            if sec_color and p_sec != sec_color and p_ter != sec_color: continue
             if br_min is not None and p_br > db_br_max_allowed: continue
             if br_max is not None and p_br < db_br_min_allowed: continue
             if sat_min is not None and p_sat < sat_min: continue
@@ -789,12 +791,10 @@ def api_search_gallery():
                 except Exception:
                     pass
         else:
-            if target_post and str(p.get('post_id')) != similar_to:
-                i_analysis = p.get('analysis', {})
-                i_br = float(i_analysis.get('br', 0))
-                i_sat = float(i_analysis.get('sat', 0))
-                if abs(t_br - i_br) > 0.05 or abs(t_sat - i_sat) > 0.05:
-                    continue
+            # Жесткий фильтр (continue) удален. 
+            # Теперь все картинки попадают в список, а функция сортировки 
+            # сама выстроит их в идеальный градиент по системе штрафов.
+            pass
         
         filtered.append(p)
 
@@ -804,25 +804,58 @@ def api_search_gallery():
         t_analysis = target_post.get('analysis', {})
         t_dom = str(t_analysis.get('dom_color', '')).lower()
         t_sec = str(t_analysis.get('sec_color', '')).lower()
+        t_ter = str(t_analysis.get('ter_color', '')).lower()
+        t_br = float(t_analysis.get('br', 0))
+        t_sat = float(t_analysis.get('sat', 0))
+        
+        # Составляем список целевых цветов с весами (dom=3, sec=2, ter=1)
+        t_colors = []
+        if t_dom: t_colors.append((t_dom, 3))
+        if t_sec: t_colors.append((t_sec, 2))
+        if t_ter: t_colors.append((t_ter, 1))
 
         def similar_sort_key(item):
-            if str(item.get('post_id')) == similar_to: return (0, 0.0)
+            if str(item.get('post_id')) == similar_to: 
+                return -10000.0  # Оригинал всегда самый первый
+                
             i_cap = str(item.get('caption', '')).strip().lower()
             i_analysis = item.get('analysis', {})
             i_dom = str(i_analysis.get('dom_color', '')).lower()
             i_sec = str(i_analysis.get('sec_color', '')).lower()
+            i_ter = str(i_analysis.get('ter_color', '')).lower()
             i_br = float(i_analysis.get('br', 0))
             i_sat = float(i_analysis.get('sat', 0))
-            delta = abs(t_br - i_br) + abs(t_sat - i_sat)
+            
+            # 1. Перекрестный подсчет совпадения цветов
+            i_colors_dict = {}
+            if i_dom: i_colors_dict[i_dom] = 3
+            if i_sec and i_sec not in i_colors_dict: i_colors_dict[i_sec] = 2
+            if i_ter and i_ter not in i_colors_dict: i_colors_dict[i_ter] = 1
+            
+            match_score = 0
+            for color, target_weight in t_colors:
+                item_weight = i_colors_dict.get(color, 0)
+                match_score += target_weight * item_weight
+                
+            # Максимальный match_score = (3*3 + 2*2 + 1*1) = 14
+            # Превращаем в штраф: чем меньше совпадений, тем больше штраф
+            color_penalty = (14 - match_score) * 2.0 
+            
+            # 2. Штраф за отклонения по br и sat
+            # Умножаем на коэффициенты, чтобы сбалансировать вес с цветами
+            metrics_penalty = abs(t_br - i_br) * 20.0 + abs(t_sat - i_sat) * 10.0
+            
+            total_penalty = color_penalty + metrics_penalty
+            
+            # 3. Бонус за одинаковый caption (перекрывает другие отклонения)
+            if t_cap and i_cap == t_cap:
+                total_penalty -= 100.0
+                
+            return total_penalty
 
-            if t_cap and i_cap == t_cap: return (1, delta)
-            if t_dom and t_sec and i_dom == t_dom and i_sec == t_sec: return (2, delta)
-            if t_dom and t_sec and i_dom == t_sec and i_sec == t_dom: return (3, delta)
-            if t_dom and i_dom == t_dom: return (4, delta)
-            if t_sec and i_dom == t_sec: return (5, delta)
-            return (6, delta)
-
+        # Сортируем по ВОЗРАСТАНИЮ штрафа (меньше штраф = больше похоже)
         filtered.sort(key=similar_sort_key)
+        
     elif color_filter:
         def color_sort_key(item):
             analysis = item.get('analysis', {})
@@ -830,17 +863,44 @@ def api_search_gallery():
             br = float(analysis.get('br', 0))
             dom = str(analysis.get('dom_color', '')).lower()
             sec = str(analysis.get('sec_color', '')).lower()
-            if color_filter == 'white': return (br, sat)
-            elif color_filter == 'black': return (-br, sat)
+            ter = str(analysis.get('ter_color', '')).lower()
+            
+            if color_filter == 'white': 
+                return (-br - sat)
+            elif color_filter == 'black': 
+                return (br - sat)
             else:
-                priority = 0
-                if dom == color_filter: priority = 2
-                elif sec == color_filter: priority = 1
-                return (priority, sat)
+                # Вес цвета в зависимости от позиции
+                weight = 0
+                if dom == color_filter: weight += 3
+                if sec == color_filter: weight += 1.5
+                if ter == color_filter: weight += 0.5
+                
+                # 1. Разбиваем насыщенность на корзины (шаг 0.1: 0.9, 0.8, 0.7 и т.д.)
+                # Это группирует картинки с похожей насыщенностью вместе
+                sat_bucket = int(sat * 10)
+                
+                # 2. "Змейка" яркости для бесшовных переходов
+                # Так как глобальная сортировка reverse=True (по убыванию):
+                # Для нечетных корзин br сортируется от 0.78 к 0.44 (от тёмных к светлым).
+                # Для четных корзин мы инвертируем br (-br), что даст сортировку от светлых к тёмным.
+                # Итог: тёмные -> светлые -> светлые -> тёмные -> тёмные -> светлые...
+                if sat_bucket % 2 == 0:
+                    smooth_br = -br
+                else:
+                    smooth_br = br
+                
+                # Возвращаем кортеж. Приоритет: 1. Совпадение цвета, 2. Корзина насыщенности, 3. Плавная яркость
+                return (weight, sat_bucket, smooth_br)
 
         filtered.sort(key=color_sort_key, reverse=True)
     else:
-        filtered.sort(key=lambda x: x.get('date', 0), reverse=True)
+        def default_sort_key(item):
+            # Если выбран sec_color в фильтрах, даем приоритет (1) совпадению именно с sec_color, а не ter_color (0)
+            priority = 1 if sec_color and str(item.get('analysis', {}).get('sec_color', '')).lower() == sec_color else 0
+            return (priority, item.get('date', 0))
+            
+        filtered.sort(key=default_sort_key, reverse=True)
 
     total = len(filtered)
     chunk = filtered[offset : offset + limit]
