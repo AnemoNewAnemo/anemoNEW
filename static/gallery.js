@@ -27,9 +27,28 @@ function setupFullscreenUI() {
             }
             #fs-zoom-slider::-webkit-slider-thumb:hover { transform: scale(1.3); }
             .fs-action-btn:hover { background: rgba(255,255,255,0.1); color: #fff; transform: scale(1.05); }
+            #fs-zoom-container, .fs-action-btn, #fs-prev, #fs-next, #fs-info-panel {
+                transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s ease !important;
+            }
+            #fs-preview.ui-hidden .fs-action-btn,
+            #fs-preview.ui-hidden #fs-prev,
+            #fs-preview.ui-hidden #fs-next,
+            #fs-preview.ui-hidden #fs-zoom-container,
+            #fs-preview.ui-hidden #fs-info-panel {
+                opacity: 0 !important;
+                pointer-events: none !important;
+            }
             @media (max-width: 600px) {
                 #fs-zoom-container { bottom: 24px; padding: 8px 16px; gap: 12px; }
                 #fs-zoom-slider { width: 80px; }
+                
+                /* Кнопки выстраиваются влево на мобилках */
+                #fs-close-btn { top: 24px !important; right: 24px !important; }
+                .fs-info-trigger-btn { top: 24px !important; right: 84px !important; }
+                #fs-similar-btn { top: 24px !important; right: 144px !important; }
+                #fs-download-btn { top: 24px !important; right: 204px !important; }
+                
+                #fs-ui-toggle-btn { bottom: 24px !important; left: 24px !important; }
             }
         `;
         document.head.appendChild(style);
@@ -140,8 +159,11 @@ function setupFullscreenUI() {
     });
 
 let isSwipingToClose = false;
+    let isSwipingHorizontal = false;
     let swipeStartY = 0;
     let currentSwipeY = 0;
+    let swipeStartX = 0;
+    let currentSwipeX = 0;
 
     imgContainer.addEventListener('touchstart', (e) => {
         if (e.target.closest('#fs-zoom-container') || e.target.closest('.fs-action-btn') || e.target.closest('#fs-prev') || e.target.closest('#fs-next')) return;
@@ -151,9 +173,12 @@ let isSwipingToClose = false;
             startPanX = e.touches[0].clientX - currentPanX;
             startPanY = e.touches[0].clientY - currentPanY;
         } else if (e.touches.length === 1 && currentScale === 1) {
-            isSwipingToClose = true;
+            isSwipingToClose = false;
+            isSwipingHorizontal = false;
             swipeStartY = e.touches[0].clientY;
+            swipeStartX = e.touches[0].clientX;
             currentSwipeY = 0;
+            currentSwipeX = 0;
             img.style.transition = 'none'; // Мгновенное следование за пальцем
         } else if (e.touches.length === 2) {
             isPanning = false;
@@ -171,12 +196,25 @@ let isSwipingToClose = false;
             currentPanX = e.touches[0].clientX - startPanX;
             currentPanY = e.touches[0].clientY - startPanY;
             updateImageTransform();
-        } else if (e.touches.length === 1 && isSwipingToClose && currentScale === 1) {
+        } else if (e.touches.length === 1 && currentScale === 1) {
             currentSwipeY = e.touches[0].clientY - swipeStartY;
-            img.style.transform = `translateY(${currentSwipeY}px) scale(1)`;
-            // Эффект затемнения фона при свайпе
-            const opacity = Math.max(0.3, 0.95 - Math.abs(currentSwipeY) / 500);
-            fsPreview.style.background = `rgba(2, 3, 5, ${opacity})`;
+            currentSwipeX = e.touches[0].clientX - swipeStartX;
+            
+            if (!isSwipingToClose && !isSwipingHorizontal) {
+                if (Math.abs(currentSwipeY) > Math.abs(currentSwipeX) && Math.abs(currentSwipeY) > 10) {
+                    isSwipingToClose = true;
+                } else if (Math.abs(currentSwipeX) > 10) {
+                    isSwipingHorizontal = true;
+                }
+            }
+
+            if (isSwipingToClose) {
+                img.style.transform = `translateY(${currentSwipeY}px) scale(1)`;
+                const opacity = Math.max(0.3, 0.95 - Math.abs(currentSwipeY) / 500);
+                fsPreview.style.background = `rgba(2, 3, 5, ${opacity})`;
+            } else if (isSwipingHorizontal) {
+                img.style.transform = `translateX(${currentSwipeX}px) scale(1)`;
+            }
         } else if (e.touches.length === 2 && initialPinchDistance) {
             const currentDistance = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
             const scaleAmount = currentDistance / initialPinchDistance;
@@ -191,16 +229,25 @@ let isSwipingToClose = false;
         
         if (isSwipingToClose) {
             if (Math.abs(currentSwipeY) > 100) {
-                // Если дистанция свайпа большая — закрываем
                 closeFullscreen();
             } else {
-                // Иначе возвращаем на место с анимацией
                 img.style.transition = 'transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.6s ease';
                 img.style.transform = `translate(0px, 0px) scale(1)`;
                 fsPreview.style.background = `rgba(2, 3, 5, 0.95)`;
             }
             isSwipingToClose = false;
             currentSwipeY = 0;
+        } else if (isSwipingHorizontal) {
+            if (currentSwipeX > 100 && window.currentFsIndex > 0) {
+                openGalleryFullscreen(window.currentFsIndex - 1);
+            } else if (currentSwipeX < -100 && window.currentFsIndex < currentGalleryItems.length - 1) {
+                openGalleryFullscreen(window.currentFsIndex + 1);
+            } else {
+                img.style.transition = 'transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.6s ease';
+                img.style.transform = `translate(0px, 0px) scale(1)`;
+            }
+            isSwipingHorizontal = false;
+            currentSwipeX = 0;
         }
 
         if (e.touches.length === 1 && currentScale > 1) {
@@ -274,6 +321,22 @@ let isSwipingToClose = false;
     fsPreview.appendChild(prevBtn);
     fsPreview.appendChild(nextBtn);
 
+    const toggleUiBtn = document.createElement('div');
+    toggleUiBtn.id = 'fs-ui-toggle-btn';
+    toggleUiBtn.style.cssText = btnStyle + 'top: auto; bottom: 40px; left: 40px; right: auto; z-index: 3005;';
+    toggleUiBtn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+    
+    toggleUiBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        fsPreview.classList.toggle('ui-hidden');
+        if (fsPreview.classList.contains('ui-hidden')) {
+            toggleUiBtn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`; // перечёркнутый глаз
+        } else {
+            toggleUiBtn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`; // открытый глаз
+        }
+    });
+    fsPreview.appendChild(toggleUiBtn);
+
     const infoPanel = document.createElement('div');
     infoPanel.id = 'fs-info-panel';
     infoPanel.style.cssText = `
@@ -302,6 +365,11 @@ let isSwipingToClose = false;
         fsPreview.style.display = 'none';
         fsPreview.style.background = `rgba(2, 3, 5, 0.95)`;
         infoPanel.style.transform = 'translateX(100%)';
+        
+        fsPreview.classList.remove('ui-hidden');
+        const toggleUiBtn = document.getElementById('fs-ui-toggle-btn');
+        if (toggleUiBtn) toggleUiBtn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+        
         img.src = '';
         img.style.opacity = '0';
         loader.classList.remove('active');
