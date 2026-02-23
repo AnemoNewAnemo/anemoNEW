@@ -139,6 +139,10 @@ function setupFullscreenUI() {
         if (currentScale > 1) imgContainer.style.cursor = 'grab';
     });
 
+let isSwipingToClose = false;
+    let swipeStartY = 0;
+    let currentSwipeY = 0;
+
     imgContainer.addEventListener('touchstart', (e) => {
         if (e.target.closest('#fs-zoom-container') || e.target.closest('.fs-action-btn') || e.target.closest('#fs-prev') || e.target.closest('#fs-next')) return;
         isDragged = false;
@@ -146,8 +150,14 @@ function setupFullscreenUI() {
             isPanning = true;
             startPanX = e.touches[0].clientX - currentPanX;
             startPanY = e.touches[0].clientY - currentPanY;
+        } else if (e.touches.length === 1 && currentScale === 1) {
+            isSwipingToClose = true;
+            swipeStartY = e.touches[0].clientY;
+            currentSwipeY = 0;
+            img.style.transition = 'none'; // Мгновенное следование за пальцем
         } else if (e.touches.length === 2) {
             isPanning = false;
+            isSwipingToClose = false;
             initialPinchDistance = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
             initialScale = currentScale;
         }
@@ -156,10 +166,17 @@ function setupFullscreenUI() {
     imgContainer.addEventListener('touchmove', (e) => {
         if (currentScale > 1 || e.touches.length === 2) e.preventDefault(); 
         isDragged = true;
+        
         if (e.touches.length === 1 && isPanning) {
             currentPanX = e.touches[0].clientX - startPanX;
             currentPanY = e.touches[0].clientY - startPanY;
             updateImageTransform();
+        } else if (e.touches.length === 1 && isSwipingToClose && currentScale === 1) {
+            currentSwipeY = e.touches[0].clientY - swipeStartY;
+            img.style.transform = `translateY(${currentSwipeY}px) scale(1)`;
+            // Эффект затемнения фона при свайпе
+            const opacity = Math.max(0.3, 0.95 - Math.abs(currentSwipeY) / 500);
+            fsPreview.style.background = `rgba(2, 3, 5, ${opacity})`;
         } else if (e.touches.length === 2 && initialPinchDistance) {
             const currentDistance = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
             const scaleAmount = currentDistance / initialPinchDistance;
@@ -171,6 +188,21 @@ function setupFullscreenUI() {
     imgContainer.addEventListener('touchend', (e) => {
         isPanning = false;
         initialPinchDistance = null;
+        
+        if (isSwipingToClose) {
+            if (Math.abs(currentSwipeY) > 100) {
+                // Если дистанция свайпа большая — закрываем
+                closeFullscreen();
+            } else {
+                // Иначе возвращаем на место с анимацией
+                img.style.transition = 'transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.6s ease';
+                img.style.transform = `translate(0px, 0px) scale(1)`;
+                fsPreview.style.background = `rgba(2, 3, 5, 0.95)`;
+            }
+            isSwipingToClose = false;
+            currentSwipeY = 0;
+        }
+
         if (e.touches.length === 1 && currentScale > 1) {
             isPanning = true;
             startPanX = e.touches[0].clientX - currentPanX;
@@ -198,12 +230,21 @@ function setupFullscreenUI() {
     infoBtn.style.cssText = btnStyle + 'top: 104px;';
     infoBtn.innerHTML = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>`;
 
+    const similarBtn = document.createElement('div');
+    similarBtn.id = 'fs-similar-btn';
+    similarBtn.className = 'fs-action-btn';
+    similarBtn.style.cssText = btnStyle + 'top: 168px; display: none;';
+    similarBtn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="7" width="14" height="14" rx="2" ry="2"></rect>
+        <path d="M21 17V5a2 2 0 0 0-2-2H9a2 2 0 0 0-2 2v2"></path>
+        <path d="M3 16l3.5-3.5a2 2 0 0 1 2.8 0L17 20"></path>
+        <circle cx="8.5" cy="11.5" r="1.5"></circle>
+    </svg>`;
     const downloadBtn = document.createElement('div');
     downloadBtn.id = 'fs-download-btn';
     downloadBtn.className = 'fs-action-btn';
-    downloadBtn.style.cssText = btnStyle + 'top: 168px; display: none;';
+    downloadBtn.style.cssText = btnStyle + 'top: 232px; display: none;'; /* Опущена ниже */
     downloadBtn.innerHTML = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
-
     const navStyle = `
         position: absolute; top: 50%; transform: translateY(-50%);
         width: 80px; height: 120px; display: flex; align-items: center; justify-content: center;
@@ -228,6 +269,7 @@ function setupFullscreenUI() {
 
     fsPreview.appendChild(closeBtn);
     fsPreview.appendChild(infoBtn);
+    fsPreview.appendChild(similarBtn);
     fsPreview.appendChild(downloadBtn);
     fsPreview.appendChild(prevBtn);
     fsPreview.appendChild(nextBtn);
@@ -258,12 +300,26 @@ function setupFullscreenUI() {
     const closeFullscreen = () => {
         if (window.resetFsZoom) window.resetFsZoom();
         fsPreview.style.display = 'none';
+        fsPreview.style.background = `rgba(2, 3, 5, 0.95)`;
         infoPanel.style.transform = 'translateX(100%)';
         img.src = '';
         img.style.opacity = '0';
         loader.classList.remove('active');
         window.currentFsIndex = -1;
+
+        // Если закрыли крестиком, кликом или свайпом (не кнопкой "Назад"), 
+        // откатываем историю браузера на шаг назад
+        if (fromHistory !== true && window.history.state && window.history.state.fsOpen) {
+            window.history.back();
+        }
     };
+
+    // Ловим нажатие кнопки "Назад" в браузере или на смартфоне
+    window.addEventListener('popstate', (e) => {
+        if (fsPreview.style.display === 'flex') {
+            closeFullscreen(true); // true означает, что закрывать историю повторно не нужно
+        }
+    });
 
     closeBtn.addEventListener('click', (e) => { e.stopPropagation(); closeFullscreen(); });
     infoBtn.addEventListener('click', (e) => { 
@@ -527,6 +583,16 @@ export function initGallery() {
             colorStrip.classList.add('has-selection');
             document.querySelectorAll('.color-item').forEach(el => el.classList.remove('active'));
             item.classList.add('active');
+            
+            // Сбрасываем DOM Color в продвинутых фильтрах
+            const fDomColor = document.getElementById('f-dom-color');
+            if(fDomColor) fDomColor.value = '';
+            state.filters.dom_color = '';
+            
+            // Проверка для подсветки кнопки фильтров
+            const hasFilters = state.filters.sec_color || state.filters.br_min > 0 || state.filters.br_max < 1 || state.filters.sat_min > 0 || state.filters.sat_max < 1 || state.filters.date_from || state.filters.date_to;
+            const filterBtn = document.getElementById('g-filter-btn');
+            if (filterBtn) filterBtn.style.color = hasFilters ? '#ffaa00' : 'rgba(255,255,255,0.4)';
         }
         loadItems(true);
     });
@@ -582,14 +648,37 @@ export function initGallery() {
         galleryBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             overlay.style.display = 'flex';
-            window.dispatchEvent(new CustomEvent('toggle-pause', { detail: true })); // <--- ПАУЗА ВКЛ
+            window.dispatchEvent(new CustomEvent('toggle-pause', { detail: true }));
+            
+            // Создаем запись в истории для окна галереи
+            if (!window.history.state || !window.history.state.galleryOpen) {
+                window.history.pushState({ ...window.history.state, galleryOpen: true }, "", "#gallery");
+            }
+
             if (state.offset === 0) loadItems(true);
         });
     }
-    const closeBtn = document.getElementById('g-close-btn');
-    if (closeBtn) closeBtn.addEventListener('click', () => {
+
+    // Создаем отдельную функцию закрытия галереи
+    const closeGallery = (fromHistory = false) => {
         overlay.style.display = 'none';
-        window.dispatchEvent(new CustomEvent('toggle-pause', { detail: false })); // <--- ПАУЗА ВЫКЛ
+        window.dispatchEvent(new CustomEvent('toggle-pause', { detail: false })); 
+        
+        // Очищаем историю, если закрыли через крестик
+        if (fromHistory !== true && window.history.state && window.history.state.galleryOpen) {
+            window.history.back();
+        }
+    };
+
+    const closeBtn = document.getElementById('g-close-btn');
+    if (closeBtn) closeBtn.addEventListener('click', () => closeGallery());
+
+    // Ловим кнопку "Назад" для закрытия основного окна галереи
+    window.addEventListener('popstate', (e) => {
+        // Если галерея открыта, но флаг из истории пропал (сработала кнопка назад)
+        if (overlay.style.display === 'flex' && (!window.history.state || !window.history.state.galleryOpen)) {
+            closeGallery(true);
+        }
     });
     const stopProp = (e) => e.stopPropagation();
     overlay.addEventListener('wheel', stopProp, { passive: true });
@@ -664,7 +753,11 @@ export function initGallery() {
                 date_from: document.getElementById('f-date-from').value,
                 date_to: document.getElementById('f-date-to').value
             };
-            
+            if (state.filters.dom_color) {
+                state.color = '';
+                document.getElementById('color-strip').classList.remove('has-selection');
+                document.querySelectorAll('.color-item').forEach(el => el.classList.remove('active'));
+            }            
             filterPanel.classList.remove('show');
             filterBtn.classList.remove('active');
             
@@ -711,6 +804,11 @@ window.currentFsIndex = -1;
 function openGalleryFullscreen(index) {
     if (index < 0 || index >= currentGalleryItems.length) return;
     
+    // ДОБАВЛЯЕМ ЭТОТ БЛОК: Записываем открытие картинки в историю браузера
+    if (!window.history.state || !window.history.state.fsOpen) {
+        window.history.pushState({ ...window.history.state, fsOpen: true }, "", "#photo");
+    }
+
     window.currentFsIndex = index;
     const item = currentGalleryItems[index];
     
@@ -718,6 +816,7 @@ function openGalleryFullscreen(index) {
     const fsImg = document.getElementById('fs-img');
     const fsLoader = document.getElementById('fs-loader'); 
     const downloadBtn = document.getElementById('fs-download-btn');
+    const similarBtn = document.getElementById('fs-similar-btn');
     
     fsPreview.style.display = 'flex';
     fsImg.style.opacity = '0';
@@ -726,7 +825,16 @@ function openGalleryFullscreen(index) {
     if (window.resetFsZoom) window.resetFsZoom();
     // Обновляем информацию
     populateFSInfo(item);
-    
+    if (similarBtn) {
+        similarBtn.style.display = 'flex';
+        similarBtn.onclick = (e) => {
+            e.stopPropagation();
+            document.getElementById('fs-close-btn').click(); // Закрываем фулскрин
+            window.dispatchEvent(new CustomEvent('search-similar', { detail: item.post_id }));
+            document.getElementById('g-content').scrollTop = 0; // Наверх к результатам
+        };
+        similarBtn.title = "Найти похожие";
+    }    
     // Логика кнопки скачивания (Telegra.ph)
     if (item.original_link) {
         downloadBtn.style.display = 'flex';
@@ -832,6 +940,10 @@ function renderMasonry(items, columns) {
         // Сохраняем данные для клика
         div.__galleryItem = item;
         
+        const loaderPulse = document.createElement('div');
+        loaderPulse.className = 'g-placeholder-loader';
+        div.appendChild(loaderPulse);
+
         const img = document.createElement('img');
         div.appendChild(img);
 
@@ -857,6 +969,7 @@ function renderMasonry(items, columns) {
             img.src = thumbUrl;
             img.onload = () => {
                 clearTimeout(safetyTimeout);
+                if (loaderPulse.parentNode) loaderPulse.remove();
                 div.classList.add('loaded');
                 div.style.minHeight = 'auto';
 
