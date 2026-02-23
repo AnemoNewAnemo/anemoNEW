@@ -15736,35 +15736,50 @@ SORT_OPTIONS = [
 
 def analyze_image_colors(image, criterion):
     """
-    Анализирует изображение и возвращает:
-    - Процентное соотношение темных, средних и ярких пикселей.
-    - Процентное соотношение серых, средней насыщенности и насыщенных пикселей.
-    - Процентное соотношение основных цветов (красный, оранжевый, желтый, зеленый, голубой, синий, фиолетовый).
+    Анализирует изображение и возвращает распределения.
     """
-    # Преобразуем изображение в RGB, изменяем размер для ускорения обработки
-    img = image.convert('RGB').resize((50, 50))
-    
-    # Преобразуем изображение в массив numpy
+    img = image.convert('RGB').resize((150, 150), Image.Resampling.LANCZOS)
     arr = np.array(img).reshape(-1, 3)
-    
-    # Конвертируем пиксели из RGB в HSV
     hsv_pixels = [rgb_to_hsv(r / 255, g / 255, b / 255) for r, g, b in arr]
-
     total_pixels = len(hsv_pixels)
 
-    # Анализ яркости
+    # --- ТОЧНЫЙ ПОПИКСЕЛЬНЫЙ АНАЛИЗ АХРОМАТИКИ ---
+    # Белый: строго ВЫСОКАЯ яркость (>= 0.75) И НИЗКАЯ насыщенность (< 0.3)
+    exact_white_pixels = sum(1 for _, s, v in hsv_pixels if v >= 0.75 and s < 0.3)
+    # Черный: строго НИЗКАЯ яркость (< 0.33)
+    exact_black_pixels = sum(1 for _, _, v in hsv_pixels if v < 0.33)
+    # Серый: средняя яркость и низкая насыщенность
+    exact_gray_pixels = sum(1 for _, s, v in hsv_pixels if 0.33 <= v < 0.75 and s < 0.3)
+
+
+    dark_high_sat_pixels = sum(1 for _, s, v in hsv_pixels if v < 0.33 and s >= 0.3)
+    bright_high_sat_pixels = sum(1 for _, s, v in hsv_pixels if v >= 0.75 and s >= 0.3)
+
+    dark_low_sat_pixels = sum(1 for _, s, v in hsv_pixels if v < 0.33 and s < 0.3)
+    bright_low_sat_pixels = sum(1 for _, s, v in hsv_pixels if v >= 0.75 and s < 0.3)
+
+
+    # Глобальный анализ яркости
     brightness = [v for _, _, v in hsv_pixels]
     dark_pixels = sum(1 for v in brightness if v < 0.33)
     medium_pixels = sum(1 for v in brightness if 0.33 <= v < 0.75)
     bright_pixels = sum(1 for v in brightness if v >= 0.75)
-    total_brightness = sum(brightness) / len(brightness)  # Средняя яркость
-    total_bright = 1 - total_brightness  # Инвертируем для диапазона от 0 (ярко) до 1 (темно)
+    total_brightness = sum(brightness) / len(brightness)
+    total_bright = 1 - total_brightness
 
     brightness_distribution = {
         "dark": dark_pixels / total_pixels,
         "medium": medium_pixels / total_pixels,
         "bright": bright_pixels / total_pixels,
-        "total_bright": total_bright
+        "total_bright": total_bright,
+        # Прокидываем точные попиксельные пересечения наружу
+        "exact_white": exact_white_pixels / total_pixels,
+        "exact_black": exact_black_pixels / total_pixels,
+        "exact_gray": exact_gray_pixels / total_pixels,
+        "dark_high_sat": dark_high_sat_pixels / total_pixels,
+        "bright_high_sat": bright_high_sat_pixels / total_pixels,
+        "dark_low_sat": dark_low_sat_pixels / total_pixels,
+        "bright_low_sat": bright_low_sat_pixels / total_pixels,
     }
 
     # Анализ насыщенности
@@ -15790,14 +15805,18 @@ def analyze_image_colors(image, criterion):
         "purple": [0, 0, 0, 0, 0, 0],
     }
     color_boundaries = {
-        "red": (350 / 360, 10 / 360),
-        "orange": (10/ 360, 40 / 360),
-        "yellow": (40 / 360, 60 / 360),  # Верхняя граница для жёлтого = 100°
-        "green": (60 / 360, 160 / 360),  # Нижняя граница для зелёного = 100°
-        "cyan": (160 / 360, 190 / 360),
-        "blue": (190 / 360, 250 / 360),
-        "purple": (250 / 360, 350 / 360),
+        "red": (340 / 360, 5 / 360),
+        "orange": (5/ 360, 45 / 360),
+        "yellow": (45 / 360, 75 / 360),  
+        "green": (75 / 360, 170 / 360),  
+        "cyan": (170 / 360, 200 / 360),
+        "blue": (200 / 360, 250 / 360),
+        "purple": (250 / 360, 340 / 360),
     }
+
+
+
+
 
     overlap_margin = 10 / 360  # Граница перекрытия в градусах (5°)
 
@@ -15827,7 +15846,6 @@ def analyze_image_colors(image, criterion):
 
     # Расчёт веса
     for color, data in hue_distribution.items():
-        # Логируем интересующие значения
         brightness_weight = (
             -3.0 * brightness_distribution["dark"] +
             2.0 * brightness_distribution["medium"] +
@@ -15838,9 +15856,11 @@ def analyze_image_colors(image, criterion):
             1.0 * saturation_distribution["medium"] +
             3.0 * saturation_distribution["high"]
         )
+        
         if brightness_distribution["bright"] > 0.8:
             saturation_weight += 1.5 * saturation_distribution["gray"]
             data["ls"], data["ms"] = -0.2 * data["ls"], 3.0 * data["ms"]
+            
         if saturation_distribution["gray"] > 0.85:
             if brightness_distribution["dark"] > 0.3 and brightness_distribution["bright"] < 0.7:
                 data["hs"], data["ms"], data["ls"] = (
@@ -15848,10 +15868,30 @@ def analyze_image_colors(image, criterion):
                     15.0 * data["ms"],
                     0.5 * data["ls"]
                 )
+                
+        color_mass = data["hs"] + data["ms"] + data["ls"]
+        
+        # ИСПРАВЛЕНИЕ 1: Снижаем порог отсечения мелких деталей до 0.2%
+        if color_mass < 0.2:
+            data["tw"] = 0
+            continue
+
+        global_bonus = (brightness_weight + saturation_weight)
+        
+        # ИСПРАВЛЕНИЕ 2: Защищаем цвет от влияния серого фона.
+        # Если фон депрессивный (global_bonus < 0), мы не штрафуем цвет, 
+        # а наоборот, даем небольшой бонус за его собственную насыщенность (hs, ms)
+        if global_bonus < 0:
+            color_bonus = (data["hs"] * 1.5 + data["ms"] * 0.5) 
+        else:
+            color_bonus = global_bonus * (color_mass / 100.0)
+
+        # ИСПРАВЛЕНИЕ 3: Смягчаем штрафы за "тёмность" цвета (-2 * lv заменено на -0.5 * lv)
+        # Шарф в тенях все еще должен оставаться красным.
         data["tw"] = round(max(0, (
-            5.0 * data["hs"] + 3.0 * data["ms"] - data["ls"] +
-            2 * data["mv"] - 2 * data["lv"] +
-            10.0 * (brightness_weight + saturation_weight)
+            5.0 * data["hs"] + 3.0 * data["ms"] + 0.5 * data["ls"] + 
+            2.0 * data["mv"] - 0.5 * data["lv"] + 
+            10.0 * color_bonus
         )), 2)
 
     # Проверка, если все значения tw равны 0
@@ -16026,7 +16066,6 @@ def calculate_normalized_brightness(brightness_distribution, saturation_distribu
     normalized_brightness = max(0, min(1, normalized_brightness))
 
     return normalized_brightness
-
 
 
 # Сортирует изображения по яркости
@@ -18179,6 +18218,348 @@ async def rand(update, context):
 async def ignore_pinned_message(update: Update, context: CallbackContext):
     # Ничего не делаем, просто игнорируем событие закрепления
     pass
+
+def get_smart_colors(b_dist, s_dist, h_dist, norm_brightness):
+    # ==========================================
+    # НАСТРОЙКИ DOM (ДОМИНАНТНОГО ЦВЕТА) И БАЗОВЫХ ВЕСОВ
+    # ==========================================
+    cfg_dom = {
+        # Базовый множитель для серого. 
+        # Увеличить: серый цвет будет чаще становиться доминантным. Уменьшить: реже.
+        "base_gray_mult": 520.0,
+        
+        # Сила "штрафа" (уменьшения веса) черного цвета на светлых фотографиях.
+        # Увеличить: черный цвет будет быстрее исчезать из кандидатов на светлых фото.
+        "bright_black_penalty": 10.0,
+        
+        # Бонус к весу белого цвета, если на фото много серого (>15%).
+        # Увеличить: белый чаще будет побеждать серый при обилии нейтральных тонов.
+        "white_gray_boost": 10.0,
+        
+        # Штраф цвета за "темноту". Какая доля веса цвета сгорает из-за его темных пикселей.
+        # Увеличить: темные/грязные цвета реже будут становиться DOM. Уменьшить: будут чаще.
+        "color_dark_penalty": 0.7,
+        
+        # Штраф цвета за "светлоту". Какая доля веса сгорает из-за засвеченных пикселей.
+        # Увеличить: пастельные/светлые оттенки реже становятся DOM.
+        "color_bright_penalty": 0.1,
+        
+        # Какая доля от "отрезанного" веса темных цветных пикселей передается в Черный цвет.
+        # Увеличить: Черный быстрее набирает вес от темных синих/зеленых и т.д.
+        "color_to_black_transfer": 0.5,
+        
+        # Какая доля от "отрезанного" веса светлых цветных пикселей передается в Белый цвет.
+        # Увеличить: Белый быстрее набирает вес от светлых пастельных оттенков.
+        "color_to_white_transfer": 0.5,
+
+        # --- НОВЫЙ ПАРАМЕТР ---
+        # Бонус за насыщенность (чистоту) цвета.
+        # Увеличить: сочные/насыщенные цвета будут агрессивно обгонять тусклые и грязные оттенки.
+        # Например, при 0.8: цвет, состоящий на 100% из насыщенных пикселей, получит +80% к весу.        
+        "color_sat_boost": 1.8, 
+        # --- НОВОЕ: Множители чувствительности к насыщенности ---
+        # Значения > 1.0 позволяют цвету получать высокий бонус даже при средней насыщенности.
+        "hue_sat_multipliers": {
+            "purple": 3,
+            "pink": 2.3,
+            "blue": 1.7
+        },
+
+
+        # Минимальный порог веса для того, чтобы цвет вообще рассматривался как кандидат в DOM.
+        # Увеличить: мелкие детали никогда не станут DOM. Уменьшить: больше мусорных кандидатов.
+        "min_dom_weight": 0.9
+    }
+
+    # ==========================================
+    # НАСТРОЙКИ SEC (ВТОРИЧНОГО/VISUAL ЦВЕТА)
+    # ==========================================
+    cfg_sec = {
+        # Минимальный сырой вес для участия в расчете SEC.
+        "min_sec_weight": 0.5,
+        # --- НОВЫЙ ПАРАМЕТР ---
+        # Бонус за индивидуальную насыщенность (чистоту) SEC цвета.
+        # Увеличить: сочные/насыщенные оттенки будут получать множитель к итоговому 
+        # visual_score и легко обгонять тусклые/грязные цвета-кандидаты.
+        "color_sat_boost": 20, 
+        # --- Ч/Б на фоне Ч/Б ---
+        # Порог веса, после которого применяется штрафной множитель (чтобы ч/б было сложнее стать SEC).
+        "achro_weight_threshold": 15.0,
+        # Множитель веса (если вес больше порога выше). 
+        # Увеличить (>0.5): серому/черному будет проще стать SEC на фоне белого/черного.
+        "achro_on_achro_mult": 0.7,
+
+        # --- ЦВЕТ на фоне Ч/Б ---
+        # Множитель для цвета, если фото в основном серое (>55%).
+        # Увеличить: любые цвета на серых фото будут иметь огромный шанс стать SEC.
+        "color_on_achro_mult_mono": 2.0,
+        # Множитель для цвета на фоне ч/б в обычных условиях.
+        # Увеличить: цветные элементы будут еще сильнее доминировать над ч/б фоном.
+        "color_on_achro_mult_norm": 5.0,
+        
+        # Порог веса для определения "маленькой детали" (например, красной кнопки на сером фоне).
+        "small_color_threshold": 15.0,
+        # Доп. буст для маленьких деталей. Увеличить: мелкие яркие детали агрессивнее становятся SEC.
+        "small_color_boost": 1.5,
+        
+        # Порог кол-ва насыщенных пикселей на фото, чтобы применить глобальный буст цвета.
+        "high_sat_threshold": 0.05,
+        # Множитель для высоконасыщенных фото. Увеличить: насыщенные цвета легче перебивают тусклые.
+        "high_sat_boost": 1.2,
+
+        # --- Ч/Б на фоне ЦВЕТА ---
+        # Виртуальный базовый вес черного (умножается на долю темных неярких пикселей).
+        # Увеличить: Черный чаще будет SEC на цветных фотографиях с тенями.
+        "black_on_color_base": 200.0,
+        # Итоговый множитель черного на цветном фоне. Увеличить: черному проще пробиться в SEC.
+        "black_on_color_mult": 0.8,
+        
+        # Виртуальный базовый вес белого (умножается на долю ярких неярких пикселей).
+        # Увеличить: Белый чаще будет SEC на фото с пересветами.
+        "white_on_color_base": 1800.0,
+        # Итоговый множитель белого на цветном фоне.
+        "white_on_color_mult": 1.2,
+        
+        # Множитель серого на фоне цвета. 
+        # Увеличить: серый перестанет игнорироваться и начнет вытеснять цвета из SEC (не рекомендуется).
+        "gray_on_color_mult": 0.3,
+        # --- НОВОЕ: Множители чувствительности для SEC ---
+        # Работает аналогично DOM, помогая фиолетовому спектру пробиваться в SEC.
+        "hue_sat_multipliers": {
+            "purple": 3,
+            "pink": 2.3,
+            "blue": 1.7
+        },
+        # --- ЦВЕТ на фоне ЦВЕТА (дистанции на цветовом круге 0-360) ---
+        # Дистанция 1 (очень близкие цвета). Увеличить: больше похожих оттенков будут игнорироваться.
+        "dist_close": 20,
+        "mult_close": 0.1,   # 0.0 значит, что близкие оттенки полностью сбрасываются.
+        
+        # Дистанция 2 (соседние цвета).
+        "dist_medium": 45,
+        "mult_medium": 0.7,  # Увеличить: соседним оттенкам (например, синему на фоне голубого) легче стать SEC.
+        
+        # Дистанция 3 (средне-далекие цвета).
+        "dist_far": 65,
+        "mult_far": 0.1,    # Штрафная зона, чтобы "грязные" переходы не становились SEC.
+        
+        # Множитель для контрастных цветов (дальше dist_far) на "сером" фото.
+        "color_on_color_mult_mono": 1.0,
+        # Множитель для контрастных цветов на обычных ярких фото.
+        # Увеличить: противоположные цвета (красный-зеленый) будут всегда перебивать остальные.
+        "color_on_color_mult_norm": 2.0,
+    }
+
+    dark_ratio = b_dist.get('dark', 0)
+    bright_ratio = b_dist.get('bright', 0)
+    gray_ratio = s_dist.get('gray', 0)
+    high_sat_ratio = s_dist.get('high', 0)
+
+    # --- БАЗОВЫЕ ВЕСА АХРОМАТИКИ ---
+    base_black_weight = dark_ratio * 1.0
+    base_white_weight = bright_ratio * 1.0
+    exact_gray = b_dist.get('exact_gray', gray_ratio)
+    
+    # Корректировки яркости
+    black_weight = base_black_weight
+    if norm_brightness >= 0.65:
+        darkness_factor = (0.65 - norm_brightness) / 0.65
+        black_weight += darkness_factor * cfg_dom["bright_black_penalty"]
+
+    white_weight = base_white_weight
+    if exact_gray > 0.15:
+        white_weight += cfg_dom["white_gray_boost"]
+
+    gray_weight = exact_gray * cfg_dom["base_gray_mult"]
+
+    # ==========================================
+    # ЭТАП 1: ПОДГОТОВКА ВЕСОВ ДЛЯ DOM
+    # ==========================================
+    dom_weights = {
+        "black": black_weight,
+        "white": white_weight,
+        "gray": gray_weight
+    }
+    
+    for hue in h_dist.keys():
+        dom_weights[hue] = 0.0
+
+    for hue, data in h_dist.items():
+        original_weight = data.get('tw', 0)
+        total_hue_pixels = data.get('hv', 0) + data.get('mv', 0) + data.get('lv', 0)
+        
+        if total_hue_pixels > 0 and original_weight > 0:
+            dark_ratio_in_color = data.get('lv', 0) / total_hue_pixels
+            bright_ratio_in_color = data.get('hv', 0) / total_hue_pixels
+            sat_ratio_in_color = data.get('hs', data.get('mv', 0)) / total_hue_pixels
+            
+            sat_mult = cfg_dom["hue_sat_multipliers"].get(hue, 1.0)
+            effective_sat_ratio = min(1.0, sat_ratio_in_color * sat_mult)
+
+            pure_color_weight = original_weight * (
+                1.0 
+                - cfg_dom["color_dark_penalty"] * dark_ratio_in_color 
+                - cfg_dom["color_bright_penalty"] * bright_ratio_in_color
+            )
+            
+            pure_color_weight *= (1.0 + (cfg_dom["color_sat_boost"] * effective_sat_ratio))
+            
+            dom_weights[hue] = pure_color_weight
+            dom_weights["black"] += original_weight * cfg_dom["color_to_black_transfer"] * dark_ratio_in_color
+            dom_weights["white"] += original_weight * cfg_dom["color_to_white_transfer"] * bright_ratio_in_color
+        else:
+            dom_weights[hue] = original_weight
+
+    sorted_dom = sorted(dom_weights.items(), key=lambda x: x[1], reverse=True)
+    valid_dom_candidates = [c for c in sorted_dom if c[1] >= cfg_dom["min_dom_weight"]]
+    
+    if not valid_dom_candidates:
+        dom_color = sorted_dom[0][0] if sorted_dom else "black"
+    else:
+        dom_color = valid_dom_candidates[0][0]
+
+    # ==========================================
+    # ЭТАП 2: ПОДГОТОВКА СПИСКА ДЛЯ SEC (VISUAL)
+    # ==========================================
+    raw_combined_colors = []
+    raw_combined_colors.append({"name": "black", "weight": black_weight})
+    raw_combined_colors.append({"name": "white", "weight": white_weight})
+    raw_combined_colors.append({"name": "gray",  "weight": gray_weight})
+
+    for hue, data in h_dist.items():
+        raw_combined_colors.append({"name": hue, "weight": data.get('tw', 0)})
+
+    valid_colors = [c for c in raw_combined_colors if c['weight'] >= cfg_sec["min_sec_weight"]]
+    if not valid_colors:
+        # Теперь возвращаем 5 параметров
+        return dom_color, None, None, [], dom_weights 
+        
+    valid_colors.sort(key=lambda x: x['weight'], reverse=True)
+
+    # ==========================================
+    # ЭТАП 3: РАСЧЕТ SEC (VISUAL SCORE)
+    # ==========================================
+    achromatic_set = {"black", "white", "gray"}
+    hue_positions = {
+        "red": 0, "orange": 40, "yellow": 85, "green": 130, 
+        "cyan": 180, "blue": 240, "purple": 280, "pink": 320
+    }
+
+    is_mostly_monochrome = gray_ratio > 0.55
+    high_sat_ratio = s_dist.get('high', 0.0) 
+
+    best_sec_color = None
+    best_sec_score = -1.0
+    
+    dark_low_sat = b_dist.get("dark_low_sat", 0)
+    bright_low_sat = b_dist.get("bright_low_sat", 0)
+
+    for i in range(len(valid_colors)):
+        cand_color = valid_colors[i]['name']
+        
+        if cand_color == dom_color:
+            valid_colors[i]["visual_score"] = 0.0
+            continue
+
+        cand_weight = valid_colors[i]['weight']
+        multiplier = 0.0
+
+        if dom_color in achromatic_set:
+            if cand_color in achromatic_set:
+                if (dom_color == "black" and cand_color == "white") or \
+                   (dom_color == "white" and cand_color == "black"):
+                    multiplier = 1.0
+                elif cand_weight > cfg_sec["achro_weight_threshold"]:
+                    multiplier = cfg_sec["achro_on_achro_mult"]
+            else:
+                multiplier = cfg_sec["color_on_achro_mult_mono"] if is_mostly_monochrome else cfg_sec["color_on_achro_mult_norm"]
+                if cand_weight < cfg_sec["small_color_threshold"]:
+                    multiplier *= cfg_sec["small_color_boost"]
+                if high_sat_ratio > cfg_sec["high_sat_threshold"]:
+                    multiplier *= cfg_sec["high_sat_boost"]
+
+        else:
+            if cand_color in achromatic_set:
+                if cand_color == "black":
+                    visual_black_weight = dark_low_sat * cfg_sec["black_on_color_base"]
+                    cand_weight = visual_black_weight
+                    multiplier = cfg_sec["black_on_color_mult"]
+                elif cand_color == "white":
+                    visual_white_weight = bright_low_sat * cfg_sec["white_on_color_base"]
+                    cand_weight = visual_white_weight
+                    multiplier = cfg_sec["white_on_color_mult"]
+                else: 
+                    multiplier = cfg_sec["gray_on_color_mult"]
+            else:
+                h1 = hue_positions.get(dom_color, 0)
+                h2 = hue_positions.get(cand_color, 0)
+                dist = abs((h1 - h2) % 360)
+                if dist > 180: dist = 360 - dist
+                
+                if dist <= cfg_sec["dist_close"]:
+                    multiplier = cfg_sec["mult_close"] 
+                elif dist <= cfg_sec["dist_medium"]:
+                    multiplier = cfg_sec["mult_medium"]
+                elif dist <= cfg_sec["dist_far"]:
+                    multiplier = cfg_sec["mult_far"]
+                else:
+                    multiplier = cfg_sec["color_on_color_mult_mono"] if is_mostly_monochrome else cfg_sec["color_on_color_mult_norm"]
+
+        if multiplier <= 0.0:
+            valid_colors[i]["visual_score"] = 0.0
+            continue
+
+        if cand_color not in achromatic_set:
+            color_data = h_dist.get(cand_color, {})
+            total_hue_pixels = color_data.get('hv', 0) + color_data.get('mv', 0) + color_data.get('lv', 0)
+            if total_hue_pixels > 0:
+                sat_ratio_in_cand = color_data.get('hs', color_data.get('mv', 0)) / total_hue_pixels
+                
+                sat_mult = cfg_sec["hue_sat_multipliers"].get(cand_color, 1.0)
+                effective_sat_ratio = min(1.0, sat_ratio_in_cand * sat_mult)
+                
+                multiplier *= (1.0 + (cfg_sec["color_sat_boost"] * effective_sat_ratio))
+
+        visual_score = cand_weight * multiplier
+        valid_colors[i]["visual_score"] = round(visual_score, 2)
+
+        if visual_score > best_sec_score:
+            best_sec_score = visual_score
+            best_sec_color = cand_color
+
+    # ==========================================
+    # НОВОЕ: ЭТАП 4: РАСЧЕТ TER (ТРЕТЬЕГО ЦВЕТА)
+    # ==========================================
+    best_ter_color = None
+    best_ter_score = -1.0
+    
+    dom_sec_set = {dom_color, best_sec_color}
+
+    for color_data in valid_colors:
+        cand_color = color_data['name']
+        cand_visual_score = color_data.get('visual_score', 0.0)
+
+        # 1. Третий цвет не может быть dom, sec или ахроматическим (чёрный, белый, серый)
+        if cand_color in dom_sec_set or cand_color in achromatic_set:
+            continue
+            
+        # 2. Отсекаем все цвета со значением visual меньше 10
+        if cand_visual_score < 20.0:
+            continue
+            
+        # 3. Конфликты Blue / Cyan
+        if cand_color == "cyan" and "blue" in dom_sec_set:
+            continue
+        if cand_color == "blue" and "cyan" in dom_sec_set:
+            continue
+            
+        # 4. Выбираем с наибольшим visual_score
+        if cand_visual_score > best_ter_score:
+            best_ter_score = cand_visual_score
+            best_ter_color = cand_color
+
+    # Теперь возвращаем 5 параметров!
+    return dom_color, best_sec_color, best_ter_color, valid_colors, dom_weights
 
 
 def main() -> None:
