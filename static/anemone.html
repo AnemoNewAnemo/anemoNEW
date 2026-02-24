@@ -400,11 +400,12 @@
 
         .gallery-body { flex: 1; overflow: hidden; position: relative; }
         .gallery-body, .gallery-content { user-select: none; -webkit-user-select: none; -moz-user-select: none; }
-        
+                
         .gallery-content {
             display: flex; padding: 30px 40px; gap: 24px; align-items: flex-start;
             overflow-y: auto; height: 100%; width: 100%; box-sizing: border-box;
             touch-action: pan-y; -webkit-overflow-scrolling: touch;
+            will-change: transform; /* Переносит скролл на GPU */
         }
         .masonry-col { display: flex; flex-direction: column; gap: 24px; flex: 1; min-width: 0; }
 
@@ -422,8 +423,10 @@
             position: absolute; bottom: 0; left: 0; width: 100%;
             background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.5) 60%, transparent 100%);
             padding: 30px 20px 20px; box-sizing: border-box;
-            opacity: 0; transform: translateY(10px); transition: all 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+            opacity: 0; transform: translateY(10px); 
+            transition: opacity 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1); 
             display: flex; flex-direction: column; gap: 12px; z-index: 10; pointer-events: none;
+            will-change: opacity, transform;
         }
         .gallery-item:hover .gallery-overlay-info { opacity: 1; transform: translateY(0); pointer-events: auto; }
 
@@ -456,7 +459,9 @@
         #fs-preview img { 
             max-width: 90%; max-height: 90%; border-radius: 8px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.05); 
+            will-change: transform, opacity; /* Защита от потери кадров при зуме */
         }
+
 
         /* Современные Лоадеры */
         #gallery-loader {
