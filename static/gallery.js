@@ -97,23 +97,30 @@ function setupFullscreenUI() {
     zoomContainer.appendChild(zoomLabel);
     fsPreview.appendChild(zoomContainer);
 
+    let transformTicking = false;
     const updateImageTransform = () => {
-        if (currentScale <= 1) {
-            currentScale = 1;
-            if (currentPanX !== 0 || currentPanY !== 0) {
-                currentPanX = 0;
-                currentPanY = 0;
-                img.style.transition = 'transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.6s ease';
-                clearTimeout(window.zoomTransitionTimeout);
-                window.zoomTransitionTimeout = setTimeout(() => { img.style.transition = 'opacity 0.6s ease'; }, 400);
-            }
-        } else {
-            img.style.transition = 'opacity 0.6s ease';
+        if (!transformTicking) {
+            transformTicking = true;
+            requestAnimationFrame(() => {
+                if (currentScale <= 1) {
+                    currentScale = 1;
+                    if (currentPanX !== 0 || currentPanY !== 0) {
+                        currentPanX = 0;
+                        currentPanY = 0;
+                        img.style.transition = 'transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.6s ease';
+                        clearTimeout(window.zoomTransitionTimeout);
+                        window.zoomTransitionTimeout = setTimeout(() => { img.style.transition = 'opacity 0.6s ease'; }, 400);
+                    }
+                } else {
+                    img.style.transition = 'opacity 0.6s ease';
+                }
+                img.style.transform = `translate(${currentPanX}px, ${currentPanY}px) scale(${currentScale})`;
+                zoomSlider.value = currentScale;
+                zoomLabel.innerText = Math.round(currentScale * 100) + '%';
+                imgContainer.style.cursor = currentScale > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default';
+                transformTicking = false;
+            });
         }
-        img.style.transform = `translate(${currentPanX}px, ${currentPanY}px) scale(${currentScale})`;
-        zoomSlider.value = currentScale;
-        zoomLabel.innerText = Math.round(currentScale * 100) + '%';
-        imgContainer.style.cursor = currentScale > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default';
     };
 
     window.resetFsZoom = () => {
@@ -209,11 +216,23 @@ let isSwipingToClose = false;
             }
 
             if (isSwipingToClose) {
-                img.style.transform = `translateY(${currentSwipeY}px) scale(1)`;
-                const opacity = Math.max(0.3, 0.95 - Math.abs(currentSwipeY) / 500);
-                fsPreview.style.background = `rgba(2, 3, 5, ${opacity})`;
+                if (!transformTicking) {
+                    transformTicking = true;
+                    requestAnimationFrame(() => {
+                        img.style.transform = `translateY(${currentSwipeY}px) scale(1)`;
+                        const opacity = Math.max(0.3, 0.95 - Math.abs(currentSwipeY) / 500);
+                        fsPreview.style.background = `rgba(2, 3, 5, ${opacity})`;
+                        transformTicking = false;
+                    });
+                }
             } else if (isSwipingHorizontal) {
-                img.style.transform = `translateX(${currentSwipeX}px) scale(1)`;
+                if (!transformTicking) {
+                    transformTicking = true;
+                    requestAnimationFrame(() => {
+                        img.style.transform = `translateX(${currentSwipeX}px) scale(1)`;
+                        transformTicking = false;
+                    });
+                }
             }
         } else if (e.touches.length === 2 && initialPinchDistance) {
             const currentDistance = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
@@ -1001,7 +1020,28 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-
+// Ленивая загрузка для API запросов resolve_image
+const imageResolveObserver = new IntersectionObserver((entries, observer) => {
+    entries.forEach(entry => {
+        if (entry.isIntersecting) {
+            const div = entry.target;
+            const { item, useProxy, applyData } = div.__resolveData;
+            
+            if (RESOLVE_CACHE.has(item.post_id)) {
+                applyData(RESOLVE_CACHE.get(item.post_id));
+            } else {
+                fetch(`/api/anemone/resolve_image?post_id=${item.post_id}&channel_id=@anemonn&use_proxy=${useProxy}`)
+                    .then(r => r.json())
+                    .then(d => {
+                        RESOLVE_CACHE.set(item.post_id, d);
+                        applyData(d);
+                    })
+                    .catch(() => div.remove());
+            }
+            observer.unobserve(div); // Отключаем слежение после загрузки
+        }
+    });
+}, { rootMargin: '500px' }); // Начинаем грузить за 500px до появления на экране
 // --- 5. Рендер с КЭШИРОВАНИЕМ ---
 function renderMasonry(items, columns) {
     const useProxy = document.getElementById('proxy-toggle')?.checked || false; 
@@ -1116,16 +1156,7 @@ function renderMasonry(items, columns) {
             img.onerror = () => div.remove();
         };
 
-        if (RESOLVE_CACHE.has(item.post_id)) {
-            applyData(RESOLVE_CACHE.get(item.post_id));
-        } else {
-            fetch(`/api/anemone/resolve_image?post_id=${item.post_id}&channel_id=@anemonn&use_proxy=${useProxy}`)
-                .then(r => r.json())
-                .then(d => {
-                    RESOLVE_CACHE.set(item.post_id, d);
-                    applyData(d);
-                })
-                .catch(() => div.remove());
-        }
+        div.__resolveData = { item, useProxy, applyData };
+        imageResolveObserver.observe(div);
     });
 }
