@@ -17327,7 +17327,11 @@ def format_price_table(tracked_items, page):
             for entry in reversed(price_entries):
                 if isinstance(entry, dict):
                     try:
-                        price = int(float(entry.get('card_price', base)))
+                        raw_price = str(entry.get('card_price', base)).replace(' ', '').replace(',', '.')
+                        try:
+                            price = int(float(raw_price))
+                        except ValueError:
+                            continue
                         latest_card_price = price
                         break  # нашли последний валидный — выходим
                     except (ValueError, TypeError):
@@ -17337,7 +17341,11 @@ def format_price_table(tracked_items, page):
             for entry in price_entries:
                 if isinstance(entry, dict):
                     try:
-                        price = int(float(entry.get('card_price', base)))
+                        raw_price = str(entry.get('card_price', base)).replace(' ', '').replace(',', '.')
+                        try:
+                            price = int(float(raw_price))
+                        except ValueError:
+                            continue
                         valid_prices.append(price)
                     except (ValueError, TypeError):
                         continue
@@ -17465,7 +17473,7 @@ async def ozon_view_stat(update, context):
         for p in price_history_filtered:
             try:
                 date = datetime.fromisoformat(p["timestamp_utc"])
-                price = float(p["card_price"])
+                price = float(str(p["card_price"]).replace(' ', '').replace(',', '.'))
                 valid_price_data.append((date, price))
             except (ValueError, TypeError):
                 continue  # Пропускаем некорректные записи
@@ -17826,9 +17834,9 @@ async def ozon_set_threshold_callback(update: Update, context: ContextTypes.DEFA
         card_price_val_str = product_details.get("card_price")
         price_val_str = product_details.get("price")
         if card_price_val_str:
-            base_price_to_track = float(str(card_price_val_str).replace(',', '.'))
+            base_price_to_track = float(str(card_price_val_str).replace(' ', '').replace(',', '.'))
         elif price_val_str:
-            base_price_to_track = float(str(price_val_str).replace(',', '.'))
+            base_price_to_track = float(str(price_val_str).replace(' ', '').replace(',', '.'))
         
         if base_price_to_track is None:
             await query.edit_message_text("Не удалось определить текущую цену для отслеживания.")
@@ -18106,13 +18114,13 @@ async def daily_ozon_price_check_job(context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def ozon_tracking_choice_handler(update: Update, context: CallbackContext):
+async def ozon_tracking_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    user_id = query.from_user.id
-    chat_id = query.message.chat_id  # для отправки нового сообщения
-    action_data = query.data  # например: "ozon_continue_new|62588580-4e10-4da3-b236-b969b591a4d7"
+    user_id = str(query.from_user.id) # Используем str для совместимости с вашей функцией update
+    chat_id = query.message.chat_id
+    action_data = query.data
     action, item_id = action_data.split("|")
 
     user_ref = db.reference(f"ozon_prices/{user_id}/tracked_items")
@@ -18122,42 +18130,60 @@ async def ozon_tracking_choice_handler(update: Update, context: CallbackContext)
         await context.bot.send_message(chat_id=chat_id, text="Ошибка: список отслеживаемых товаров пуст.")
         return
 
-    # Поиск нужного товара по item_id
-    item = None
-    item_index = None
-    for i, tracked_item in enumerate(tracked_items):
-        if tracked_item.get("item_id") == item_id:
-            item = tracked_item
-            item_index = i
-            break
+    # Ищем товар
+    item = next((x for x in tracked_items if x.get("item_id") == item_id), None)
 
     if item is None:
         await context.bot.send_message(chat_id=chat_id, text="Ошибка: товар не найден.")
         return
 
     current_time_iso = datetime.now(timezone.utc).isoformat()
+    updated_fields = {}
 
     if action == "ozon_continue_new":
-        item["base_price_when_set"] = item.get("price_history", [])[-1]["price"]
-        item["is_active_tracking"] = True
-        item["added_timestamp_utc"] = current_time_iso
-        await context.bot.send_message(chat_id=chat_id, text="✅ Отслеживание продолжено от новой цены.")
+        # Берем последнюю известную цену из истории
+        last_entry = item.get("price_history", [])[-1]
+        card_price_str = last_entry.get("card_price")
+        price_str = last_entry.get("price")
+        
+        new_base = None
+        # Пробуем взять цену по карте, если её нет - обычную
+        raw_price = card_price_str if card_price_str and card_price_str != "—" else price_str
+        
+        if raw_price and raw_price != "—":
+            try:
+                # Обязательно убираем ВСЕ пробелы перед конвертацией
+                clean_price = str(raw_price).replace(' ', '').replace('\u2009', '').replace('&nbsp;', '').replace(',', '.')
+                new_base = float(clean_price)
+            except ValueError:
+                pass
+
+        if new_base is not None:
+            updated_fields["base_price_when_set"] = new_base
+            updated_fields["is_active_tracking"] = True
+            updated_fields["added_timestamp_utc"] = current_time_iso
+            msg = f"✅ Отслеживание продолжено. Новая базовая цена: <b>{new_base} ₽</b>."
+        else:
+            msg = "❌ Ошибка: не удалось определить новую цену. Отслеживание не возобновлено."
 
     elif action == "ozon_continue_old":
-        item["is_active_tracking"] = True
-        await context.bot.send_message(chat_id=chat_id, text="📉 Отслеживание продолжено от старой цены.")
+        updated_fields["is_active_tracking"] = True
+        msg = "📉 Отслеживание продолжено от старой базовой цены."
 
     elif action == "ozon_stop":
-        item["is_active_tracking"] = False
-        await context.bot.send_message(chat_id=chat_id, text="❌ Отслеживание остановлено.")
-
+        updated_fields["is_active_tracking"] = False
+        msg = "❌ Отслеживание остановлено."
     else:
         await context.bot.send_message(chat_id=chat_id, text="Неизвестный выбор.")
         return
 
-    # Сохраняем изменения
-    tracked_items[item_index] = item
-    user_ref.set(tracked_items)
+    # Сохраняем изменения точечно (это безопаснее, чем перезаписывать весь массив)
+    if updated_fields:
+        success = update_ozon_tracking_item(user_id, item_id, updated_fields)
+        if success:
+            await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="HTML")
+        else:
+            await context.bot.send_message(chat_id=chat_id, text="❌ Ошибка при сохранении в базу данных.")
 
 import pytz
 
