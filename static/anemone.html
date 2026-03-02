@@ -405,7 +405,9 @@
             display: flex; padding: 30px 40px; gap: 24px; align-items: flex-start;
             overflow-y: auto; height: 100%; width: 100%; box-sizing: border-box;
             touch-action: pan-y; -webkit-overflow-scrolling: touch;
-            will-change: transform; /* Переносит скролл на GPU */
+            will-change: scroll-position, contents; /* Лучшая оптимизация для списков с картинками */
+            scroll-behavior: smooth; /* Плавная доводка скролла */
+            overscroll-behavior-y: contain; /* Предотвращает "резиновый" скролл всего окна */
         }
         .masonry-col { display: flex; flex-direction: column; gap: 24px; flex: 1; min-width: 0; }
 
