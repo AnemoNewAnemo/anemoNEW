@@ -1055,7 +1055,10 @@ const imageResolveObserver = new IntersectionObserver((entries, observer) => {
             observer.unobserve(div); // Отключаем слежение после загрузки
         }
     });
-}, { rootMargin: '1500px' }); // Начинаем грузить за 500px до появления на экране
+}, { 
+    root: document.getElementById('g-content'), // <--- ВАЖНО: привязываем к скролл-контейнеру
+    rootMargin: '2000px' // Увеличил зону предзагрузки для надежности (~3-4 ряда)
+});
 // --- 5. Рендер с КЭШИРОВАНИЕМ ---
 function renderMasonry(items, columns) {
     const useProxy = document.getElementById('proxy-toggle')?.checked || false; 
