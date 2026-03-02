@@ -476,30 +476,44 @@ export function initGallery() {
 
     // --- НАЧАЛО: Логика скрытия шапки при скролле на мобильных ---
     let lastScrollTop = 0;
+    let scrollUpDistance = 0; // Буфер для отслеживания прокрутки вверх
+    const SCROLL_UP_THRESHOLD = 80; // Чувствительность появления (в пикселях, ~1-2 см на экране)
+
     content.addEventListener('scroll', () => {
-        // На десктопе отключаем это поведение
         if (window.innerWidth > 768) {
             header.classList.remove('hide-controls');
             return;
         }
         
         let st = content.scrollTop;
-        if (st > lastScrollTop && st > 50) {
-            // Скролл вниз - прячем контролы
-            header.classList.add('hide-controls');
+        let delta = st - lastScrollTop;
+
+        if (delta > 0 && st > 50) {
+            // Скролл ВНИЗ
+            scrollUpDistance = 0; // Обнуляем буфер движения вверх
             
-            // Также закрываем панель фильтров, если она была открыта
-            const filterPanel = document.getElementById('gallery-filter-panel');
-            const filterBtn = document.getElementById('g-filter-btn');
-            if (filterPanel && filterPanel.classList.contains('show')) {
-                filterPanel.classList.remove('show');
-                if (filterBtn) filterBtn.classList.remove('active');
+            if (!header.classList.contains('hide-controls')) {
+                header.classList.add('hide-controls');
+                
+                // Закрываем панель фильтров при скрытии
+                const filterPanel = document.getElementById('gallery-filter-panel');
+                const filterBtn = document.getElementById('g-filter-btn');
+                if (filterPanel && filterPanel.classList.contains('show')) {
+                    filterPanel.classList.remove('show');
+                    if (filterBtn) filterBtn.classList.remove('active');
+                }
             }
-        } else if (st < lastScrollTop) {
-            // Скролл вверх - показываем контролы
-            header.classList.remove('hide-controls');
+        } else if (delta < 0) {
+            // Скролл ВВЕРХ
+            scrollUpDistance += Math.abs(delta);
+            
+            // Показываем шапку только если проскроллили вверх больше порога ИЛИ находимся в самом верху
+            if (scrollUpDistance > SCROLL_UP_THRESHOLD || st < 50) {
+                header.classList.remove('hide-controls');
+            }
         }
-        lastScrollTop = st <= 0 ? 0 : st; // Защита от отрицательного скролла (bounce-эффект)
+        
+        lastScrollTop = st <= 0 ? 0 : st; 
     }, { passive: true });
     // --- КОНЕЦ: Логика скрытия шапки ---
     
@@ -578,7 +592,7 @@ export function initGallery() {
         if (entries[0].isIntersecting && state.hasMore && !state.isLoading) {
             loadItems(false);
         }
-    }, { root: content, rootMargin: '200px' });
+    }, { root: content, rootMargin: '1000px' }); // Увеличен запас для предзагрузки элементов
 
     // --- 4. Загрузка (С УПРАВЛЕНИЕМ ЛОАДЕРОМ) ---
     async function loadItems(reset = false) {
@@ -1041,7 +1055,7 @@ const imageResolveObserver = new IntersectionObserver((entries, observer) => {
             observer.unobserve(div); // Отключаем слежение после загрузки
         }
     });
-}, { rootMargin: '500px' }); // Начинаем грузить за 500px до появления на экране
+}, { rootMargin: '1500px' }); // Начинаем грузить за 500px до появления на экране
 // --- 5. Рендер с КЭШИРОВАНИЕМ ---
 function renderMasonry(items, columns) {
     const useProxy = document.getElementById('proxy-toggle')?.checked || false; 
@@ -1083,6 +1097,7 @@ function renderMasonry(items, columns) {
         div.appendChild(loaderPulse);
 
         const img = document.createElement('img');
+        img.decoding = 'async'; // Снимает нагрузку с основного потока (убирает фризы при скролле)
         div.appendChild(img);
 
         const overlayInfo = document.createElement('div');
