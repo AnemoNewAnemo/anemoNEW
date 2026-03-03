@@ -708,19 +708,34 @@ VPN_BUTTONS = {
     },
     "black_alt": {
         "name": "Чёрные списки (альтернатива)",
-        "img": "https://github.com/igareck/vpn-configs-for-russia/raw/main/QR-codes/BLACK_SS+All_RUS-QR.png",
-        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/BLACK_SS+All_RUS.txt"
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/QR-codes/BLACK_SS%2BAll_RUS-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/BLACK_SS%2BAll_RUS.txt"
+    },
+    "black_mob": {
+        "name": "Чёрные списки (мобильные)",
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/QR-codes/BLACK_VLESS_RUS_mobile_QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/BLACK_VLESS_RUS_mobile.txt"
     },
     "white_cable": {
         "name": "Белые списки (кабель)",
-        "img": "https://github.com/igareck/vpn-configs-for-russia/raw/main/QR-codes/Vless-Reality-White-Lists-Rus-Cable-QR.png",
-        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Cable.txt"
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/QR-codes/WHITE-CIDR-RU-all-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-CIDR-RU-all.txt"
     },
-    "white_mobile": {
-        "name": "Белые списки (мобильный)",
+    "white_cable2": {
+        "name": "Белые списки (кабель, альтернативный)",
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/QR-codes/WHITE-CIDR-RU-all-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-CIDR-RU-all.txt"
+    },    
+    "white_mobile1": {
+        "name": "Белые списки (мобильный, вариант 1)",
         "img": "https://github.com/igareck/vpn-configs-for-russia/raw/main/QR-codes/Vless-Reality-White-Lists-Rus-Mobile-QR.png",
         "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile.txt"
-    }
+    },
+    "white_mobile2": {
+        "name": "Белые списки (мобильный, вариант 2)",
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/QR-codes/Vless-Reality-White-Lists-Rus-Mobile-2-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt"
+    }    
 }
 
 VPNINSTRUCTION_TEXT = """
