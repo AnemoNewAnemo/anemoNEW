@@ -476,26 +476,31 @@ export function initGallery() {
 
     // --- НАЧАЛО: Логика скрытия шапки при скролле на мобильных ---
     let lastScrollTop = 0;
-    let scrollUpDistance = 0; // Буфер для отслеживания прокрутки вверх
-    const SCROLL_UP_THRESHOLD = 80; // Чувствительность появления (в пикселях, ~1-2 см на экране)
+    let expandRatio = 1.0; // 1 = полностью открыто, 0 = полностью скрыто
+    const SCROLL_DISTANCE = 100; // Дистанция в px для полного скрытия/появления
 
     content.addEventListener('scroll', () => {
         if (window.innerWidth > 768) {
-            header.classList.remove('hide-controls');
+            if (expandRatio !== 1) {
+                expandRatio = 1;
+                header.style.setProperty('--expand', expandRatio);
+            }
             return;
         }
         
         let st = content.scrollTop;
         let delta = st - lastScrollTop;
 
-        if (delta > 0 && st > 50) {
-            // Скролл ВНИЗ
-            scrollUpDistance = 0; // Обнуляем буфер движения вверх
-            
-            if (!header.classList.contains('hide-controls')) {
-                header.classList.add('hide-controls');
-                
-                // Закрываем панель фильтров при скрытии
+        if (st <= 10) {
+            // При возврате в самый верх шапка всегда открыта на 100%
+            expandRatio = 1;
+        } else {
+            // Плавно меняем коэффициент пропорционально скроллу
+            expandRatio -= delta / SCROLL_DISTANCE;
+            expandRatio = Math.max(0, Math.min(1, expandRatio)); // Зажимаем между 0 и 1
+
+            // Закрываем панель фильтров, если начали прятать шапку
+            if (delta > 0 && expandRatio < 0.8) {
                 const filterPanel = document.getElementById('gallery-filter-panel');
                 const filterBtn = document.getElementById('g-filter-btn');
                 if (filterPanel && filterPanel.classList.contains('show')) {
@@ -503,18 +508,13 @@ export function initGallery() {
                     if (filterBtn) filterBtn.classList.remove('active');
                 }
             }
-        } else if (delta < 0) {
-            // Скролл ВВЕРХ
-            scrollUpDistance += Math.abs(delta);
-            
-            // Показываем шапку только если проскроллили вверх больше порога ИЛИ находимся в самом верху
-            if (scrollUpDistance > SCROLL_UP_THRESHOLD || st < 50) {
-                header.classList.remove('hide-controls');
-            }
         }
         
+        // Передаем расчитанный коэффициент в CSS шапки
+        header.style.setProperty('--expand', expandRatio);
         lastScrollTop = st <= 0 ? 0 : st; 
     }, { passive: true });
+    // --- КОНЕЦ: Логика скрытия шапки ---
     // --- КОНЕЦ: Логика скрытия шапки ---
     
     // --- 1. ДОБАВЛЕНИЕ КНОПКИ ОЧИСТКИ И ЛОАДЕРА ---
