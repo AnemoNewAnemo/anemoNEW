@@ -18867,7 +18867,8 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_otloj_scheduled, pattern=r'^otlview_[\w_]+$')) 
     application.add_handler(CallbackQueryHandler(delete_scheduled_time_handler, pattern=r"^otloj_delete_\d+_\d+$")) 
 
-    application.add_handler(CallbackQueryHandler(vpn_show_config, pattern=r"^vpn_(black|black_alt|white_cable|white_mobile)$"))
+    vpn_keys_regex = "|".join(VPN_BUTTONS.keys())
+    application.add_handler(CallbackQueryHandler(vpn_show_config, pattern=rf"^vpn_({vpn_keys_regex})$"))
     application.add_handler(CallbackQueryHandler(vpn_old, pattern="^vpn_old$"))
     application.add_handler(CallbackQueryHandler(vpn_instruction, pattern="^vpn_instruction$"))
     application.add_handler(CallbackQueryHandler(close_handler, pattern="^close$"))
