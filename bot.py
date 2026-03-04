@@ -704,37 +704,37 @@ VPN_BUTTONS = {
     "black": {
         "name": "Чёрные списки",
         "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/BLACK_VLESS_RUS-QR.png",
-        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/BLACK_VLESS_RUS.txt"
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS.txt"
     },
     "black_alt": {
         "name": "Чёрные списки (альтернатива)",
-        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/QR-codes/BLACK_SS%2BAll_RUS-QR.png",
-        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/BLACK_SS%2BAll_RUS.txt"
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/BLACK_SS%2BAll_RUS-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_SS%2BAll_RUS.txt"
     },
     "black_mob": {
         "name": "Чёрные списки (мобильные)",
-        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/QR-codes/BLACK_VLESS_RUS_mobile_QR.png",
-        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/BLACK_VLESS_RUS_mobile.txt"
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/BLACK_VLESS_RUS_mobile_QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt"
     },
     "white_cable": {
         "name": "Белые списки (кабель)",
-        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/QR-codes/WHITE-CIDR-RU-all-QR.png",
-        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-CIDR-RU-all.txt"
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/WHITE-CIDR-RU-all-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-CIDR-RU-all.txt"
     },
     "white_cable2": {
         "name": "Белые списки (кабель, альтернативный)",
-        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/QR-codes/WHITE-CIDR-RU-all-QR.png",
-        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-CIDR-RU-all.txt"
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/WHITE-CIDR-RU-all-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-CIDR-RU-all.txt"
     },    
     "white_mobile1": {
         "name": "Белые списки (мобильный, вариант 1)",
-        "img": "https://github.com/igareck/vpn-configs-for-russia/raw/main/QR-codes/Vless-Reality-White-Lists-Rus-Mobile-QR.png",
-        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile.txt"
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/Vless-Reality-White-Lists-Rus-Mobile-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile.txt"
     },
     "white_mobile2": {
         "name": "Белые списки (мобильный, вариант 2)",
-        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/QR-codes/Vless-Reality-White-Lists-Rus-Mobile-2-QR.png",
-        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt"
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/Vless-Reality-White-Lists-Rus-Mobile-2-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt"
     }    
 }
 
@@ -851,16 +851,30 @@ async def vpn_show_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     key = query.data.replace("vpn_", "")
+    
+    # Защита: проверяем, что ключ вообще есть в словаре
+    if key not in VPN_BUTTONS:
+        return
+        
     cfg = VPN_BUTTONS[key]
-
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Закрыть", callback_data="close")]])
 
-    await query.message.reply_photo(
-        cfg["img"],
-        caption=f"<b>{cfg['name']}</b>\n\n<code>{cfg['txt']}</code>",
-        parse_mode="HTML",
-        reply_markup=keyboard
-    )
+    try:
+        # Пытаемся отправить с фото
+        await query.message.reply_photo(
+            photo=cfg["img"],
+            caption=f"<b>{cfg['name']}</b>\n\n<code>{cfg['txt']}</code>",
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        # Если фото сломано (например удалено с GitHub), отправляем просто текстом
+        print(f"Ошибка отправки фото для {key}: {e}")
+        await query.message.reply_text(
+            text=f"<b>{cfg['name']}</b>\n\n⚠️ <i>Не удалось загрузить QR-код.</i>\n\nСсылка на подписку:\n<code>{cfg['txt']}</code>",
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
 
 # ============================== #
 #    Инструкция
