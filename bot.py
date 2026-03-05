@@ -18629,12 +18629,15 @@ async def dump_posts_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     Пересылает посты, собирает их в очередь и отправляет в фоновый AI-анализ.
     """
     args = context.args
-    if not args or '-' not in args[0]:
-        await update.message.reply_text("Используйте формат: /postid start-end (например: /postid 0-100)")
+    if not args:
+        await update.message.reply_text("Используйте формат: /postid 15 или /postid 10-20")
         return
 
     try:
-        start_id, end_id = map(int, args[0].split('-'))
+        if '-' in args[0]:
+            start_id, end_id = map(int, args[0].split('-'))
+        else:
+            start_id = end_id = int(args[0])
     except ValueError:
         await update.message.reply_text("Ошибка в числах.")
         return
@@ -18714,10 +18717,16 @@ async def dump_posts_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # 3. ЗАПУСК ФОНОВОЙ ОЧЕРЕДИ
     if photo_queue_data:
-        # Запускаем ту же самую функцию, что и при публикации
-        # Если process_background_queue находится в другом файле (например gpt_helper), 
-        # вызовите как gpt_helper.process_background_queue(...)
-        asyncio.create_task(process_background_queue(context.bot, photo_queue_data))
+        # Передаем status_msg в фоновую задачу для отображения прогресса онлайн
+        asyncio.create_task(process_background_queue(
+            context.bot, photo_queue_data, status_msg, text_count, ignored_count
+        ))
+    else:
+        await status_msg.edit_text(
+            f"✅ **Сбор завершен!** (Без фото)\n\n"
+            f"📝 Текстов сохранено сразу: `{text_count}` шт.\n"
+            f"⏭ Пропущено: `{ignored_count}` шт."
+        )
 
     # Рассчитываем примерное время (6 секунд пауза на 1 пост)
     estimated_time = len(photo_queue_data) * 6
