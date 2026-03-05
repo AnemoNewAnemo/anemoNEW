@@ -431,6 +431,15 @@ function populateFSInfo(data) {
 
     const safeText = (txt) => txt || '—';
     const dateStr = data.date ? data.date : 'Неизвестно';
+    
+    // Подготовка технических данных
+    const analysis = data.analysis || {};
+    const t_dom = analysis.dom_color || '—';
+    const t_sec = analysis.sec_color || '—';
+    const t_ter = analysis.ter_color || '—';
+    const t_br = analysis.br !== undefined ? parseFloat(analysis.br).toFixed(2) : '—';
+    const t_sat = analysis.sat !== undefined ? parseFloat(analysis.sat).toFixed(2) : '—';
+    const p_id = data.post_id || '—';
 
     body.innerHTML = `
         <div class="fs-row" style="margin-bottom: 20px;">
@@ -451,7 +460,23 @@ function populateFSInfo(data) {
             <div class="fs-label" style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: rgba(255,255,255,0.4); margin-bottom: 6px;">Стилистика</div>
             <div class="fs-text" style="color: rgba(255,255,255,0.7); font-style: italic;">${data.ai_style}</div>
         </div>` : ''}
-        <div class="fs-row" style="margin-top:40px;">
+        
+        <details style="margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; overflow: hidden; transition: 0.3s;">
+            <summary style="padding: 12px 16px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: rgba(255,255,255,0.6); cursor: pointer; background: rgba(255,255,255,0.03); user-select: none; display: flex; justify-content: space-between; align-items: center;">
+                Техническая информация
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.5;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </summary>
+            <div style="padding: 16px; font-size: 12px; color: rgba(255,255,255,0.7); line-height: 2; background: rgba(0,0,0,0.2);">
+                <div style="display: flex; justify-content: space-between;"><span>Post ID:</span> <span style="color:#fff;">${p_id}</span></div>
+                <div style="display: flex; justify-content: space-between;"><span>DOM Color:</span> <span style="color:#fff; text-transform: uppercase;">${t_dom}</span></div>
+                <div style="display: flex; justify-content: space-between;"><span>SEC Color:</span> <span style="color:#fff; text-transform: uppercase;">${t_sec}</span></div>
+                <div style="display: flex; justify-content: space-between;"><span>TER Color:</span> <span style="color:#fff; text-transform: uppercase;">${t_ter}</span></div>
+                <div style="display: flex; justify-content: space-between;"><span>Brightness:</span> <span style="color:#fff;">${t_br}</span></div>
+                <div style="display: flex; justify-content: space-between;"><span>Saturation:</span> <span style="color:#fff;">${t_sat}</span></div>
+            </div>
+        </details>
+
+        <div class="fs-row" style="margin-top:30px;">
             ${data.post_link ? `<a href="${data.post_link}" target="_blank" style="display: inline-block; padding: 12px 24px; border: 1px solid rgba(255,255,255,0.2); border-radius: 30px; color: #fff; text-decoration: none; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; transition: 0.3s;" onmouseover="this.style.background='#fff'; this.style.color='#000';" onmouseout="this.style.background='transparent'; this.style.color='#fff';">Открыть в Telegram</a>` : ''}
         </div>
     `;
@@ -926,6 +951,53 @@ export function initGallery() {
         filterPanel.addEventListener('wheel', e => e.stopPropagation(), {passive: true});
         filterPanel.addEventListener('touchmove', e => e.stopPropagation(), {passive: true});
     }
+    const titleBtn = document.querySelector('.gallery-title');
+    if (titleBtn) {
+        titleBtn.addEventListener('click', () => {
+            // Очищаем локальные состояния
+            state.query = '';
+            state.color = '';
+            state.similar_to = null;
+            state.filters = { dom_color: '', sec_color: '', br_min: 0, br_max: 1, sat_min: 0, sat_max: 1, date_from: '', date_to: '' };
+            
+            // Сбрасываем UI поиска
+            if (searchInput) { searchInput.value = ''; searchInput.readOnly = false; searchInput.style.color = ''; }
+            if (clearBtn) clearBtn.style.display = 'none';
+            
+            // Сбрасываем UI цветов
+            if (colorStrip) {
+                colorStrip.classList.remove('has-selection');
+                document.querySelectorAll('.color-item').forEach(el => el.classList.remove('active'));
+            }
+            
+            // Сбрасываем UI расширенных фильтров
+            if (document.getElementById('f-dom-color')) {
+                document.getElementById('f-dom-color').value = '';
+                document.getElementById('f-sec-color').value = '';
+                document.getElementById('f-br-min').value = '0'; document.getElementById('f-br-min-val').textContent = '0.00';
+                document.getElementById('f-br-max').value = '1'; document.getElementById('f-br-max-val').textContent = '1.00';
+                document.getElementById('f-sat-min').value = '0'; document.getElementById('f-sat-min-val').textContent = '0.00';
+                document.getElementById('f-sat-max').value = '1'; document.getElementById('f-sat-max-val').textContent = '1.00';
+                document.getElementById('f-date-from').value = '';
+                document.getElementById('f-date-to').value = '';
+            }
+            if (filterBtn) filterBtn.style.color = 'rgba(255,255,255,0.4)';
+            
+            // Проматываем список в самый верх и загружаем заново
+            if (content) content.scrollTop = 0;
+            loadItems(true);
+        });
+    }
+
+    // --- НОВАЯ ЛОГИКА: Кнопка "Наверх" (рядом с выбором цвета) ---
+    const scrollTopBtn = document.getElementById('g-scroll-top-btn');
+    if (scrollTopBtn && content) {
+        scrollTopBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            content.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+    }
+    
 } // <--- Это закрывающая скобка функции initGallery
 
 // Глобальная переменная для хранения текущего списка
@@ -1112,8 +1184,17 @@ function renderMasonry(items, columns) {
         const applyData = (d) => {
             if (!d.url || d.url.includes('via.placeholder.com')) { div.remove(); return; }
 
+            // Запоминаем оригинальный caption из базы данных (который пришел в первом запросе)
+            const dbCaption = item.caption;
+
             // Обновляем данные item с учетом resolve (url, sizes)
-            Object.assign(item, d); // Важно обновить объект, чтобы в фулскрине была правильная ссылка
+            Object.assign(item, d); 
+            
+            // ВОССТАНАВЛИВАЕМ caption: если Telegram вернул пустую строку, 
+            // а в нашей базе текст был, возвращаем его на место.
+            if (!item.caption && dbCaption) {
+                item.caption = dbCaption;
+            }
             
             let thumbUrl = d.url;
             if (thumbUrl.includes('wsrv.nl')) {
@@ -1129,7 +1210,8 @@ function renderMasonry(items, columns) {
                 div.classList.add('loaded');
                 div.style.minHeight = 'auto';
 
-                const captionText = d.caption ? d.caption.slice(0, 60) + (d.caption.length > 60 ? '...' : '') : 'Без описания';
+                // Используем итоговый caption (из базы) для превью карточки
+                const captionText = item.caption ? item.caption.slice(0, 60) + (item.caption.length > 60 ? '...' : '') : 'Без описания';
                 const linkUrl = d.post_link || item.post_link || '#';
                 const linkStyle = (linkUrl === '#') ? 'display:none' : '';
 
