@@ -18718,7 +18718,7 @@ async def dump_posts_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # 3. ЗАПУСК ФОНОВОЙ ОЧЕРЕДИ
     if photo_queue_data:
         # Передаем status_msg в фоновую задачу для отображения прогресса онлайн
-        asyncio.create_task(process_background_queue(
+        asyncio.create_task(gpt_helper.process_background_queue(
             context.bot, photo_queue_data, status_msg, text_count, ignored_count
         ))
     else:
@@ -18741,6 +18741,7 @@ async def dump_posts_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"⏭ Пропущено: `{ignored_count}` шт.\n\n"
         f"⏳ Фоновый AI-анализ фото займет примерно: ~{time_str}."
     )
+
 
 
 
