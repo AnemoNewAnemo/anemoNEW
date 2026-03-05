@@ -4657,18 +4657,39 @@ async def generate_inpaint_gemini(image_file_path: str, instructions: str):
 
 
 # === НОВАЯ ФУНКЦИЯ ДЛЯ ПОСЛЕДОВАТЕЛЬНОЙ ОЧЕРЕДИ ===
-async def process_background_queue(bot, queue_data):
+# === НОВАЯ ФУНКЦИЯ ДЛЯ ПОСЛЕДОВАТЕЛЬНОЙ ОЧЕРЕДИ ===
+async def process_background_queue(bot, queue_data, status_msg, text_count, ignored_count):
     """
     Принимает список задач на обработку и выполняет их последовательно,
-    чтобы не перегружать API Gemini и Telegram.
+    обновляя сообщение со статусом в Telegram.
     """
     total = len(queue_data)
+    processed_ai = 0
+    processed_no_ai = 0
+    errors = 0
+
     logging.info(f"Background: Начинаю последовательную обработку {total} файлов.")
     
-    for index, item in enumerate(queue_data):
+    for index, item in enumerate(queue_data, 1):
+        # 1. Обновляем статус: показываем, на каком сообщении мы сейчас "застопорились" / работаем
+        current_text = (
+            f"🔄 **Идет обработка постов...**\n\n"
+            f"📝 Текстов сохранено сразу: `{text_count}`\n"
+            f"⏭ Пропущено (не фото/текст): `{ignored_count}`\n\n"
+            f"⏳ **AI Очередь:** `{index}` из `{total}`\n"
+            f"👉 **Сейчас анализируется ID:** `{item['message_id']}`\n\n"
+            f"✅ Успешно с AI: `{processed_ai}`\n"
+            f"⚠️ Сохранено без AI (сбой нейросети): `{processed_no_ai}`\n"
+            f"❌ Ошибок БД/загрузки: `{errors}`"
+        )
         try:
-            # Вызываем анализ для одной картинки и ОБЯЗАТЕЛЬНО ждем завершения (await)
-            await analyze_and_save_background(
+            await status_msg.edit_text(current_text)
+        except Exception:
+            pass  # Игнорируем ошибки Telegram (например, если текст не изменился)
+
+        try:
+            # 2. Ждем выполнения анализа
+            status = await analyze_and_save_background(
                 bot=bot,
                 channel_id=item['channel_id'],
                 message_id=item['message_id'],
@@ -4678,13 +4699,36 @@ async def process_background_queue(bot, queue_data):
                 original_link=item['original_link']
             )
             
-            # Пауза между обработками картинок (5-7 секунд), чтобы дать Gemini "отдохнуть"
-            if index < total - 1:
-                logging.info("Background: Пауза 6 секунд перед следующим файлом...")
+            # Подсчет статистики на основе ответа от функции
+            if status == "success":
+                processed_ai += 1
+            elif status == "no_ai":
+                processed_no_ai += 1
+            else:
+                errors += 1
+                
+            # Пауза между обработками картинок (кроме последней)
+            if index < total:
                 await asyncio.sleep(6)
                 
         except Exception as e:
             logging.error(f"Background: Ошибка при обработке элемента очереди {item['message_id']}: {e}")
+            errors += 1
+
+    # 3. Финальное обновление статуса
+    final_text = (
+        f"✅ **Все задачи завершены!**\n\n"
+        f"📝 Текстов сохранено: `{text_count}`\n"
+        f"⏭ Пропущено: `{ignored_count}`\n\n"
+        f"📊 **Итоги AI обработки ({total} фото):**\n"
+        f"✅ С описанием AI: `{processed_ai}`\n"
+        f"⚠️ Без описания (БД ок): `{processed_no_ai}`\n"
+        f"❌ Ошибок скачивания/БД: `{errors}`"
+    )
+    try:
+        await status_msg.edit_text(final_text)
+    except Exception:
+        pass
 
 # === ОБНОВЛЕННАЯ ФУНКЦИЯ АНАЛИЗА ===
 async def analyze_and_save_background(bot, channel_id, message_id, file_id, caption, date_timestamp, original_link=None):
@@ -4733,8 +4777,7 @@ async def analyze_and_save_background(bot, channel_id, message_id, file_id, capt
 
     except Exception as dl_e:
         logging.error(f"Background: Критическая ошибка скачивания файла: {dl_e}")
-        # Если не смогли скачать картинку, сохранять, вероятно, нет смысла, выходим
-        return
+        return "error" # <--- ДОБАВИТЬ ЭТО
 
     # 2. Анализ через Gemini (с перебором ключей)
     system_instruction = (
@@ -4746,6 +4789,9 @@ async def analyze_and_save_background(bot, channel_id, message_id, file_id, capt
     )
 
         # Сбрасываем указатель байтов перед отправкой в Gemini
+    gemini_success = False # <--- ДОБАВИТЬ СЮДА, чтобы переменная была доступна в конце функции
+    
+    # Сбрасываем указатель байтов перед отправкой в Gemini
     temp_file_path = None
     try:
         # Создаем временный файл
@@ -4824,10 +4870,10 @@ async def analyze_and_save_background(bot, channel_id, message_id, file_id, capt
     # 3. Сохранение в Firebase (ВЫПОЛНЯЕТСЯ ВСЕГДА, ДАЖЕ ЕСЛИ GEMINI УПАЛ)
     try:
         if str(channel_id) == "-1001479526905":
-            channel_id = "anemonn" # или @anemonn, как у вас принято
+            channel_id = "anemonn"
 
         final_data = {
-            "ai_des_ru": ai_des,   # Будет пустым, если Gemini не справился
+            "ai_des_ru": ai_des,
             "ai_style_ru": ai_style,
             "analysis": analysis_data,
             "caption": caption,
@@ -4848,8 +4894,14 @@ async def analyze_and_save_background(bot, channel_id, message_id, file_id, capt
                 reset_posts_cache()
             except:
                 pass
+            
+            # ВОЗВРАЩАЕМ СТАТУС ДЛЯ ПРОГРЕСС-БАРА
+            return "success" if gemini_success else "no_ai"
         else:
             logging.error(f"Background: Ошибка записи в Firebase для {message_id}.")
+            return "error"
             
     except Exception as save_e:
         logging.error(f"Background: Критическая ошибка при сохранении в БД: {save_e}")
+        return "error"
+
