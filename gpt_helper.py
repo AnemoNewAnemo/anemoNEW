@@ -4905,3 +4905,4 @@ async def analyze_and_save_background(bot, channel_id, message_id, file_id, capt
         logging.error(f"Background: Критическая ошибка при сохранении в БД: {save_e}")
         return "error"
 
+
