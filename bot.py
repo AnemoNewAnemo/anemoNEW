@@ -18617,6 +18617,133 @@ def get_smart_colors(b_dist, s_dist, h_dist, norm_brightness):
     return dom_color, best_sec_color, best_ter_color, valid_colors, dom_weights
 
 
+
+def get_original_date(msg):
+    if msg.forward_origin and msg.forward_origin.date:
+        return int(msg.forward_origin.date.timestamp())
+    return int(msg.date.timestamp())
+
+async def dump_posts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Команда /postid 0-100
+    Пересылает посты, собирает их в очередь и отправляет в фоновый AI-анализ.
+    """
+    args = context.args
+    if not args or '-' not in args[0]:
+        await update.message.reply_text("Используйте формат: /postid start-end (например: /postid 0-100)")
+        return
+
+    try:
+        start_id, end_id = map(int, args[0].split('-'))
+    except ValueError:
+        await update.message.reply_text("Ошибка в числах.")
+        return
+
+    channel_id = "@anemonn"         # ID твоего канала (откуда брать посты для пересылки)
+    db_channel_id = "anemonn"       # ID канала для записи в БД (как требует ваша логика)
+    dump_chat_id = -5129048838      # ID чата для дампа
+    
+    status_msg = await update.message.reply_text(f"🔄 Начинаю сбор постов {start_id}-{end_id} из {channel_id} в очередь...")
+
+    photo_queue_data = []
+    text_count = 0
+    ignored_count = 0
+    
+    for msg_id in range(start_id, end_id + 1):
+        try:
+            # 1. Пересылаем сообщение в Dump чат, чтобы получить доступ к файлу
+            dumped_msg = await context.bot.forward_message(
+                chat_id=dump_chat_id,
+                from_chat_id=channel_id,
+                message_id=msg_id
+            )
+            
+            # --- ЛОГИКА ФИЛЬТРАЦИИ ---
+            
+            # ВАРИАНТ А: ТЕКСТ (Сохраняем моментально, без AI и очередей)
+            if dumped_msg.text:
+                text = dumped_msg.text
+                if len(text) <= 500:
+                    save_data = {
+                        "type": "text",
+                        "text": text,
+                        "date": get_original_date(dumped_msg),
+                    }
+                    save_art_post(db_channel_id, msg_id, save_data)
+                    text_count += 1
+                else:
+                    ignored_count += 1
+
+            # ВАРИАНТ Б: ФОТО (Добавляем в очередь для фонового анализа)
+            elif dumped_msg.photo:
+                # Берем самое большое фото
+                photo_obj = dumped_msg.photo[-1]
+                file_id = photo_obj.file_id
+                
+                post_caption = dumped_msg.caption if dumped_msg.caption else ""
+                post_date = get_original_date(dumped_msg)
+
+                # Ищем оригинальную ссылку (telegra.ph), как в handle_publish_button
+                main_original_link = None
+                if dumped_msg.caption_entities:
+                    for entity in dumped_msg.caption_entities:
+                        if entity.type == 'text_link' and entity.url and 'telegra.ph' in entity.url:
+                            main_original_link = entity.url
+                            break
+
+                # Собираем данные в словарь для очереди (НЕ ЗАПУСКАЕМ АНАЛИЗ ЗДЕСЬ)
+                # Важно: message_id передаем оригинальный (msg_id), а не ID пересланного дампа!
+                photo_queue_data.append({
+                    'channel_id': db_channel_id,
+                    'message_id': msg_id,
+                    'file_id': file_id,
+                    'caption': post_caption,
+                    'date_timestamp': post_date,
+                    'original_link': main_original_link
+                })
+            
+            else:
+                # Аудио, видео, стикеры и т.д.
+                ignored_count += 1
+
+        except TelegramError as e:
+            # Ошибка API (например, пост удален или не существует)
+            pass
+        except Exception as e:
+            logging.error(f"Error processing {msg_id}: {e}")
+
+    # 3. ЗАПУСК ФОНОВОЙ ОЧЕРЕДИ
+    if photo_queue_data:
+        # Запускаем ту же самую функцию, что и при публикации
+        # Если process_background_queue находится в другом файле (например gpt_helper), 
+        # вызовите как gpt_helper.process_background_queue(...)
+        asyncio.create_task(process_background_queue(context.bot, photo_queue_data))
+
+    # Рассчитываем примерное время (6 секунд пауза на 1 пост)
+    estimated_time = len(photo_queue_data) * 6
+    minutes = estimated_time // 60
+    seconds = estimated_time % 60
+    time_str = f"{minutes} мин {seconds} сек" if minutes > 0 else f"{seconds} сек"
+
+    await status_msg.edit_text(
+        f"✅ **Сбор постов завершен!**\n\n"
+        f"🖼 Фото добавлено в очередь: `{len(photo_queue_data)}` шт.\n"
+        f"📝 Текстов сохранено сразу: `{text_count}` шт.\n"
+        f"⏭ Пропущено: `{ignored_count}` шт.\n\n"
+        f"⏳ Фоновый AI-анализ фото займет примерно: ~{time_str}."
+    )
+
+
+
+
+
+
+
+
+
+
+
+
 def main() -> None:
     load_context_from_firebase()  # Загружаем историю чатов в user_contexts
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -18881,7 +19008,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(send_proxies, pattern="refresh_proxies"))
 
 
-    
+    application.add_handler(CommandHandler("postid", dump_posts_command))
     application.add_handler(CommandHandler("userid", userid_command))
     application.add_handler(CommandHandler("rec", recognize_test_plant))
     application.add_handler(CommandHandler("testid", handle_testid_command))  
