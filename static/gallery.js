@@ -360,13 +360,14 @@ let isSwipingToClose = false;
     infoPanel.id = 'fs-info-panel';
     infoPanel.style.cssText = `
         position: absolute; top: 0; right: 0; bottom: 0;
-        width: 360px; background: rgba(10, 12, 16, 0.7);
+        width: 360px; max-width: 100%; background: rgba(10, 12, 16, 0.7);
         backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
         border-left: 1px solid rgba(255,255,255,0.05);
         z-index: 3002; transform: translateX(100%);
         transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
         padding: 40px 30px; box-sizing: border-box;
         display: flex; flex-direction: column; box-shadow: -10px 0 40px rgba(0,0,0,0.3);
+        overflow-y: auto; overscroll-behavior-y: contain;
     `;
     infoPanel.innerHTML = `
         <div class="fs-info-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 30px;">
@@ -418,6 +419,8 @@ let isSwipingToClose = false;
     infoPanel.querySelector('.fs-close-panel').onmouseenter = (e) => e.currentTarget.style.opacity = '1';
     infoPanel.querySelector('.fs-close-panel').onmouseleave = (e) => e.currentTarget.style.opacity = '0.5';
     infoPanel.addEventListener('click', e => e.stopPropagation());
+    infoPanel.addEventListener('wheel', e => e.stopPropagation(), {passive: true});
+    infoPanel.addEventListener('touchmove', e => e.stopPropagation(), {passive: true});
     
     fsPreview.addEventListener('click', (e) => {
         if (isDragged) return; 
@@ -997,7 +1000,7 @@ export function initGallery() {
             content.scrollTo({ top: 0, behavior: 'smooth' });
         });
     }
-    
+
 } // <--- Это закрывающая скобка функции initGallery
 
 // Глобальная переменная для хранения текущего списка
