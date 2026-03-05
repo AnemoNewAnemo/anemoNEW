@@ -4658,10 +4658,10 @@ async def generate_inpaint_gemini(image_file_path: str, instructions: str):
 
 # === НОВАЯ ФУНКЦИЯ ДЛЯ ПОСЛЕДОВАТЕЛЬНОЙ ОЧЕРЕДИ ===
 # === НОВАЯ ФУНКЦИЯ ДЛЯ ПОСЛЕДОВАТЕЛЬНОЙ ОЧЕРЕДИ ===
-async def process_background_queue(bot, queue_data, status_msg, text_count, ignored_count):
+async def process_background_queue(bot, queue_data, status_msg=None, text_count=0, ignored_count=0):
     """
-    Принимает список задач на обработку и выполняет их последовательно,
-    обновляя сообщение со статусом в Telegram.
+    Принимает список задач на обработку и выполняет их последовательно.
+    Если передан status_msg, обновляет сообщение со статусом в Telegram.
     """
     total = len(queue_data)
     processed_ai = 0
@@ -4671,21 +4671,22 @@ async def process_background_queue(bot, queue_data, status_msg, text_count, igno
     logging.info(f"Background: Начинаю последовательную обработку {total} файлов.")
     
     for index, item in enumerate(queue_data, 1):
-        # 1. Обновляем статус: показываем, на каком сообщении мы сейчас "застопорились" / работаем
-        current_text = (
-            f"🔄 **Идет обработка постов...**\n\n"
-            f"📝 Текстов сохранено сразу: `{text_count}`\n"
-            f"⏭ Пропущено (не фото/текст): `{ignored_count}`\n\n"
-            f"⏳ **AI Очередь:** `{index}` из `{total}`\n"
-            f"👉 **Сейчас анализируется ID:** `{item['message_id']}`\n\n"
-            f"✅ Успешно с AI: `{processed_ai}`\n"
-            f"⚠️ Сохранено без AI (сбой нейросети): `{processed_no_ai}`\n"
-            f"❌ Ошибок БД/загрузки: `{errors}`"
-        )
-        try:
-            await status_msg.edit_text(current_text)
-        except Exception:
-            pass  # Игнорируем ошибки Telegram (например, если текст не изменился)
+        # 1. Обновляем статус только если status_msg существует
+        if status_msg:
+            current_text = (
+                f"🔄 **Идет обработка постов...**\n\n"
+                f"📝 Текстов сохранено сразу: `{text_count}`\n"
+                f"⏭ Пропущено (не фото/текст): `{ignored_count}`\n\n"
+                f"⏳ **AI Очередь:** `{index}` из `{total}`\n"
+                f"👉 **Сейчас анализируется ID:** `{item['message_id']}`\n\n"
+                f"✅ Успешно с AI: `{processed_ai}`\n"
+                f"⚠️ Сохранено без AI (сбой нейросети): `{processed_no_ai}`\n"
+                f"❌ Ошибок БД/загрузки: `{errors}`"
+            )
+            try:
+                await status_msg.edit_text(current_text)
+            except Exception:
+                pass  # Игнорируем ошибки Telegram (например, если текст не изменился)
 
         try:
             # 2. Ждем выполнения анализа
@@ -4715,20 +4716,21 @@ async def process_background_queue(bot, queue_data, status_msg, text_count, igno
             logging.error(f"Background: Ошибка при обработке элемента очереди {item['message_id']}: {e}")
             errors += 1
 
-    # 3. Финальное обновление статуса
-    final_text = (
-        f"✅ **Все задачи завершены!**\n\n"
-        f"📝 Текстов сохранено: `{text_count}`\n"
-        f"⏭ Пропущено: `{ignored_count}`\n\n"
-        f"📊 **Итоги AI обработки ({total} фото):**\n"
-        f"✅ С описанием AI: `{processed_ai}`\n"
-        f"⚠️ Без описания (БД ок): `{processed_no_ai}`\n"
-        f"❌ Ошибок скачивания/БД: `{errors}`"
-    )
-    try:
-        await status_msg.edit_text(final_text)
-    except Exception:
-        pass
+    # 3. Финальное обновление статуса (если требуется)
+    if status_msg:
+        final_text = (
+            f"✅ **Все задачи завершены!**\n\n"
+            f"📝 Текстов сохранено: `{text_count}`\n"
+            f"⏭ Пропущено: `{ignored_count}`\n\n"
+            f"📊 **Итоги AI обработки ({total} фото):**\n"
+            f"✅ С описанием AI: `{processed_ai}`\n"
+            f"⚠️ Без описания (БД ок): `{processed_no_ai}`\n"
+            f"❌ Ошибок скачивания/БД: `{errors}`"
+        )
+        try:
+            await status_msg.edit_text(final_text)
+        except Exception:
+            pass
 
 # === ОБНОВЛЕННАЯ ФУНКЦИЯ АНАЛИЗА ===
 async def analyze_and_save_background(bot, channel_id, message_id, file_id, caption, date_timestamp, original_link=None):
