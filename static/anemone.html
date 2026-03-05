@@ -985,7 +985,7 @@
     <!-- Оверлей галереи -->
     <div id="gallery-overlay">
         <div class="gallery-header">
-            <div class="gallery-title">ANEMONE</div>
+            <div class="gallery-title" title="Сбросить все настройки" style="cursor: pointer; transition: 0.3s;" onmouseover="this.style.textShadow='0 0 10px rgba(255,255,255,0.5)'" onmouseout="this.style.textShadow='none'">ANEMONE</div>
             
             <div class="gallery-search">
                 <input type="text" id="g-search-input" placeholder="Поиск по базе данных...">
@@ -994,7 +994,10 @@
                 </div>
             </div>
 
-            <div class="gallery-colors-wrapper">
+            <div class="gallery-colors-wrapper" style="display: flex; align-items: center; gap: 12px;">
+                <button id="g-scroll-top-btn" title="Промотать наверх" style="background: transparent; border: none; color: rgba(255,255,255,0.4); cursor: pointer; transition: 0.3s; display: flex; align-items: center; justify-content: center; flex-shrink: 0; padding: 0; margin-left: 6px;" onmouseover="this.style.color='#fff'; this.style.transform='translateY(-3px)';" onmouseout="this.style.color='rgba(255,255,255,0.4)'; this.style.transform='translateY(0)';">
+                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
+                </button>
                 <div class="gallery-colors-strip" id="color-strip">
                     <div class="color-item" data-color="red"><div class="color-circle" style="background: #ff4444;"></div><span>Red</span></div>
                     <div class="color-item" data-color="orange"><div class="color-circle" style="background: #ffaa00;"></div><span>Orange</span></div>
