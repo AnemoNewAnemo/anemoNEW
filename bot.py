@@ -735,36 +735,50 @@ VPN_BUTTONS = {
         "name": "Белые списки (мобильный, вариант 2)",
         "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/Vless-Reality-White-Lists-Rus-Mobile-2-QR.png",
         "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt"
-    }    
+    },    
+    "full_alt": {
+        "name": "Альтернативный общий(много ключей)",
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/Vless-Reality-White-Lists-Rus-Mobile-2-QR.png",
+        "txt": "https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/clean/vless.txt"
+    }      
+    https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/clean/vless.txt
 }
-
 VPNINSTRUCTION_TEXT = """
-<b>Краткая инструкция</b>
+<b>Краткая инструкция по подключению VPN</b> 🛡
 
-<b>1)</b> Выберите основной тип VPN-ключей, который вам нужен (можно подключить несколько подписок).
+<b>1) Скачайте и установите VPN-клиент</b>
+Мы настоятельно рекомендуем использовать <b>Hiddify</b>. Он максимально автоматизирован и практически всё делает за вас (но при желании вы можете выбрать любой другой клиент).
 
-<b>2)</b> Бот пришлёт вам QR-картинку и ссылку — вы можете использовать любой вариант (QR или ссылку).
+<b>Скачать Hiddify:</b>
+📱 <a href="https://play.google.com/store/apps/details?id=app.hiddify.com">Android (Google Play)</a>
+💻 <a href="https://apps.microsoft.com/detail/9pdfnl3qv2s5">Windows (Microsoft Store)</a>
+🍏 <a href="https://apps.apple.com/us/app/hiddify-proxy-vpn/id6596777532">iOS (App Store)</a>
 
-<b>3)</b> Скачайте и установите программу для использования ключей. Популярные клиенты:
-• NekoBox, v2rayNG, Streisand, V2Box и многие другие.
+<i>* Версии для Mac и Linux можно найти в сети самостоятельно. Ниже бот также пришлёт вам файлы установки (APK и EXE) для Android и Windows напрямую.</i>
 
-Ниже бот пришлёт вам установщики для андроид и windows, либо можете скачать их сами:
-• <a href="https://github.com/MatsuriDayo/NekoBoxForAndroid/releases">Версия для Android</a>
-• <a href="https://github.com/Matsuridayo/nekoray/releases">Версия для PC</a>
-Так же по ссылкам есть версия на Линукс
+<b>2) Выберите подписку в боте</b>
+Выберите из списка нужный вам вариант среди «чёрных» и «белых» списков. В дальнейшем можно будет добавить несколько, но для начала выберите какой-то один.
 
-На мак и ios можете поискать что-то сами, напрмиер V2Box, sing-box, Hiddify и др
+<b>3) Получите и скопируйте ссылку</b>
+Бот пришлёт вам картинку с QR-кодом и ссылку на <code>.txt</code> файл. <b>Скопируйте эту ссылку.</b>
+<i>Пример ссылки:</i>
+<code>https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_SS%2BAll_RUS.txt</code>
 
-<b>4)</b> Добавьте в программу подписку по QR-коду или по скопированной ссылке. Можно создать несколько групп/плейлистов и в каждую добавить отдельный набор подписок (например — белые/чёрные списки).
+<b>4) Добавьте ключи в приложение</b>
+Откройте Hiddify. Нажмите большую кнопку подключения посередине или кнопку <b>«+»</b> в правом верхнем углу. Когда приложение попросит указать источник ключей, выберите вариант <b>«Добавить из буфера обмена»</b>.
 
-<b>5)</b> В приложении выполните TCP-Ping и URL-тесты, затем выберите «удалить нерабочие» (или аналогичный пункт в вашем клиенте).
+<b>5) Готово! Можно пользоваться</b> 🎉
+Список успешно импортирован! Теперь вы можете включать VPN одной кнопкой в главном меню. 
 
-<b>6)</b> Из оставшихся серверов подключитесь к любому и пользуйтесь. Если многие сервера перестанут работать — нажмите «Обновить подписку», и список автоматически заменится на актуальный.
+⚡️ <b>Почему именно Hiddify:</b> он автоматически выбирает лучший сервер из списка, фильтрует нерабочие и сам переключает вас на «живые». Вам больше не нужно делать абсолютно ничего!
+<i>(Примечание: другие приложения обычно требуют ручной проверки и обновления ключей).</i>
 
-Для подробной инструкции со скринами читайте на <a href="https://telegra.ph/Vpn-Instrukciya-11-26">telegra.ph — VPN инструкция</a>.
+➕ <b>Как добавить другие списки:</b>
+При желании вы можете добавить несколько разных списков (например, и чёрный, и белый). Это делается через ту же кнопку <b>«+»</b> по аналогии с 4-м пунктом.
+
+🛠 <b>Решение проблем:</b>
+Если вдруг подписки не работают, соединение обрывается или происходят другие сбои — откройте <b>Настройки</b> в Hiddify и поэкспериментируйте с включением/выключением опций <b>«Трюки TLS»</b> и <b>«WARP»</b>.
 """
-
-
 
 
 async def fileid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -820,17 +834,8 @@ async def vpn_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     message_html = (
         "<b>VPN конфигурации</b>\n"
-        "Здесь вы можете скачать рабочие VPN ключи и подключиться по ссылке или через QR.\n\n"
-        "<b>Выберите один из вариантов:</b>\n\n"
-        "1. <b>Основные ключи для обхода чёрных списков</b>\n\n"
-        "2. <b>Альтернативные ключи для обхода чёрных списков</b>\n\n"
-        "3. <b>Ключи для обхода \"Белых списков\" с кабельного интернета</b>\n\n"
-        "4. <b>Ключи для обхода \"Белых списков\" с мобильного</b>\n\n"
-        "5. <b>Сгенерировать файл подписки</b>\n"
-        "<i>Бот генерирует файл подписки на VPN сервисы, код написан подписчиком бота.</i>\n\n"
-        "6. <b>Старый способ получения ключей</b>\n"
-        "<i>Если всё что есть выше не работает.</i>\n\n"
-        "<b>В инструкции</b> — вся необходимая подробная информация."
+        "Здесь вы можете получить списки бесплатных VPN ключей, просто выберите один или несколько из вариантов подходящих вам.\n\n"
+        "<b>В инструкции</b> — вся необходимая подробная информация о том как именно их использовать, а так же ссылки на файлы."
     )
 
     await update.message.reply_text(
@@ -896,13 +901,13 @@ async def vpn_instruction(update, context):
     # Первый файл
     await context.bot.send_document(
         chat_id=q.message.chat_id,
-        document="BQACAgIAAxkBAAEBar9pMwdm1ubsbQdF3lVzKCJrihRDIgACoIsAAnZ0mElZiYuMXkseXDYE"
+        document="BQACAgIAAxkBAAECWKxptfXxA3LpCAql-2HBF0OtXrQSsQACOqIAAv2vsUn7Ss0YaK-ouToE"
     )
 
     # Второй файл
     await context.bot.send_document(
         chat_id=q.message.chat_id,
-        document="BQACAgIAAxkBAAEBas9pMwtP87XA5Hr9DfH34cO9AAEINfcAAumLAAJ2dJhJkFj8sDNIn942BA"
+        document="BQACAgIAAxkBAAECWONptpwIult9KF8PwW1gZmDhWxqI-wACCJIAAi-wsEl1Je_M2jjcVjoE"
     )
 # ============================== #
 #   Вызов твоей функции с ключами
