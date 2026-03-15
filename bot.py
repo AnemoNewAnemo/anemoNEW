@@ -741,7 +741,6 @@ VPN_BUTTONS = {
         "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/Vless-Reality-White-Lists-Rus-Mobile-2-QR.png",
         "txt": "https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/clean/vless.txt"
     }      
-    https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/clean/vless.txt
 }
 VPNINSTRUCTION_TEXT = """
 <b>Краткая инструкция по подключению VPN</b> 🛡
