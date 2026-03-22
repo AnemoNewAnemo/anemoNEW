@@ -217,6 +217,128 @@ def save_media_group_data(media_group_storage, user_id):
     except Exception as e:
         logger.error(f"Ошибка при сохранении данных пользователя ")
 
+
+
+
+
+
+async def admin_sources_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет список всех привязанных каналов и соцсетей в виде инлайн-кнопок."""
+    user_id = update.effective_user.id
+    
+    # Получаем всю ветку users_publications, где хранятся ключи и каналы
+    try:
+        ref = db.reference('users_publications')
+        pubs_data = ref.get() or {}
+    except Exception as e:
+        logger.error(f"Ошибка доступа к БД в /admin: {e}")
+        await update.message.reply_text("Ошибка при доступе к базе данных.")
+        return
+
+    # Ищем данные пользователя
+    twitter = pubs_data.get('twitter_keys', {}).get(str(user_id))
+    vk = pubs_data.get('vk_keys', {}).get(str(user_id))
+    channels = pubs_data.get('channels', {})
+
+    keyboard = []
+
+    if twitter:
+        keyboard.append([InlineKeyboardButton("Twitter", callback_data="admin_unlink_ask_twitter")])
+    
+    if vk:
+        keyboard.append([InlineKeyboardButton("ВКонтакте (VK)", callback_data="admin_unlink_ask_vk")])
+
+    for chat_id, chan_data in channels.items():
+        user_ids = chan_data.get('user_ids', [])
+        # Проверяем наличие id как в виде числа, так и в виде строки
+        if user_id in user_ids or str(user_id) in [str(u) for u in user_ids]:
+            keyboard.append([InlineKeyboardButton(f"Telegram Канал ({chat_id})", callback_data=f"admin_unlink_ask_tg_{chat_id}")])
+
+    if not keyboard:
+        await update.message.reply_text("У вас нет привязанных источников для публикаций.")
+        return
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Ваши привязанные источники. Выберите канал, который хотите отвязать:", reply_markup=reply_markup)
+
+
+async def admin_unlink_ask_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Спрашивает подтверждение перед отвязкой источника."""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    target = data.replace("admin_unlink_ask_", "")
+    
+    target_name = target
+    if target == "twitter":
+        target_name = "Twitter"
+    elif target == "vk":
+        target_name = "ВКонтакте (VK)"
+    elif target.startswith("tg_"):
+        target_name = f"Telegram Канал ({target.replace('tg_', '')})"
+
+    keyboard = [
+        [
+            InlineKeyboardButton("Да", callback_data=f"admin_unlink_yes_{target}"),
+            InlineKeyboardButton("Нет", callback_data="admin_unlink_no")
+        ]
+    ]
+    await query.edit_message_text(
+        text=f"Вы уверены, что хотите отвязать этот источник: {target_name}?", 
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def admin_unlink_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выполняет удаление источника из Firebase при подтверждении (или отменяет)."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    user_id = update.effective_user.id
+
+    if data == "admin_unlink_no":
+        await query.edit_message_text("Действие отменено.")
+        return
+
+    target = data.replace("admin_unlink_yes_", "")
+
+    try:
+        if target == "twitter":
+            db.reference(f'users_publications/twitter_keys/{user_id}').delete()
+            await query.edit_message_text("✅ Twitter успешно отвязан.")
+            
+        elif target == "vk":
+            db.reference(f'users_publications/vk_keys/{user_id}').delete()
+            await query.edit_message_text("✅ ВКонтакте (VK) успешно отвязан.")
+            
+        elif target.startswith("tg_"):
+            chat_id = target.replace("tg_", "")
+            ref = db.reference(f'users_publications/channels/{chat_id}/user_ids')
+            user_ids = ref.get() or []
+            
+            # Удаляем user_id игнорируя типы данных (str/int)
+            updated_user_ids = [uid for uid in user_ids if str(uid) != str(user_id)]
+            
+            if updated_user_ids:
+                ref.set(updated_user_ids) # Если остались другие пользователи, просто обновляем список
+            else:
+                db.reference(f'users_publications/channels/{chat_id}').delete() # Если список пуст, удаляем всю ветку канала
+                
+            await query.edit_message_text(f"✅ Telegram Канал ({chat_id}) успешно отвязан.")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при отвязывании {target} для пользователя {user_id}: {e}")
+        await query.edit_message_text("❌ Произошла ошибка при удалении данных из базы.")
+
+
+
+
+
+
+
+
+
 async def data_command(update: Update, context: CallbackContext) -> None:
     user_data = context.user_data
     if user_data:
@@ -19021,7 +19143,12 @@ def main() -> None:
     application.add_handler(CommandHandler("proxy", send_proxies))
     application.add_handler(CallbackQueryHandler(send_proxies, pattern="refresh_proxies"))
 
+    application.add_handler(CommandHandler("admin", admin_sources_command))
+    application.add_handler(CallbackQueryHandler(admin_unlink_ask_callback, pattern="^admin_unlink_ask_"))
+    application.add_handler(CallbackQueryHandler(admin_unlink_confirm_callback, pattern="^admin_unlink_(yes|no)"))
 
+
+    
     application.add_handler(CommandHandler("postid", dump_posts_command))
     application.add_handler(CommandHandler("userid", userid_command))
     application.add_handler(CommandHandler("rec", recognize_test_plant))
