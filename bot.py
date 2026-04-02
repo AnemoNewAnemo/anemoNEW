@@ -13570,7 +13570,7 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
 
     key = f"{user_id}_{message_id}"
     media_group_data = user_data.get(key)
-    logging.info(f"--- Анализ сообщения ID: {msg.message_id} ---")
+    logging.info(f"--- Анализ сообщения ID: {message_id} ---")
     
     if not media_group_data:
         logging.error(f"Данные для публикации {key} не найдены.")
