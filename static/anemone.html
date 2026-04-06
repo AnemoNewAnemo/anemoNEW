@@ -335,7 +335,7 @@
 /* --- ГАЛЕРЕЯ CSS (ХУДОЖЕСТВЕННЫЙ ДИЗАЙН) --- */
         #gallery-overlay {
             display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(4, 6, 10, 0.85); backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px);
+            background: rgba(4, 6, 10, 0.95); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
             z-index: 2000; flex-direction: column;
         }
 
@@ -405,15 +405,15 @@
             display: flex; padding: 30px 40px; gap: 24px; align-items: flex-start;
             overflow-y: auto; height: 100%; width: 100%; box-sizing: border-box;
             touch-action: pan-y; -webkit-overflow-scrolling: touch;
-            will-change: scroll-position, contents; /* Лучшая оптимизация для списков с картинками */
-            scroll-behavior: smooth; /* Плавная доводка скролла */
-            overscroll-behavior-y: contain; /* Предотвращает "резиновый" скролл всего окна */
+            scroll-behavior: smooth; 
+            overscroll-behavior-y: contain; 
         }
         .masonry-col { display: flex; flex-direction: column; gap: 24px; flex: 1; min-width: 0; }
 
         .gallery-item {
             position: relative; width: 100%; background: rgba(255,255,255,0.02); 
-            border-radius: 8px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            transform: translateZ(0);
             transition: transform 0.4s ease, box-shadow 0.4s ease; cursor: pointer;
         }
         .gallery-item:hover { transform: translateY(-4px); box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
@@ -428,7 +428,6 @@
             opacity: 0; transform: translateY(10px); 
             transition: opacity 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1); 
             display: flex; flex-direction: column; gap: 12px; z-index: 10; pointer-events: none;
-            will-change: opacity, transform;
         }
         .gallery-item:hover .gallery-overlay-info { opacity: 1; transform: translateY(0); pointer-events: auto; }
 
@@ -732,6 +731,11 @@
 
     <!-- ВЫЕЗЖАЮЩАЯ ПАНЕЛЬ С КНОПКАМИ -->
     <div id="side-controls">
+
+        <div id="solar-btn" class="side-btn" title="Создать/Редактировать системы">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="currentColor"/><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 18a8 8 0 110-16 8 8 0 010 16z" fill="currentColor" opacity="0.5"/></svg>
+        </div>
+
         <div id="add-btn" class="side-btn" title="Добавить котомментарий">
             <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         </div>
@@ -1144,6 +1148,92 @@
             <button onclick="window.location.search='';">Вернуться к стандартному каналу</button>
         </div>
     </div>
+    <!-- ДОБАВИТЬ В НИЗ <body> (ПЕРЕД <script>) -->
+    <div id="solar-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:2000; align-items:center; justify-content:center; backdrop-filter:blur(10px);">
+        <div style="background:var(--glass-bg); padding:24px; border-radius:16px; width:380px; max-height:80vh; overflow-y:auto; border:1px solid var(--glass-border); color:#fff; box-shadow: 0 20px 60px rgba(0,0,0,0.5); scrollbar-width:thin;">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:12px; margin-bottom:16px;">
+                <h3 style="margin:0; letter-spacing:2px; font-weight:300;">СОЛНЕЧНЫЕ СИСТЕМЫ</h3>
+                <button id="close-solar-modal" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:20px;">✕</button>
+            </div>
+            
+            <!-- СПИСОК СИСТЕМ (Главный экран модалки) -->
+            <div id="solar-list-view">
+                <button id="create-new-solar" style="width:100%; padding:12px; background:#ffaa00; border:none; border-radius:8px; font-weight:bold; cursor:pointer; margin-bottom:16px;">+ СОЗДАТЬ СИСТЕМУ (ПЕРЕД КАМЕРОЙ)</button>
+                <div style="font-size:11px; color:#aaa; margin-bottom:8px; text-transform:uppercase;">Видимые на экране:</div>
+                <div id="visible-solar-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+            </div>
+
+            <!-- РЕДАКТОР СИСТЕМЫ -->
+            <div id="solar-edit-view" style="display:none; flex-direction:column; gap:16px;">
+                
+                <!-- ПРЕДПРОСМОТР (Preview) -->
+                <div style="position: sticky; top: -24px; z-index: 100; padding: 16px 0 10px 0; background: rgba(20, 20, 25, 0.98); margin: -16px 0 0 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                    <div style="width:100%; height:200px; background:#000; border-radius:8px; overflow:hidden; position:relative; border:1px solid rgba(255,255,255,0.1); box-shadow: 0 10px 20px rgba(0,0,0,0.5);">
+                        <canvas id="solar-preview-canvas" style="width:100%; height:100%; display:block;"></canvas>
+                    </div>
+                </div>
+
+                <div>
+                    <label style="font-size:12px; color:#aaa;">Имя системы (Звезды)</label>
+                    <input type="text" id="solar-name" style="width:100%; padding:8px; background:rgba(0,0,0,0.3); border:1px solid #444; color:#fff; border-radius:6px; margin-top:4px; box-sizing:border-box;">
+                </div>
+                
+                <div style="padding:12px; background:rgba(255,255,255,0.03); border-radius:8px; border:1px solid rgba(255,255,255,0.05);">
+                    <div style="font-size:12px; color:#ffaa00; font-weight:bold; margin-bottom:10px;">НАСТРОЙКИ ЗВЕЗДЫ</div>
+                    <div style="display:flex; gap:10px; margin-bottom:8px;">
+                        <div style="flex:1;"><label style="font-size:11px; color:#aaa;">Размер</label><input type="range" id="solar-star-size" min="20" max="200" step="5" style="width:100%;"></div>
+                        <div style="flex:1;"><label style="font-size:11px; color:#aaa;">Яркость</label><input type="range" id="solar-star-bright" min="0.5" max="3" step="0.1" style="width:100%;"></div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div style="display:flex; gap: 15px;">
+                            <div>
+                                <label style="font-size:11px; color:#aaa; display:block;">Цвет</label>
+                                <input type="color" id="solar-star-color" style="cursor:pointer; width:30px; height:30px; padding:0; border:1px solid #555; border-radius:4px; background:#000;">
+                            </div>
+                            <div>
+                                <label style="font-size:11px; color:#aaa; display:block;">Свечение</label>
+                                <input type="color" id="solar-glow-color" style="cursor:pointer; width:30px; height:30px; padding:0; border:1px solid #555; border-radius:4px; background:#000;">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="padding:12px; background:rgba(255,255,255,0.03); border-radius:8px; border:1px solid rgba(255,255,255,0.05);">
+                    <div style="font-size:12px; color:#aaddff; font-weight:bold; margin-bottom:10px;">ОТОБРАЖЕНИЕ</div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px;">
+                        <label style="font-size:12px; color:#aaa;">Показывать орбиты</label>
+                        <input type="checkbox" id="solar-show-orbits" style="accent-color:#ffaa00; transform:scale(1.2);">
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px;">
+                        <label style="font-size:12px; color:#aaa;">Показывать имена (Текст)</label>
+                        <input type="checkbox" id="solar-show-labels" style="accent-color:#ffaa00; transform:scale(1.2);">
+                    </div>
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <div style="flex:1;"><label style="font-size:11px; color:#aaa;">Размер текста</label><input type="range" id="solar-label-size" min="10" max="100" step="2" value="30" style="width:100%;"></div>
+                        <div>
+                            <label style="font-size:11px; color:#aaa; display:block;">Цвет текста</label>
+                            <input type="color" id="solar-label-color" value="#ffffff" style="background:none; border:none; cursor:pointer; width:30px; height:30px; padding:0;">
+                        </div>
+                    </div>
+                </div>
+
+                <div style="border-top:1px solid rgba(255,255,255,0.1); padding-top:16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <div style="font-size:12px; color:#00aaff; font-weight:bold;">ПЛАНЕТЫ</div>
+                        <button id="add-planet-btn" style="background:rgba(0,170,255,0.2); border:1px solid #00aaff; color:#fff; padding:4px 10px; border-radius:4px; font-size:11px; cursor:pointer;">+ ДОБАВИТЬ</button>
+                    </div>
+                    <div id="planets-container" style="display:flex; flex-direction:column; gap:12px;"></div>
+                </div>
+
+                <div style="display:flex; gap:10px; margin-top:10px;">
+                    <button id="solar-delete-btn" style="flex:1; padding:10px; background:rgba(255,50,50,0.2); border:1px solid #ff3333; color:#ff3333; border-radius:6px; cursor:pointer;">УДАЛИТЬ</button>
+                    <button id="solar-save-btn" style="flex:2; padding:10px; background:#ffaa00; border:none; color:#000; font-weight:bold; border-radius:6px; cursor:pointer;">СОХРАНИТЬ</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    
     <!-- Подключаем внешний файл скрипта -->
     <script type="module" src="/static/script.js"></script>
 </body>
