@@ -507,6 +507,7 @@ export function initGallery() {
     let expandRatio = 1.0; // 1 = полностью открыто, 0 = полностью скрыто
     const SCROLL_DISTANCE = 100; // Дистанция в px для полного скрытия/появления
 
+    let isScrolling = false;
     content.addEventListener('scroll', () => {
         if (window.innerWidth > 768) {
             if (expandRatio !== 1) {
@@ -516,31 +517,33 @@ export function initGallery() {
             return;
         }
         
-        let st = content.scrollTop;
-        let delta = st - lastScrollTop;
+        if (!isScrolling) {
+            window.requestAnimationFrame(() => {
+                let st = content.scrollTop;
+                let delta = st - lastScrollTop;
 
-        if (st <= 10) {
-            // При возврате в самый верх шапка всегда открыта на 100%
-            expandRatio = 1;
-        } else {
-            // Плавно меняем коэффициент пропорционально скроллу
-            expandRatio -= delta / SCROLL_DISTANCE;
-            expandRatio = Math.max(0, Math.min(1, expandRatio)); // Зажимаем между 0 и 1
+                if (st <= 10) {
+                    expandRatio = 1;
+                } else {
+                    expandRatio -= delta / SCROLL_DISTANCE;
+                    expandRatio = Math.max(0, Math.min(1, expandRatio));
 
-            // Закрываем панель фильтров, если начали прятать шапку
-            if (delta > 0 && expandRatio < 0.8) {
-                const filterPanel = document.getElementById('gallery-filter-panel');
-                const filterBtn = document.getElementById('g-filter-btn');
-                if (filterPanel && filterPanel.classList.contains('show')) {
-                    filterPanel.classList.remove('show');
-                    if (filterBtn) filterBtn.classList.remove('active');
+                    if (delta > 0 && expandRatio < 0.8) {
+                        const filterPanel = document.getElementById('gallery-filter-panel');
+                        const filterBtn = document.getElementById('g-filter-btn');
+                        if (filterPanel && filterPanel.classList.contains('show')) {
+                            filterPanel.classList.remove('show');
+                            if (filterBtn) filterBtn.classList.remove('active');
+                        }
+                    }
                 }
-            }
+                
+                header.style.setProperty('--expand', expandRatio);
+                lastScrollTop = st <= 0 ? 0 : st; 
+                isScrolling = false;
+            });
+            isScrolling = true;
         }
-        
-        // Передаем расчитанный коэффициент в CSS шапки
-        header.style.setProperty('--expand', expandRatio);
-        lastScrollTop = st <= 0 ? 0 : st; 
     }, { passive: true });
     // --- КОНЕЦ: Логика скрытия шапки ---
     // --- КОНЕЦ: Логика скрытия шапки ---
