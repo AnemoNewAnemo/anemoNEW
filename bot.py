@@ -14754,7 +14754,7 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
                 [[InlineKeyboardButton("‼️Перезапуск бота‼️", callback_data='restart')]]
             )
             await temp_message.edit_text(
-                "Сейчас у вас нет привязанных каналов...", 
+                "Сейчас у вас нет привязанных каналов...Перешлите в бот любой пост из нужного канала и он привяжется для публикаций. ВАЖНО! Вы должны быть админом этого канала и бот должен быть добавлен в него", 
                 reply_markup=keyboard
             )
             if user_id not in waiting_for_forward:
