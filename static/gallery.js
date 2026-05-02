@@ -956,6 +956,26 @@ export function initGallery() {
         // Предотвращаем скролл подложки при работе с панелью
         filterPanel.addEventListener('wheel', e => e.stopPropagation(), {passive: true});
         filterPanel.addEventListener('touchmove', e => e.stopPropagation(), {passive: true});
+
+        // --- НОВОЕ: Синхронизация чекбоксов Proxy ---
+        const gProxyToggle = document.getElementById('g-proxy-toggle');
+        const mainProxyToggle = document.getElementById('proxy-toggle');
+
+        if (gProxyToggle && mainProxyToggle) {
+            // Приводим чекбокс галереи в то же состояние, что и основной при старте
+            gProxyToggle.checked = mainProxyToggle.checked;
+
+            // Если кликнули в галерее -> меняем основной и триггерим обновление 3D мира
+            gProxyToggle.addEventListener('change', (e) => {
+                mainProxyToggle.checked = e.target.checked;
+                mainProxyToggle.dispatchEvent(new Event('change'));
+            });
+
+            // Если кликнули в 3D мире -> меняем в галерее
+            mainProxyToggle.addEventListener('change', (e) => {
+                gProxyToggle.checked = e.target.checked;
+            });
+        }
     }
     const titleBtn = document.querySelector('.gallery-title');
     if (titleBtn) {
@@ -1139,7 +1159,9 @@ const imageResolveObserver = new IntersectionObserver((entries, observer) => {
 });
 // --- 5. Рендер с КЭШИРОВАНИЕМ ---
 function renderMasonry(items, columns) {
-    const useProxy = document.getElementById('proxy-toggle')?.checked || false; 
+    // Смотрим сначала на переключатель в галерее, если его нет - на глобальный
+    const useProxy = document.getElementById('g-proxy-toggle')?.checked || 
+                     document.getElementById('proxy-toggle')?.checked || false; 
 
     // --- ВАЖНО: Обновляем глобальный список для навигации ---
     // Если это первая страница, перезаписываем, если подгрузка - добавляем?
