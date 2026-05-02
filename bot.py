@@ -1395,9 +1395,9 @@ def format_text_to_html(message):
         start, end = entity.offset, entity.offset + entity.length
         plain_text = escape(raw_text[offset:start])  # Текст до текущей сущности
         formatted_text += add_plain_links(plain_text)  # Обрабатываем ссылки в обычном тексте
-        logger.info(f"formatted_text: {formatted_text}")  
-        logger.info(f"plain_text: {plain_text}")          
+        
         entity_text = escape(raw_text[start:end])
+        
         if entity.type == "bold":
             formatted_text += f"<b>{entity_text}</b>"
         elif entity.type == "italic":
@@ -1418,6 +1418,18 @@ def format_text_to_html(message):
             formatted_text += f'<span class="tg-spoiler">{entity_text}</span>'
         elif entity.type == "url":  # Обработка обычных ссылок
             formatted_text += f'{entity_text}'
+            
+        # === НОВЫЕ БЛОКИ ДЛЯ ЦИТАТ ===
+        elif entity.type == "blockquote":
+            formatted_text += f'<blockquote>{entity_text}</blockquote>'
+        elif entity.type == "expandable_blockquote":
+            formatted_text += f'<blockquote>{entity_text}</blockquote>' # В Telegraph нет свернутых цитат, используем обычную
+            
+        # === ЗАЩИТА ОТ ПОТЕРИ ТЕКСТА (ОБЯЗАТЕЛЬНО) ===
+        else:
+            # Если Telegram добавит новый тип форматирования (или это кастомное эмодзи),
+            # мы хотя бы сохраним сам текст, чтобы он не исчез из поста.
+            formatted_text += entity_text
 
         offset = end
 
