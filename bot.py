@@ -13658,47 +13658,83 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
                 else:
                     media_group.append(InputMediaPhoto(media=processed_image, caption=caption, parse_mode=parse_mode))
 
-        # --- ОТПРАВКА И СОХРАНЕНИЕ ---
-        sent_messages = [] # Список для всех отправленных сообщений
+        # --- ОТПРАВКА С ТАЙМАУТАМИ И ПОВТОРАМИ ---
+        sent_messages = [] 
+        max_publish_retries = 3
+        publish_delay = 3
 
-        # Сценарий 1: Музыка + 1 файл (отправляем отдельно чтобы прицепить кнопку)
-        if is_music_post and len(media_group) == 1:
-            item = media_group[0]
-            msg = None
-            if isinstance(item, InputMediaPhoto):
-                msg = await bot.send_photo(
-                    chat_id=chat_id,
-                    photo=item.media,
-                    caption=item.caption,
-                    parse_mode=item.parse_mode,
-                    reply_markup=music_reply_markup
-                )
-            else:
-                 msg = await bot.send_animation(
-                    chat_id=chat_id,
-                    animation=item.media,
-                    caption=item.caption,
-                    parse_mode=item.parse_mode,
-                    reply_markup=music_reply_markup
-                )
-            if msg:
-                sent_messages.append(msg)
+        for attempt in range(max_publish_retries):
+            try:
+                # ВАЖНО: сброс указателя файлов перед каждой попыткой
+                for item in media_group:
+                    if hasattr(item.media, 'seek'):
+                        item.media.seek(0)
 
-        # Сценарий 2: Группа файлов
-        else:
-            msgs_list = await bot.send_media_group(chat_id=chat_id, media=media_group)
-            if msgs_list:
-                sent_messages.extend(msgs_list)
+                # Сценарий 1: Музыка + 1 файл
+                if is_music_post and len(media_group) == 1:
+                    item = media_group[0]
+                    msg = None
+                    if isinstance(item, InputMediaPhoto):
+                        msg = await bot.send_photo(
+                            chat_id=chat_id,
+                            photo=item.media,
+                            caption=item.caption,
+                            parse_mode=item.parse_mode,
+                            reply_markup=music_reply_markup,
+                            read_timeout=60,
+                            write_timeout=60
+                        )
+                    else:
+                         msg = await bot.send_animation(
+                            chat_id=chat_id,
+                            animation=item.media,
+                            caption=item.caption,
+                            parse_mode=item.parse_mode,
+                            reply_markup=music_reply_markup,
+                            read_timeout=60,
+                            write_timeout=60
+                        )
+                    if msg:
+                        sent_messages.append(msg)
 
-            if is_music_post:
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text="🎧 Нажмите кнопку ниже, чтобы слушать музыку:",
-                    reply_markup=music_reply_markup
-                )
+                # Сценарий 2: Группа файлов
+                else:
+                    msgs_list = await bot.send_media_group(
+                        chat_id=chat_id, 
+                        media=media_group,
+                        read_timeout=120,   # Увеличенные таймауты
+                        write_timeout=120,
+                        pool_timeout=120
+                    )
+                    if msgs_list:
+                        sent_messages.extend(msgs_list)
 
-        # === ЦИКЛ СОХРАНЕНИЯ В ФОНЕ ===
-        # 1. Определяем общие данные из первого сообщения (если они есть)
+                    if is_music_post:
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text="🎧 Нажмите кнопку ниже, чтобы слушать музыку:",
+                            reply_markup=music_reply_markup
+                        )
+                
+                # Если ошибки нет, выходим из цикла попыток
+                break
+
+            except TimedOut as e:
+                logging.warning(f"Таймаут по расписанию (попытка {attempt + 1}/{max_publish_retries}). Ждем {publish_delay} сек...")
+                if attempt == max_publish_retries - 1:
+                    raise e # Пробрасываем ошибку во внешний except
+                await asyncio.sleep(publish_delay)
+
+            except Exception as e:
+                if "bot is not a member" in str(e):
+                    raise e # Сразу прерываем, если бота удалили из канала
+                
+                logging.warning(f"Ошибка отправки (попытка {attempt + 1}/{max_publish_retries}): {e}")
+                if attempt == max_publish_retries - 1:
+                    raise e
+                await asyncio.sleep(publish_delay)
+
+        # === ЦИКЛ СОХРАНЕНИЯ В ФОНЕ (выполнится только если цикл попыток прошел успешно) ===
         main_caption = ""
         main_original_link = media_group_data.get('original_link')
 
@@ -13712,7 +13748,6 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
                         main_original_link = entity.url
                         break
 
-        # Формируем список задач
         queue_data = []
         for msg in sent_messages:
             if not msg.photo:
@@ -13734,7 +13769,6 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
                 'original_link': main_original_link
             })
 
-        # Запускаем последовательную обработку
         if queue_data:
             asyncio.create_task(gpt_helper.process_background_queue(bot, queue_data))
         # ==============================
@@ -13753,7 +13787,17 @@ async def publish_to_telegram_scheduled(context: CallbackContext):
         )
     
     except Exception as e:
-        logging.error(f"Ошибка при публикации поста {key} в Telegram: {e}")
+        # Сюда скрипт попадет, если все 3 попытки отправки завершились таймаутом, 
+        # либо если произошла другая критическая ошибка.
+        # Пост НЕ удалится из БД (time не удалится), что позволит вам разобраться в проблеме.
+        logging.error(f"КРИТИЧЕСКАЯ Ошибка при публикации поста {key} в Telegram: {e}")
+        try:
+             await bot.send_message(
+                chat_id=user_id,
+                text=f"🚫 Ошибка при публикации отложенного поста. Возможно, размер файлов слишком велик или сервер Telegram не отвечает."
+            )
+        except:
+             pass
 
 
 async def handle_testid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -14828,54 +14872,83 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
 
         # --- ОБНОВЛЕННАЯ ЛОГИКА ПУБЛИКАЦИИ И СОХРАНЕНИЯ ---
         try:
-            sent_messages = [] # Список для сбора всех отправленных сообщений
-
-            # Сценарий 1: Музыкальный пост и ВСЕГО ОДИН файл.
-            # Отправляем через send_photo/send_animation, чтобы прикрепить кнопку к посту.
-            if is_music_post and len(media_group) == 1:
-                item = media_group[0]
-                msg = None
-                if isinstance(item, InputMediaPhoto):
-                    msg = await context.bot.send_photo(
-                        chat_id=chat_id,
-                        photo=item.media,
-                        caption=item.caption,
-                        parse_mode=item.parse_mode,
-                        reply_markup=music_reply_markup
-                    )
-                else:
-                    msg = await context.bot.send_animation(
-                        chat_id=chat_id,
-                        animation=item.media,
-                        caption=item.caption,
-                        parse_mode=item.parse_mode,
-                        reply_markup=music_reply_markup
-                    )
-                if msg:
-                    sent_messages.append(msg)
-
-            # Сценарий 2: Обычный пост или Музыкальный пост с НЕСКОЛЬКИМИ файлами
-            else:
-                # send_media_group возвращает список сообщений
-                msgs_list = await context.bot.send_media_group(
-                    chat_id=chat_id,
-                    media=media_group
-                )
-                if msgs_list:
-                    sent_messages.extend(msgs_list) # Добавляем все сообщения альбома
-                    
-                if is_music_post:
-                     await context.bot.send_message(
-                        chat_id=chat_id,
-                        text="🎧 Нажмите кнопку ниже, чтобы слушать музыку:",
-                        reply_markup=music_reply_markup
-                    )
-
-            # === ИНТЕГРАЦИЯ С БАЗОЙ ДАННЫХ (ЦИКЛ ПО ВСЕМ ФОТО) ===
-            # 1. Определяем общие данные (Подпись и Ссылку)
-            # В handle_publish_button у нас может не быть media_group_data['original_link'] явно,
-            # поэтому надежнее парсить первое отправленное сообщение.
+            sent_messages = []
+            max_publish_retries = 3 # Количество попыток
+            publish_delay = 3       # Задержка между попытками
             
+            for attempt in range(max_publish_retries):
+                try:
+                    # ВАЖНО: Перед каждой (даже первой) попыткой сбрасываем указатель файлов в начало, 
+                    # иначе при retry отправятся пустые файлы (0 байт)
+                    for item in media_group:
+                        if hasattr(item.media, 'seek'):
+                            item.media.seek(0)
+
+                    # Сценарий 1: Музыкальный пост и ВСЕГО ОДИН файл.
+                    if is_music_post and len(media_group) == 1:
+                        item = media_group[0]
+                        if isinstance(item, InputMediaPhoto):
+                            msg = await context.bot.send_photo(
+                                chat_id=chat_id,
+                                photo=item.media,
+                                caption=item.caption,
+                                parse_mode=item.parse_mode,
+                                reply_markup=music_reply_markup,
+                                read_timeout=60,   # <-- УВЕЛИЧЕННЫЙ ТАЙМАУТ
+                                write_timeout=60   # <-- УВЕЛИЧЕННЫЙ ТАЙМАУТ
+                            )
+                        else:
+                            msg = await context.bot.send_animation(
+                                chat_id=chat_id,
+                                animation=item.media,
+                                caption=item.caption,
+                                parse_mode=item.parse_mode,
+                                reply_markup=music_reply_markup,
+                                read_timeout=60,   # <-- УВЕЛИЧЕННЫЙ ТАЙМАУТ
+                                write_timeout=60   # <-- УВЕЛИЧЕННЫЙ ТАЙМАУТ
+                            )
+                        if msg:
+                            sent_messages.append(msg)
+
+                    # Сценарий 2: Обычный пост или Музыкальный пост с НЕСКОЛЬКИМИ файлами
+                    else:
+                        msgs_list = await context.bot.send_media_group(
+                            chat_id=chat_id,
+                            media=media_group,
+                            read_timeout=120,  # <-- 120 секунд для альбомов!
+                            write_timeout=120, # <-- Загрузка альбома идет долго
+                            pool_timeout=120
+                        )
+                        if msgs_list:
+                            sent_messages.extend(msgs_list)
+                            
+                        if is_music_post:
+                             await context.bot.send_message(
+                                chat_id=chat_id,
+                                text="🎧 Нажмите кнопку ниже, чтобы слушать музыку:",
+                                reply_markup=music_reply_markup
+                            )
+                    
+                    # Если дошли сюда без ошибок, выходим из цикла попыток
+                    break 
+
+                except TimedOut as e:
+                    logger.warning(f"Таймаут при публикации (попытка {attempt + 1}/{max_publish_retries}). Ждем {publish_delay} сек...")
+                    if attempt == max_publish_retries - 1:
+                        raise e # Если последняя попытка, пробрасываем ошибку дальше
+                    await asyncio.sleep(publish_delay)
+                    
+                except Exception as e:
+                    # Для других непредвиденных ошибок тоже можно делать retry или сразу падать
+                    if "bot is not a member" in str(e):
+                        raise e # Сразу пробрасываем, retry не поможет
+                    
+                    logger.warning(f"Ошибка при публикации: {e} (попытка {attempt + 1}/{max_publish_retries})")
+                    if attempt == max_publish_retries - 1:
+                        raise e
+                    await asyncio.sleep(publish_delay)
+
+            # === ИНТЕГРАЦИЯ С БАЗОЙ ДАННЫХ (Оставляем вашу логику как есть) ===
             main_caption = ""
             main_original_link = None
             if isinstance(media_group_data, dict):
@@ -14891,7 +14964,6 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
                             main_original_link = entity.url
                             break
             
-            # 2. Формируем очередь задач
             queue_data = []
             for msg in sent_messages:
                 if msg.photo:
@@ -14902,7 +14974,6 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
                     post_caption = msg.caption if msg.caption else main_caption
                     post_date = int(msg.date.timestamp())
 
-                    # Собираем данные в словарь, но НЕ запускаем задачу
                     queue_data.append({
                         'channel_id': str(chat_id),
                         'message_id': new_post_id,
@@ -14912,27 +14983,21 @@ async def handle_publish_button(update: Update, context: CallbackContext) -> Non
                         'original_link': main_original_link
                     })
             
-            # 3. Запускаем ОДНУ фоновую задачу для всей очереди
             if queue_data:
                 asyncio.create_task(gpt_helper.process_background_queue(context.bot, queue_data))
             # ==================================================
-
-
 
             await temp_message.edit_text(f"✅ Пост успешно опубликован в канале {chat_id}!")
             
         except Forbidden as e:
             if "bot is not a member of the channel chat" in str(e):
-                await temp_message.edit_text(
-                    "🚫 Для возможности публиковать посты добавьте бота в канал."
-                )
+                await temp_message.edit_text("🚫 Для возможности публиковать посты добавьте бота в канал.")
             else:
                 await temp_message.edit_text(f"🚫 Ошибка доступа: {e}")
+        except TimedOut:
+            await temp_message.edit_text("🚫 Ошибка: Сервер Telegram не ответил вовремя. Попробуйте разбить пост на меньше файлов.")
         except Exception as e:
             await temp_message.edit_text(f"🚫 Ошибка при публикации поста: {e}")
-    else:
-        await temp_message.edit_text("🚫 Ошибка: Данные о медиагруппе не найдены.")
-
 
 async def handle_share_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
