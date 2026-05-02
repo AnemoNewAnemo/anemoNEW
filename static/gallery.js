@@ -504,41 +504,40 @@ export function initGallery() {
 
     // --- НАЧАЛО: Логика скрытия шапки при скролле на мобильных ---
     let lastScrollTop = 0;
-    let expandRatio = 1.0; // 1 = полностью открыто, 0 = полностью скрыто
-    const SCROLL_DISTANCE = 100; // Дистанция в px для полного скрытия/появления
-
     let isScrolling = false;
+
     content.addEventListener('scroll', () => {
         if (window.innerWidth > 768) {
-            if (expandRatio !== 1) {
-                expandRatio = 1;
-                header.style.setProperty('--expand', expandRatio);
-            }
+            header.classList.remove('collapsed');
             return;
         }
         
         if (!isScrolling) {
             window.requestAnimationFrame(() => {
                 let st = content.scrollTop;
-                let delta = st - lastScrollTop;
 
+                // 1. Если мы в самом верху списка — всегда показываем
                 if (st <= 10) {
-                    expandRatio = 1;
-                } else {
-                    expandRatio -= delta / SCROLL_DISTANCE;
-                    expandRatio = Math.max(0, Math.min(1, expandRatio));
+                    header.classList.remove('collapsed');
+                } 
+                // 2. Если крутим вниз (скрываем шапку)
+                else if (st > lastScrollTop && st > 50) {
+                    header.classList.add('collapsed');
 
-                    if (delta > 0 && expandRatio < 0.8) {
-                        const filterPanel = document.getElementById('gallery-filter-panel');
-                        const filterBtn = document.getElementById('g-filter-btn');
-                        if (filterPanel && filterPanel.classList.contains('show')) {
-                            filterPanel.classList.remove('show');
-                            if (filterBtn) filterBtn.classList.remove('active');
-                        }
+                    // Прячем меню фильтров, если оно было открыто
+                    const filterPanel = document.getElementById('gallery-filter-panel');
+                    const filterBtn = document.getElementById('g-filter-btn');
+                    if (filterPanel && filterPanel.classList.contains('show')) {
+                        filterPanel.classList.remove('show');
+                        if (filterBtn) filterBtn.classList.remove('active');
                     }
                 }
+                // 3. Если крутим вверх (показываем шапку обратно). 
+                // Цифра 10 нужна как "мертвая зона", чтобы шапка не дергалась при дрожании пальца.
+                else if (st < lastScrollTop - 10) {
+                    header.classList.remove('collapsed');
+                }
                 
-                header.style.setProperty('--expand', expandRatio);
                 lastScrollTop = st <= 0 ? 0 : st; 
                 isScrolling = false;
             });
