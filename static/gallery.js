@@ -1181,12 +1181,13 @@ function renderMasonry(items, columns) {
     // а здесь просто будем использовать items как есть, но нам нужен GLOBAL OFFSET.
     
     // РЕШЕНИЕ: Привяжем данные прямо к DOM элементу div.gallery-item
-    
+    let colIndex = 0;
     items.forEach((item, index) => {
         if (!item.post_id) return;
 
-        let minCol = columns[0];
-        columns.forEach(col => { if (col.offsetHeight < minCol.offsetHeight) minCol = col; });
+        let minCol = columns[colIndex];
+        colIndex = (colIndex + 1) % columns.length;
+        
 
         const div = document.createElement('div');
         div.className = 'gallery-item';
