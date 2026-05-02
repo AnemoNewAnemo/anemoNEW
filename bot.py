@@ -2067,21 +2067,6 @@ async def start(update: Update, context: CallbackContext) -> int:
                 if message.photo:
                     await fast_group_rec(update, context)
                     return ConversationHandler.END
-            
-                # Проверка: если это документ, но изображение (не сжатое)
-                elif message.document and message.document.mime_type and message.document.mime_type.startswith("image/"):
-                    # Если у документа из медиагруппы нет подписи, требуем текст.
-                    # Если подпись есть, пропускаем дальше (код обработает caption ниже).
-                    if not message.caption:
-                        await message_to_reply.reply_text(
-                            "Пожалуйста, отправьте сначала текстовую подпись для будущего поста либо \"нет\", если она не нужна"
-                        )
-                        return ConversationHandler.END
-            
-                # Иные типы медиа — можно отфильтровать отдельно
-                else:
-                    await message_to_reply.reply_text("Неподдерживаемый тип медиа.")
-                    return ConversationHandler.END
   
               
             # Получаем текст сообщения
@@ -10866,6 +10851,37 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
     # Если не в состоянии редактирования, продолжаем обычную обработку изображений
     if user_id in user_data and user_data[user_id]['status'] == 'awaiting_image':
 
+        # --- НОВАЯ ЛОГИКА ДЛЯ ПОДПИСИ ИЗ ЗАПОЗДАЛОЙ МЕДИАГРУППЫ ---
+        if caption and not user_data[user_id].get('author_name') and not user_data[user_id].get('title'):
+            # Если пост создался пустым (как будто написали "нет"), а сейчас пришла подпись от последнего документа
+            try:
+                # Пробуем вытащить HTML, если доступна ваша функция format_text_to_html
+                caption_html = format_text_to_html(update.message)
+            except Exception:
+                caption_html = caption
+
+            # Извлекаем ссылки
+            links = re.findall(r'https?://[^\s,]+', caption_html)
+            if links:
+                user_data[user_id]['artist_link'] = links[0]
+                user_data[user_id]['extra_links'] = links
+            
+            # Извлекаем автора
+            author_input = re.sub(r'https?://[^\s,]+', '', caption_html).strip()
+
+            match_full = re.match(r'^\^(.*)\^$', author_input, re.S)
+            if match_full:
+                user_data[user_id]['title'] = match_full.group(1).strip()
+            else:
+                match_partial = re.match(r'^\^(.*?)\^\s*(.*)', author_input, re.S)
+                if match_partial:
+                    user_data[user_id]['extra_phrase'] = match_partial.group(1).strip()
+                    user_data[user_id]['author_name'] = match_partial.group(2).strip()
+                    user_data[user_id]['title'] = match_partial.group(2).strip()
+                else:
+                    user_data[user_id]['author_name'] = author_input
+                    user_data[user_id]['title'] = author_input
+        # -----------------------------------------------------------
         # === НОВЫЙ БЛОК ДЛЯ АУДИО ===
         if update.message.audio:
             audio = update.message.audio
