@@ -12073,7 +12073,7 @@ async def publish(update: Update, context: CallbackContext) -> None:
 
             if response_json.get('ok'):
                 article_url = f"https://telegra.ph/{response_json['result']['path']}"
-                webappurl = f"https://anemonne.onrender.com/anemonearts?channel_id=@anemonn&gallery=true&proxy=true"
+                webappurl = f"https://anemonne.onrender.com/anemonearts?channel_id=@anemonn&gallery=true"
 
                 
                 article_response = requests.get(f'https://api.telegra.ph/getPage?access_token={TELEGRAPH_TOKEN}&path={response_json["result"]["path"]}&return_content=true')
