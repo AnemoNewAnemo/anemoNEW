@@ -3538,9 +3538,18 @@ let isRenderPaused = false; // <--- 1. Флаг паузы
 // <--- 2. Слушатель переключения паузы из галереи
 window.addEventListener('toggle-pause', (e) => {
     isRenderPaused = e.detail;
-    if (!isRenderPaused) {
-        // Сбрасываем накопленное время, чтобы физика не "скакнула" при возобновлении
-        clock.getDelta(); 
+    
+    // Скрываем тяжелые фоновые элементы при открытии галереи
+    const grain = document.getElementById('film-grain');
+    const canvas = document.getElementById('canvas-container');
+    
+    if (isRenderPaused) {
+        if (grain) grain.style.display = 'none';
+        if (canvas) canvas.style.display = 'none'; // Отключаем рендер и отрисовку канваса
+    } else {
+        if (grain && document.getElementById('grain-toggle').checked) grain.style.display = 'block';
+        if (canvas) canvas.style.display = 'block';
+        clock.getDelta(); // Сбрасываем таймер физики
     }
 });
 
