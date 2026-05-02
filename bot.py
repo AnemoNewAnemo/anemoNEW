@@ -2083,7 +2083,7 @@ async def start(update: Update, context: CallbackContext) -> int:
               
             # Получаем текст сообщения
             if update.message.text:
-                text = format_text_to_html(update.message)  
+                text = update.message.text_html or update.message.caption_html or ""
                 twitter_image_regex = re.compile(r"^https://(?:x|twitter)\.com/\w+/status/\d+(?:/photo/\d+)?/?(\?.*)?$")
                 lofter_image_regex = re.compile(r"^https://\w+\.lofter\.com/post/\w+$")
                 weibo_image_regex = re.compile(r"^https://www\.weibo\.com/\d+/\w+(\?.*)?$")
@@ -2230,11 +2230,7 @@ async def start(update: Update, context: CallbackContext) -> int:
             # Если ожидаемое изображение пришло как документ
             elif update.message.document and update.message.document.mime_type.startswith('image/'):
                 # Обрабатываем caption с разметкой
-                caption = (
-                    format_text_to_html(update.message)
-                    if update.message.caption
-                    else ''
-                )
+                caption = update.message.text_html or update.message.caption_html or ""
                 
                 # Разделяем текст по запятой, чтобы извлечь все ссылки
                 parts = caption.split(',', maxsplit=1)
@@ -10868,7 +10864,7 @@ async def handle_image(update: Update, context: CallbackContext) -> int:
             # Если пост создался пустым (как будто написали "нет"), а сейчас пришла подпись от последнего документа
             try:
                 # Пробуем вытащить HTML, если доступна ваша функция format_text_to_html
-                caption_html = format_text_to_html(update.message)
+                caption_html = update.message.text_html or update.message.caption_html or ""
             except Exception:
                 caption_html = caption
 
@@ -13554,8 +13550,7 @@ async def handle_new_caption(update: Update, context: CallbackContext, key) -> i
         return ConversationHandler.END
 
     # Форматируем подпись с учётом Telegram-разметки
-    formatted_caption = format_text_to_html(update.message)
-    formatted_caption = html.unescape(format_text_to_html(update.message))
+    formatted_caption = update.message.text_html or update.message.caption_html or ""
     media[0]['caption'] = formatted_caption
 
     # Сохраняем обновленные данные в Firebase
