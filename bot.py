@@ -2070,10 +2070,13 @@ async def start(update: Update, context: CallbackContext) -> int:
             
                 # Проверка: если это документ, но изображение (не сжатое)
                 elif message.document and message.document.mime_type and message.document.mime_type.startswith("image/"):
-                    await message_to_reply.reply_text(
-                        "Пожалуйста, отправьте сначала текстовую подпись для будущего поста либо \"нет\", если она не нужна"
-                    )
-                    return ConversationHandler.END
+                    # Если у документа из медиагруппы нет подписи, требуем текст.
+                    # Если подпись есть, пропускаем дальше (код обработает caption ниже).
+                    if not message.caption:
+                        await message_to_reply.reply_text(
+                            "Пожалуйста, отправьте сначала текстовую подпись для будущего поста либо \"нет\", если она не нужна"
+                        )
+                        return ConversationHandler.END
             
                 # Иные типы медиа — можно отфильтровать отдельно
                 else:
@@ -2084,7 +2087,7 @@ async def start(update: Update, context: CallbackContext) -> int:
             # Получаем текст сообщения
             if update.message.text:
                 text = format_text_to_html(update.message)  
-                twitter_image_regex = re.compile(r"^https://x\.com/\w+/status/\d+/?(\?.*)?$")
+                twitter_image_regex = re.compile(r"^https://(?:x|twitter)\.com/\w+/status/\d+(?:/photo/\d+)?/?(\?.*)?$")
                 lofter_image_regex = re.compile(r"^https://\w+\.lofter\.com/post/\w+$")
                 weibo_image_regex = re.compile(r"^https://www\.weibo\.com/\d+/\w+(\?.*)?$")
                 tumblr_image_regex = re.compile(r"^https://\w+\.tumblr\.com/post/\d+(/\S*)?$")
@@ -2309,7 +2312,12 @@ async def start(update: Update, context: CallbackContext) -> int:
                     # Обработка изображения
                     await handle_image(update, context)
 
-                    # Вызов команды /publish после обработки изображения
+                    # Если это первый файл медиагруппы, не публикуем сразу, а ждем остальные картинки
+                    if update.message.media_group_id:
+                        user_data[user_id]['status'] = 'awaiting_image'
+                        return 'awaiting_image'
+
+                    # Вызов команды /publish после обработки (только для одиночных изображений)
                     await publish(update, context)
 
                     # Завершение процесса для данного пользователя
@@ -2660,7 +2668,7 @@ async def post_by_twitter_link(link: str, update: Update, context: CallbackConte
     title = None
     
     # Проверяем, является ли ссылка Twitter, Lofter, Weibo или Tumblr
-    twitter_match = re.search(r"https://x.com/([^/]+)/status/(\d+)", link)
+    twitter_match = re.search(r"https://(?:x|twitter)\.com/([^/]+)/status/(\d+)", link)
     lofter_match = re.search(r"https://([^.]+).lofter.com/post/(\w+)", link)
     weibo_match = re.search(r"https://www.weibo.com/\d+/(\w+)", link)
     tumblr_match = re.search(r"https://([^.]+).tumblr.com", link)
