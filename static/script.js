@@ -2612,7 +2612,8 @@ class FloatingSphereSystem {
 // ВАЖНО: Добавьте этот вызов в ваш основной цикл animate(), 
 // чтобы пересчитывать приоритеты когда камера движется
 setInterval(() => {
-    // Если очередь переполнена, не вмешиваемся, даем ей разгрестись
+    if (isRenderPaused) return; // <--- ДОБАВИТЬ ЭТУ СТРОКУ
+    
     if (state.loadQueue.length > 5 || state.activeTasks.size >= MAX_CONCURRENT_LOADS) return;
 
     // Сканируем все загруженные чанки
