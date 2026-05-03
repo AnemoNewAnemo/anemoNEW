@@ -562,10 +562,32 @@
             border: 1px solid rgba(255,255,255,0.1); border-radius: 16px;
             padding: 24px; z-index: 100; box-shadow: 0 20px 50px rgba(0,0,0,0.5);
             display: flex; flex-direction: column; gap: 18px;
-            transform: translateY(-15px); opacity: 0; pointer-events: none; transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+            transform: translateY(-15px); opacity: 0; pointer-events: none; 
+            transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+            
+            /* --- НОВЫЕ СВОЙСТВА ДЛЯ СКРОЛЛА --- */
+            max-height: calc(100vh - 120px); /* Ограничиваем высоту (100% экрана минус высота шапки) */
+            overflow-y: auto; /* Включаем вертикальный скролл */
+            overscroll-behavior-y: contain; /* Блокируем передачу скролла на задний фон */
+            scrollbar-width: thin; /* Для Firefox */
+            scrollbar-color: rgba(255,255,255,0.2) transparent;
         }
-        #gallery-filter-panel.show { transform: translateY(0); opacity: 1; pointer-events: auto; }
-
+        
+        /* Красивый скроллбар для Chrome/Safari/Edge */
+        #gallery-filter-panel::-webkit-scrollbar {
+            width: 6px;
+        }
+        #gallery-filter-panel::-webkit-scrollbar-track {
+            background: transparent;
+            margin: 10px 0; /* Отступы скроллбара сверху и снизу */
+        }
+        #gallery-filter-panel::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+        }
+        #gallery-filter-panel::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 170, 0, 0.6); /* При наведении становится оранжевым */
+        }
         .f-group { display: flex; flex-direction: column; gap: 8px; }
         .f-group-row { display: flex; gap: 16px; }
         .f-group-row .f-group { flex: 1; }
@@ -597,8 +619,10 @@
         @media (max-width: 768px) {
             #gallery-filter-panel { 
                 right: 20px; left: 20px; width: auto; 
-                top: 100%; /* Автоматически открывается сразу под всей высотой шапки */
+                top: 100%; 
                 padding: 20px; 
+                /* На мобилках делаем высоту чуть меньше, чтобы было видно, что это всплывающее окно */
+                max-height: 65vh; 
             }
         }
 
