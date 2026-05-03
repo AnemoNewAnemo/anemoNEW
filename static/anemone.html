@@ -566,12 +566,15 @@
             transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
             
             /* --- НОВЫЕ СВОЙСТВА ДЛЯ СКРОЛЛА --- */
-            max-height: calc(100vh - 120px); /* Ограничиваем высоту (100% экрана минус высота шапки) */
-            overflow-y: auto; /* Включаем вертикальный скролл */
-            overscroll-behavior-y: contain; /* Блокируем передачу скролла на задний фон */
-            scrollbar-width: thin; /* Для Firefox */
+            max-height: calc(100vh - 120px); 
+            overflow-y: auto; 
+            overscroll-behavior-y: contain; 
+            scrollbar-width: thin; 
             scrollbar-color: rgba(255,255,255,0.2) transparent;
         }
+        
+        /* 👇 ВОТ ЭТА СТРОЧКА БЫЛА ПОТЕРЯНА 👇 */
+        #gallery-filter-panel.show { transform: translateY(0); opacity: 1; pointer-events: auto; }
         
         /* Красивый скроллбар для Chrome/Safari/Edge */
         #gallery-filter-panel::-webkit-scrollbar {
