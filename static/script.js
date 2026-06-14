@@ -702,13 +702,13 @@ const paperFragmentShader = `
     
     uniform vec3 uCamPos;
     uniform vec3 uCamDir;
-    
+    uniform float hasTexture; // <--- ВЕРНУЛИ СЮДА
+
     varying vec2 vUv;
     varying float vDist;
     varying vec3 vWorldPos;
 
-    // ОПТИМИЗАЦИЯ: Компилируем эту функцию ТОЛЬКО если текстура еще не загружена
-    #ifndef HAS_TEXTURE
+    // Убрали #ifndef HAS_TEXTURE
     float drawProgressBar(vec2 uv, float totalTime) {
         float result = 0.0;
         float count = 5.0;
@@ -738,7 +738,6 @@ const paperFragmentShader = `
         }
         return result;
     }
-    #endif
 
     void main() {
         // Расчет прозрачности по дистанции
@@ -773,10 +772,10 @@ const paperFragmentShader = `
 
         vec3 rgbColor;
 
-        // ОПТИМИЗАЦИЯ: Препроцессорное ветвление вместо uniform bool
-        #ifdef HAS_TEXTURE
+        // Убрали #ifdef HAS_TEXTURE и вернули if
+        if (hasTexture > 0.5) {
             rgbColor = texture2D(map, vUv).rgb;
-        #else
+        } else {
             vec3 bg = vec3(0.05, 0.09, 0.18); 
             
             vec2 center = vec2(0.5, 0.5);
@@ -799,7 +798,7 @@ const paperFragmentShader = `
             rgbColor = bg;
             rgbColor = mix(rgbColor, vec3(1.0), centerDot); 
             rgbColor = mix(rgbColor, priorityColor, barsMask); 
-        #endif
+        }
 
         vec3 finalRgb = rgbColor * brightness;
         gl_FragColor = vec4(finalRgb, opacity);
@@ -2678,7 +2677,6 @@ class ReflectionSystem {
         this.reflectionCamera.position.copy(this.mainCamera.position);
         this.reflectionCamera.position.y *= -1; 
 
-        // ОПТИМИЗАЦИЯ: Без аллокаций памяти (new)
         this._viewDir.set(0, 0, -1).applyQuaternion(this.mainCamera.quaternion);
         this._viewDir.y *= -1; 
         this._target.copy(this.reflectionCamera.position).add(this._viewDir);
@@ -2689,17 +2687,23 @@ class ReflectionSystem {
         this.reflectionCamera.up.copy(this._localUp);
         this.reflectionCamera.lookAt(this._target);
 
+        // --- СОХРАНЯЕМ ТЕКУЩУЮ ВИДИМОСТЬ ---
         const prevGrassNear = grassSystem.meshNear ? grassSystem.meshNear.visible : false;
         const prevGrassFar = grassSystem.meshFar ? grassSystem.meshFar.visible : false;
         const prevDust = dustSystem.visible;
         const prevFirefly = fireflySystem.visible;
         const prevRocks = rockSystem.group.visible; 
         const prevClouds = sharedCloudUniforms.uCloudsEnabled.value; 
+        const prevTerrain = terrainSystem.mesh ? terrainSystem.mesh.visible : false; // <--- ДОБАВЛЕНО
         
+        // --- ПРЯЧЕМ ЛИШНЕЕ ---
         if (grassSystem.meshNear) grassSystem.meshNear.visible = false;
         if (grassSystem.meshFar) grassSystem.meshFar.visible = false; 
         dustSystem.visible = false;
         fireflySystem.visible = false;
+        
+        // ВАЖНО: Прячем землю, чтобы избежать ошибки Illegal Feedback!
+        if (terrainSystem.mesh) terrainSystem.mesh.visible = false; // <--- ДОБАВЛЕНО
 
         if (!CONFIG.water.reflectRocks) rockSystem.group.visible = false;
         if (!CONFIG.water.reflectClouds) sharedCloudUniforms.uCloudsEnabled.value = 0.0;
@@ -2708,7 +2712,6 @@ class ReflectionSystem {
         renderer.localClippingEnabled = true;
         renderer.clippingPlanes = [this.clipPlane];
 
-        // АКТИВИРУЕМ ОПТИМИЗАЦИЮ: сообщаем шейдерам, что начался рендер отражения
         sharedCloudUniforms.uIsReflectionPass.value = 1.0;
 
         renderer.setRenderTarget(this.renderTarget);
@@ -2716,17 +2719,18 @@ class ReflectionSystem {
         renderer.render(this.scene, this.reflectionCamera);
         renderer.setRenderTarget(null); 
 
-        // ДЕАКТИВИРУЕМ ОПТИМИЗАЦИЮ: возвращаем режим обычного кадра
         sharedCloudUniforms.uIsReflectionPass.value = 0.0;
 
         renderer.clippingPlanes = [];
         renderer.localClippingEnabled = oldClipping;
 
+        // --- ВОССТАНАВЛИВАЕМ ВИДИМОСТЬ ---
         if (grassSystem.meshNear) grassSystem.meshNear.visible = prevGrassNear;
         if (grassSystem.meshFar) grassSystem.meshFar.visible = prevGrassFar;
         dustSystem.visible = prevDust;
         fireflySystem.visible = prevFirefly;
         
+        if (terrainSystem.mesh) terrainSystem.mesh.visible = prevTerrain; // <--- ДОБАВЛЕНО
         rockSystem.group.visible = prevRocks;
         sharedCloudUniforms.uCloudsEnabled.value = prevClouds;
     }
@@ -5053,26 +5057,34 @@ function runTask(task) {
                 if (task.onStatus) task.onStatus('LOADING IMG...', '#00ffff');
 
                 const loader = new THREE.ImageLoader();
-                loader.setCrossOrigin('anonymous');
+                loader.setCrossOrigin('anonymous'); // Для 3D это ОБЯЗАТЕЛЬНО
                 
+                // --- ИСПРАВЛЕНИЕ: Форсируем прокси для 3D текстур, чтобы избежать ошибок CORS ---
+                let finalUrl = data.url;
+                if (finalUrl.includes('wsrv.nl')) {
+                    finalUrl = finalUrl.replace('&n=-1', '') + '&w=512&q=80&output=webp';
+                } else if (finalUrl.includes('telesco.pe') || finalUrl.includes('telegra.ph')) {
+                    // Если бекенд отдал чистую ссылку Telegram, форсируем её через прокси
+                    finalUrl = `https://wsrv.nl/?url=${encodeURIComponent(finalUrl)}&w=512&q=80&output=webp`;
+                }
+
                 // Таймер чисто на загрузку картинки
                 const imgTimeout = setTimeout(() => {
                     if (controller.signal.aborted) return;
-                    //console.warn(`[IMG TIMEOUT] ${taskId} took too long.`);
                     if (task.onStatus) task.onStatus('IMG TIMEOUT', '#ff0000');
-                    task.onError(true); // Считаем фатальным, меняем ID
+                    task.onError(true); 
                     finishTask(taskId);
                 }, imgTimeoutMs);                
 
                 loader.load(
-                    data.url,
+                    finalUrl, // <--- ИСПОЛЬЗУЕМ ОБРАБОТАННУЮ ССЫЛКУ
                     (image) => {
                         clearTimeout(imgTimeout);
                         if (controller.signal.aborted) return;
                         
                         if (task.onStatus) task.onStatus('GENERATING...', '#00ff00');
                         
-                        // --- ГЕНЕРАЦИЯ ПОЛАРОИДА (без изменений) ---
+                        // --- ГЕНЕРАЦИЯ ПОЛАРОИДА ---
                         const canvas = document.createElement('canvas');
                         const ctx = canvas.getContext('2d');
                         const cardWidth = 512;
@@ -5134,7 +5146,6 @@ function runTask(task) {
                     (err) => {
                         clearTimeout(imgTimeout);
                         if (task.onStatus) task.onStatus('IMG ERR', '#ff0000');
-                        // Если ошибка загрузки картинки и это срочно - меняем ID сразу
                         task.onError(isUrgent); 
                         finishTask(taskId);
                     }
@@ -5572,7 +5583,6 @@ setInterval(() => {
     // Если очередь переполнена, не вмешиваемся, даем ей разгрестись
     if (state.loadQueue.length > 5 || state.activeTasks.size >= MAX_CONCURRENT_LOADS) return;
 
-    // Сканируем все загруженные чанки
     let restartedCount = 0;
     
     state.chunks.forEach(chunk => {
@@ -5580,19 +5590,17 @@ setInterval(() => {
         
         chunk.group.traverse(obj => {
             if (obj.isMesh && obj.userData && obj.userData.reload) {
-                // Проверяем: это заглушка? (hasTexture == false)
                 const uniforms = obj.material.uniforms;
-                if (uniforms && uniforms.hasTexture && !uniforms.hasTexture.value) {
+                
+                // ИСПРАВЛЕННАЯ СТРОКА ПРОВЕРКИ (проверяем < 0.5):
+                if (uniforms && uniforms.hasTexture && uniforms.hasTexture.value < 0.5) {
                     
                     const pid = obj.userData.postId;
                     
-                    // Проверяем: грузится ли оно прямо сейчас?
                     const isQueued = state.loadQueue.some(t => t.postId === pid);
                     const isActive = state.activeTasks.has(pid);
                     
-                    // Если это заглушка И она нигде не числится в работе — она зависла.
                     if (!isQueued && !isActive) {
-                        // ПЕРЕЗАПУСКАЕМ!
                         obj.userData.reload();
                         restartedCount++;
                     }
@@ -5604,7 +5612,7 @@ setInterval(() => {
     if (restartedCount > 0) {
         //console.log(`🐕 Watchdog: Restarted ${restartedCount} stuck placeholders.`);
     }
-}, 2000); // Проверка каждые 2 секунды
+}, 2000);
 
 // --- КОНЕЦ НОВОГО БЛОКА ---
 const sphereSystem = new FloatingSphereSystem(scene, camera);
@@ -5752,11 +5760,11 @@ function createHangingArt(group, data, chunkKey) {
     
     const material = new THREE.ShaderMaterial({
         vertexShader: paperVertexShader,
-        // По умолчанию компилируем шейдер БЕЗ текстуры (показываем лоадер)
         fragmentShader: paperFragmentShader,
         uniforms: {
             ...globalUniforms,
             map: { value: PLACEHOLDER_TEXTURE },
+            hasTexture: { value: 0.0 }, // <--- ВЕРНУЛИ ЭТУ СТРОКУ
             uColor: { value: new THREE.Color(0xffffff) },
             uSizeMult: { value: CONFIG.details.fireflySize },          
             uAspectRatio: { value: 1.0 },
@@ -5780,6 +5788,9 @@ function createHangingArt(group, data, chunkKey) {
     mesh.position.copy(pos);
     mesh.scale.set(baseScale, baseScale, baseScale); 
     mesh.frustumCulled = true;
+
+    // ---> ДОБАВИТЬ ВОТ ЭТУ СТРОКУ <---
+    mesh.userData.postId = data.post_id || data.id; 
 
     mesh.matrixAutoUpdate = false;
     mesh.updateMatrix();
@@ -5815,17 +5826,18 @@ function createHangingArt(group, data, chunkKey) {
 
                 if (mesh.material) { 
                     mesh.material.uniforms.map.value = tex;
+                    mesh.material.uniforms.hasTexture.value = 1.0; // <--- ВМЕСТО defines СТАВИМ ЭТО
                     mesh.material.uniforms.uAspectRatio.value = ratio; 
                     let scaleX = 1, scaleY = 1;
                     if (ratio > 1) scaleX = ratio;
                     else scaleY = 1 / ratio;
                     mesh.material.uniforms.uImageScale.value.set(scaleX, scaleY);
                     
-                    // ДОБАВИТЬ ЭТИ 2 СТРОКИ:
-                    mesh.material.defines = { HAS_TEXTURE: "" };
-                    mesh.material.needsUpdate = true; // Заставит Three.js вырезать код лоадера
+                    // ЭТИ СТРОКИ УДАЛИТЬ (Они вызывали фризы)
+                    // mesh.material.defines = { HAS_TEXTURE: "" };
+                    // mesh.material.needsUpdate = true;
                 }
-            }, 
+            },
             // onError
             (isFatal = false) => { 
                 // --- АГРЕССИВНАЯ ЗАМЕНА ДЛЯ ВИДИМЫХ ---
@@ -5845,7 +5857,6 @@ function createHangingArt(group, data, chunkKey) {
 
                 if (shouldRetrySame && !isFatal) {
                     // Фоновая задача, можно попробовать еще раз тот же ID
-                    // Важно: перезапуск через watchdog
                 } else {
                     // Видимая задача или лимит исчерпан -> МЕНЯЕМ ID
                     const newId = PostRecovery.getReplacement(currentPostId);
@@ -5857,7 +5868,9 @@ function createHangingArt(group, data, chunkKey) {
                         mesh.material.uniforms.uPhase.value = seededRandom(newSeed) * 10;
                     }
 
-                    setTimeout(startLoading, 50);
+                    // ИСПРАВЛЕНИЕ: Если ID сломался (CORS или 404), даем паузу в 1.5 секунды, 
+                    // чтобы не создавать бешеный спам сетевыми запросами.
+                    setTimeout(startLoading, 1500); 
                 }
             }
         );
