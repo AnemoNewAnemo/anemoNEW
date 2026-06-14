@@ -157,7 +157,36 @@
         .group-content { padding: 0 16px 16px 16px; animation: slideDown 0.3s ease; }
         @keyframes slideDown { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
         .control-group { margin-bottom: 16px; }
-        .label-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+        /* Выравниваем элементы по вертикали */
+        .label-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+
+        /* Стили для новых числовых окошек рядом со слайдерами */
+        .slider-num-input {
+            width: 45px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #ffaa00; /* Желтый цвет как акцент */
+            border-radius: 4px;
+            padding: 2px 4px;
+            font-size: 11px;
+            font-family: "Courier New", monospace;
+            text-align: right;
+            outline: none;
+            transition: all 0.2s ease;
+        }
+        .slider-num-input:focus {
+            border-color: #ffaa00;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        /* Убираем стандартные стрелочки вверх/вниз для красоты (оставляем только цифры) */
+        .slider-num-input::-webkit-outer-spin-button,
+        .slider-num-input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        .slider-num-input[type=number] {
+            -moz-appearance: textfield;
+        }
         .label-row label { font-size: 12px; color: var(--text-dim); font-weight: 500; }
         input[type="range"] { -webkit-appearance: none; width: 100%; background: transparent; cursor: pointer; height: 20px; margin: 0; }
         input[type="range"]::-webkit-slider-runnable-track { width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; }
@@ -332,21 +361,11 @@
         /* НАЧАЛО БЛОКА ГАЛЕРЕИ */
 
         /* --- ГАЛЕРЕЯ CSS --- */
-        /* --- ГАЛЕРЕЯ CSS (ХУДОЖЕСТВЕННЫЙ ДИЗАЙН) --- */
+/* --- ГАЛЕРЕЯ CSS (ХУДОЖЕСТВЕННЫЙ ДИЗАЙН) --- */
         #gallery-overlay {
             display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            /* Делаем фон полностью непрозрачным, чтобы браузер не пытался рендерить то, что под ним */
-            background: rgb(4, 6, 10); 
+            background: rgba(4, 6, 10, 0.95); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
             z-index: 2000; flex-direction: column;
-        }
-        
-        /* Если очень хочется блюр, оставляем его только для десктопов */
-        @media (min-width: 769px) {
-            #gallery-overlay {
-                background: rgba(4, 6, 10, 0.95); 
-                backdrop-filter: blur(10px); 
-                -webkit-backdrop-filter: blur(10px);
-            }
         }
 
         .gallery-header {
@@ -493,23 +512,34 @@
         /* Адаптив */
         @media (max-width: 768px) {
             .gallery-header { 
+                --expand: 1; /* Переменная из JS, по умолчанию открыта */
                 padding: 16px 20px;
-                gap: 12px;
+                padding-bottom: calc(12px + var(--expand) * 4px);
+                gap: calc(var(--expand) * 12px);
                 justify-content: space-between; 
-                transition: padding 0.3s ease, gap 0.3s ease;
             }
 
             .gallery-search, .gallery-colors-wrapper, .gallery-filter-btn {
-                /* Возвращаем transition, браузер сам аппаратно сгладит анимацию */
-                transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-                            opacity 0.25s ease,
-                            margin 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
-                max-height: 60px;
-                opacity: 1;
+                /* Убрали transition, чтобы элементы жестко и моментально следовали за пальцем при скролле */
+                transition: none; 
+                max-height: calc(var(--expand) * 60px);
+                opacity: var(--expand);
                 overflow: hidden;
-                pointer-events: auto;
+                pointer-events: calc(var(--expand) > 0.1 ? auto : none);
             }
 
+            .gallery-search { 
+                margin: calc(var(--expand) * 4px) 0; 
+            }
+            /* --- КОНЕЦ: Стили скрытия элементов при скролле --- */
+            /* 1 строка: Заголовок слева и кнопка закрытия справа */
+            .gallery-title { font-size: 16px; letter-spacing: 4px; order: 1; }
+            .gallery-close { 
+                position: relative; right: auto; top: auto; transform: none; 
+                width: 30px; height: 30px; margin: 0; order: 2; 
+            }
+            
+            /* 2 строка: Поле поиска (переносится на новую строку на всю ширину) */
             .gallery-search { 
                 order: 3; 
                 flex: 1 1 100%; 
@@ -517,28 +547,21 @@
                 margin: 4px 0; 
             }
             
-            /* --- КЛАСС ДЛЯ ПЛАВНОГО СКРЫТИЯ --- */
-            .gallery-header.collapsed .gallery-search,
-            .gallery-header.collapsed .gallery-colors-wrapper,
-            .gallery-header.collapsed .gallery-filter-btn {
-                max-height: 0;
-                opacity: 0;
-                margin-top: 0;
-                margin-bottom: 0;
-                pointer-events: none;
+            /* 3 строка: Выбор цвета (слева) и кнопка фильтров (справа) */
+            .gallery-colors-wrapper { 
+                order: 4; 
+                flex: 1 1 0; 
+                min-width: 0; /* Обязательно для работы скролла цветов */
+                margin-top: 0; 
             }
-
-            .gallery-header.collapsed {
-                gap: 0;
-                padding-bottom: 12px;
-            }
-
-            /* Дальше оставляете ваши стили для title, close и т.д. ... */
-            .gallery-title { font-size: 16px; letter-spacing: 4px; order: 1; }
-            .gallery-close { position: relative; right: auto; top: auto; transform: none; width: 30px; height: 30px; margin: 0; order: 2; }
-            .gallery-colors-wrapper { order: 4; flex: 1 1 0; min-width: 0; margin-top: 0; }
             .gallery-colors-strip { justify-content: flex-start; gap: 12px; }
-            .gallery-filter-btn { position: relative; right: auto; top: auto; transform: none; width: 36px; height: 36px; margin: 0; order: 5; flex: 0 0 auto; }
+            
+            .gallery-filter-btn { 
+                position: relative; right: auto; top: auto; transform: none; 
+                width: 36px; height: 36px; margin: 0; order: 5; 
+                flex: 0 0 auto; 
+            }
+
             .gallery-content { padding: 20px; gap: 16px; }
             .masonry-col { gap: 16px; }
             .g-btn-action { font-size: 10px; }
@@ -562,35 +585,10 @@
             border: 1px solid rgba(255,255,255,0.1); border-radius: 16px;
             padding: 24px; z-index: 100; box-shadow: 0 20px 50px rgba(0,0,0,0.5);
             display: flex; flex-direction: column; gap: 18px;
-            transform: translateY(-15px); opacity: 0; pointer-events: none; 
-            transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-            
-            /* --- НОВЫЕ СВОЙСТВА ДЛЯ СКРОЛЛА --- */
-            max-height: calc(100vh - 120px); 
-            overflow-y: auto; 
-            overscroll-behavior-y: contain; 
-            scrollbar-width: thin; 
-            scrollbar-color: rgba(255,255,255,0.2) transparent;
+            transform: translateY(-15px); opacity: 0; pointer-events: none; transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
         }
-        
-        /* 👇 ВОТ ЭТА СТРОЧКА БЫЛА ПОТЕРЯНА 👇 */
         #gallery-filter-panel.show { transform: translateY(0); opacity: 1; pointer-events: auto; }
-        
-        /* Красивый скроллбар для Chrome/Safari/Edge */
-        #gallery-filter-panel::-webkit-scrollbar {
-            width: 6px;
-        }
-        #gallery-filter-panel::-webkit-scrollbar-track {
-            background: transparent;
-            margin: 10px 0; /* Отступы скроллбара сверху и снизу */
-        }
-        #gallery-filter-panel::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.2);
-            border-radius: 10px;
-        }
-        #gallery-filter-panel::-webkit-scrollbar-thumb:hover {
-            background: rgba(255, 170, 0, 0.6); /* При наведении становится оранжевым */
-        }
+
         .f-group { display: flex; flex-direction: column; gap: 8px; }
         .f-group-row { display: flex; gap: 16px; }
         .f-group-row .f-group { flex: 1; }
@@ -622,14 +620,35 @@
         @media (max-width: 768px) {
             #gallery-filter-panel { 
                 right: 20px; left: 20px; width: auto; 
-                top: 100%; 
+                top: 100%; /* Автоматически открывается сразу под всей высотой шапки */
                 padding: 20px; 
-                /* На мобилках делаем высоту чуть меньше, чтобы было видно, что это всплывающее окно */
-                max-height: 65vh; 
             }
         }
 
-
+        details.sub-details {
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            margin: 4px -4px 12px -4px;
+            border-radius: 8px;
+        }
+        details.sub-details > summary {
+            font-size: 12px;
+            color: #aaddff;
+            padding: 10px 16px;
+            background: rgba(255, 255, 255, 0.02);
+        }
+        details.sub-details[open] > summary {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .sub-header {
+            font-size: 10px;
+            color: #ffaa00;
+            text-transform: uppercase;
+            margin: 16px 0 10px 0;
+            font-weight: bold;
+            letter-spacing: 1px;
+            opacity: 0.8;
+        }
 
 
         /* КОНЕЦ БЛОКА ГАЛЕРЕИ */
@@ -649,6 +668,16 @@
         #gallery-btn:hover { background: rgba(255, 170, 0, 0.2); transform: translateX(-50%) translateY(-5px); }
         #gallery-btn svg { width: 20px; height: 20px; stroke: var(--text-main); fill: none; }
 
+        #screenshot-btn {
+            position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%);
+            width: 50px; height: 40px; border-radius: 4px;
+            background: var(--glass-bg); backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            transition: all 0.3s; z-index: 90;
+        }
+        #screenshot-btn:hover { background: rgba(0, 200, 255, 0.2); transform: translateX(-50%) translateY(-5px); }
+        #screenshot-btn svg { width: 22px; height: 22px; stroke: var(--text-main); fill: none; }
         
         /* Сдвиг текста, если он привязан к перекрестию (желтому), чуть в сторону как на скетче */
         .crosshair-yellow ~ #target-label, 
@@ -697,6 +726,9 @@
         .search-item:hover { background: rgba(255,255,255,0.1); }
         .search-text { flex-grow: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-right: 10px; }
         .search-checkbox { cursor: pointer; transform: scale(1.2); accent-color: #ffaa00; }
+
+
+
     </style>
 
     <script type="importmap">
@@ -765,6 +797,18 @@
     <!-- ВЫЕЗЖАЮЩАЯ ПАНЕЛЬ С КНОПКАМИ -->
     <div id="side-controls">
 
+        <div id="ground-mode-btn" class="side-btn" title="Режим Земли">
+            <svg viewBox="0 0 24 24"><path d="M2 20h20M5 16l4-8 4 4 6-10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+
+        <!-- ИСПРАВЛЕНО: Кнопка приведена к единому стилю .side-btn без конфликтующих абсолютных координат -->
+        <div id="video-btn" class="side-btn" title="Захватить видео">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="23 7 16 12 23 17 23 7"></polygon>
+                <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+            </svg>
+        </div>
+
         <div id="solar-btn" class="side-btn" title="Создать/Редактировать системы">
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="currentColor"/><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 18a8 8 0 110-16 8 8 0 010 16z" fill="currentColor" opacity="0.5"/></svg>
         </div>
@@ -785,15 +829,45 @@
     <!-- Панель -->
     <div id="settings-panel">
         <div class="panel-header">Настройки</div>
-        <div class="control-group" style="background: rgba(255, 170, 0, 0.1); padding: 10px; border-radius: 8px; border: 1px solid rgba(255, 170, 0, 0.3); margin-bottom: 16px;">
-            <div class="label-row" style="margin-bottom: 4px;">
-                <label style="color: #ffaa00; font-weight: bold;">Высокое качество бумаги</label>
-                <input type="checkbox" id="physics-toggle" checked>
+        
+        <!-- НАЧАЛО БЛОКА: ПРЕСЕТЫ -->
+        <div class="control-group" style="padding: 0 16px; margin-bottom: 16px; margin-top: 10px;">
+            <div class="label-row" style="margin-bottom: 8px;">
+                <label style="color: #aaddff; font-weight: bold; font-size: 13px;">Пресеты (Только рельеф)</label>
             </div>
-            <div style="font-size: 10px; color: #aaa; line-height: 1.2;">
-                Отключите для повышения производительности (+FPS). <br>Включает сложную симуляцию ветра.
+            <select id="preset-no-flora" class="f-select" style="margin-bottom: 16px; width: 100%; border-color: rgba(170, 221, 255, 0.3); font-weight: bold;">
+                <option value="">-- Выберите пресет --</option>
+            </select>
+
+            <div class="label-row" style="margin-bottom: 8px;">
+                <label style="color: #44ff44; font-weight: bold; font-size: 13px;">Пресеты (С флорой)</label>
             </div>
+            <select id="preset-flora" class="f-select" style="width: 100%; border-color: rgba(68, 255, 68, 0.3); font-weight: bold;">
+                <option value="">-- Выберите пресет --</option>
+            </select>
         </div>
+        <div class="control-group" style="background: rgba(0, 170, 255, 0.1); padding: 12px; margin: 0 16px 16px 16px; border-radius: 8px; border: 1px solid rgba(0, 170, 255, 0.3);">
+            <div class="label-row" style="margin-bottom: 12px;">
+                <label style="color: #00aaff; font-weight: bold; font-size: 13px; letter-spacing: 1px;">ГЕНЕРАТОР ПЛАНЕТ</label>
+            </div>
+            
+            <select id="random-level" class="f-select" style="margin-bottom: 12px; border-color: rgba(0, 170, 255, 0.5); font-weight: bold;">
+                <option value="1">Ур.1: Лёгкая случайность (Землеподобные)</option>
+                <option value="2">Ур.2: Умеренная случайность (Экзотика)</option>
+                <option value="3">Ур.3: Высокая случайность (Магия/Сюр)</option>
+                <option value="4">Ур.4: ПОЛНЫЙ ХАОС</option>
+            </select>
+
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                <span style="font-size: 11px; color: #ff6666; font-weight: bold;">Убрать тяжелые варианты (-FPS)</span>
+                <input type="checkbox" id="random-limit-heavy" checked style="width: auto; transform: scale(1.2); accent-color: #ff6666;">
+            </div>
+
+            <button id="btn-random-planet" class="f-btn" style="width: 100%; background: #00aaff; color: #000; font-size: 14px;">🎲 СОЗДАТЬ</button>
+        </div>
+
+        <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 0 16px 16px 16px;"></div>
+
         <details>
             <summary>Сеть / Стабильность</summary>
             <div class="group-content">
@@ -811,7 +885,7 @@
         </details>
         <!-- ЦВЕТА -->
         <details open>
-            <summary>Цвета</summary>
+            <summary>Цвета неба</summary>
             <div class="group-content">
                 <div class="control-group">
                     <div class="label-row"><label>Горизонт</label></div>
@@ -827,7 +901,1288 @@
                 </div>
             </div>
         </details>
+        <details>
+            <summary>Ландшафт (Ground Mode)</summary>
+            <div class="group-content">
+                
+                <!-- Основные формы -->
+                <div class="control-group">
+                    <div class="label-row"><label>Высота гор (Амплитуда)</label></div>
+                    <input type="range" id="terr-amp" min="10" max="500" step="5" value="60">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Масштаб (Частота)</label></div>
+                    <input type="range" id="terr-freq" min="0.0001" max="0.005" step="0.0001" value="0.001">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Дальность прорисовки</label></div>
+                    <input type="range" id="terr-dist" min="1000" max="6000" step="100" value="3000">
+                </div>
 
+                <!-- Цвета ландшафта -->
+                <details class="sub-details">
+                    <summary>Цветовая палитра</summary>
+                    <div class="group-content" style="padding-top: 12px;">
+
+                        <div class="control-group">
+                            <div class="label-row"><label>Прозрачность кромки берега</label></div>
+                            <input type="range" id="shore-opacity" min="0.0" max="1.0" step="0.05" value="0.5">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Цвет кромки берега</label></div>
+                            <input type="text" id="col-shore" value="#aaddff">
+                        </div>
+
+                        <details class="sub-details">
+                            <summary style="color: #ffffff;">Волны и Пена (Берега)</summary>
+                            <div class="group-content" style="padding-top: 12px;">
+                                <div class="control-group">
+                                    <div class="label-row"><label>Видимость пены (0 - выкл)</label></div>
+                                    <input type="range" id="foam-opacity" min="0.0" max="1.0" step="0.05" value="0.0">
+                                </div>
+                                <div class="control-group">
+                                    <div class="label-row"><label>Цвет пены</label></div>
+                                    <input type="text" id="col-foam" value="#ffffff">
+                                </div>
+
+                                <div class="control-group">
+                                    <div class="label-row"><label>Ширина пенной зоны</label></div>
+                                    <input type="range" id="foam-width" min="2.0" max="30.0" step="1.0" value="10.0">
+                                </div>
+                                <div class="control-group">
+                                    <div class="label-row"><label>Количество линий (волн)</label></div>
+                                    <input type="range" id="foam-count" min="1" max="4" step="1" value="2">
+                                </div>
+                                <div class="control-group">
+                                    <div class="label-row"><label>Расстояние между волнами</label></div>
+                                    <input type="range" id="foam-spacing" min="1.0" max="25.0" step="0.5" value="5.0">
+                                </div>
+                                <div class="control-group">
+                                    <div class="label-row"><label>Неровность (Шум/Разрывы)</label></div>
+                                    <input type="range" id="foam-noise" min="0.0" max="1.0" step="0.05" value="0.5">
+                                </div>
+
+                                <div class="sub-header" style="margin-top: 12px;">Пена на камнях</div>
+                                <div class="control-group">
+                                    <div class="label-row"><label>Прозрачность пены на камнях</label></div>
+                                    <input type="range" id="rock-foam-opacity" min="0.0" max="1.0" step="0.05" value="0.0">
+                                </div>
+                                <div class="control-group">
+                                    <div class="label-row"><label>Высота пены на камнях</label></div>
+                                    <input type="range" id="rock-foam-height" min="2.0" max="30.0" step="0.5" value="10.0">
+                                </div>
+
+
+                            </div>
+                        </details>
+
+                        <div class="control-group">
+                            <div class="label-row"><label>Вода (Мелководье)</label></div>
+                            <input type="text" id="col-water" value="#040810">
+                        </div>
+                        <!-- НОВЫЙ БЛОК -->
+                        <div class="control-group">
+                            <div class="label-row"><label>Вода (Глубина / Бездна)</label></div>
+                            <input type="text" id="col-water-deep" value="#010205">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Скорость нарастания глубины</label></div>
+                            <input type="range" id="water-depth-factor" min="0.001" max="0.1" step="0.001" value="0.015">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Почва / Берега</label></div>
+                            <input type="text" id="col-grass" value="#0a1118">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Скалы / Холмы</label></div>
+                            <input type="text" id="col-peak" value="#1a2c3a">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Снег (Высочайшие пики)</label></div>
+                            <input type="text" id="col-snow" value="#ffffff">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Туман земли</label></div>
+                            <input type="text" id="col-terr-fog" value="#050810">
+                        </div>
+                    </div>
+                </details>
+                <details>
+                    <summary style="color: #00ccff;">Отражения на воде</summary>
+                    <div class="group-content">
+                        <div class="control-group">
+                            <div class="label-row"><label>Включить отражения</label></div>
+                            <div style="display: flex; align-items: center; justify-content: space-between;">
+                                <span style="font-size: 11px; color: #888;">Снижает FPS</span>
+                                <input type="checkbox" id="reflect-toggle" style="width: auto; height: auto;">
+                            </div>
+                        </div>
+                        
+                        <!-- НОВЫЕ ГАЛОЧКИ -->
+                        <div class="control-group">
+                            <div class="label-row"><label>Отражать камни</label></div>
+                            <div style="display: flex; align-items: center; justify-content: space-between;">
+                                <span style="font-size: 11px; color: #ff6666;">- FPS</span>
+                                <input type="checkbox" id="reflect-rocks-toggle" style="width: auto; height: auto;">
+                            </div>
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Отражать облака</label></div>
+                            <div style="display: flex; align-items: center; justify-content: space-between;">
+                                <span style="font-size: 11px; color: #ff6666;">- FPS</span>
+                                <input type="checkbox" id="reflect-clouds-toggle" style="width: auto; height: auto;">
+                            </div>
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Качество (Разрешение)</label></div>
+                            <select id="reflect-res" class="f-select" style="margin-bottom: 10px;">
+                                <option value="256">Низкое (256x256) - Быстро</option>
+                                <option value="512" selected>Среднее (512x512)</option>
+                                <option value="1024">Высокое (1024x1024) - Тяжело</option>
+                            </select>
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Интенсивность</label></div>
+                            <input type="range" id="reflect-intensity" min="0.1" max="1.0" step="0.05" value="0.6">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Рябь на воде (Искажение)</label></div>
+                            <input type="range" id="reflect-distortion" min="0.0" max="0.1" step="0.005" value="0.03">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Растяжение ряби по гориз.</label></div>
+                            <input type="range" id="reflect-stretch" min="0.5" max="10.0" step="0.5" value="2.0">
+                        </div>
+
+
+                        
+                        <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 12px 0;"></div>
+                        <div class="sub-header" style="margin-top: 0;">Визуальные эффекты</div>
+                        
+                        <div class="control-group">
+                            <div class="label-row"><label>Затемнение берегов</label></div>
+                            <input type="range" id="reflect-edge-dark" min="0.0" max="1.0" step="0.05" value="0.4">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Общее размытие</label></div>
+                            <input type="range" id="reflect-blur" min="0.0" max="1.0" step="0.05" value="0.0">
+                        </div>
+                        
+                        <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 12px 0;"></div>
+                        <div class="sub-header" style="margin-top: 0;">Дальний фон (LOD отражений)</div>
+                        
+                        <div class="control-group">
+                            <div class="label-row"><label>Старт дальнего размытия</label></div>
+                            <input type="range" id="reflect-dist-start" min="50" max="3000" step="10" value="800">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Сила дальнего размытия</label></div>
+                            <input type="range" id="reflect-dist-blur" min="0.0" max="0.5" step="0.05" value="0.015">
+                        </div>
+                    </div>
+                </details>
+
+                <details class="sub-details">
+                    <summary>Туман</summary>
+                    <div class="group-content" style="padding-top: 12px;">
+                        <div class="control-group">
+                            <div class="label-row"><label>Плотность тумана</label></div>
+                            <input type="range" id="terr-fog-dens" min="0.0005" max="0.005" step="0.0001" value="0.0025">
+                        </div>
+
+                        <div class="control-group">
+                            <div class="label-row"><label>Плотность тумана (На траве)</label></div>
+                            <input type="range" id="grass-fog-mult" min="0.1" max="5.0" step="0.1" value="1.2">
+                        </div>
+                        <details class="sub-details">
+                            <summary style="color: #aaddff;">Стелящийся туман (Над водой)</summary>
+                            <div class="group-content" style="padding-top: 12px;">
+                                <div class="control-group">
+                                    <div class="label-row"><label>Включить туман</label></div>
+                                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                                        <span style="font-size: 11px; color: #888;">В низинах</span>
+                                        <input type="checkbox" id="c-fog-toggle" checked style="width: auto; height: auto;">
+                                    </div>
+                                </div>
+                                <div class="control-group">
+                                    <div class="label-row"><label>Цвет тумана</label></div>
+                                    <input type="text" id="col-cfog" value="#0a1b2a">
+                                </div>
+                                <div class="control-group">
+                                    <div class="label-row"><label>Высота над водой</label></div>
+                                    <input type="range" id="c-fog-height" min="-20" max="100" step="1" value="5">
+                                </div>
+                                <div class="control-group">
+                                    <div class="label-row"><label>Толщина слоя</label></div>
+                                    <input type="range" id="c-fog-thick" min="5" max="150" step="5" value="30">
+                                </div>
+                                <div class="control-group">
+                                    <div class="label-row"><label>Плотность (0.1 - Мягкий, 2.0 - Вата)</label></div>
+                                    <input type="range" id="c-fog-dens" min="0.1" max="2.5" step="0.1" value="0.8">
+                                </div>
+                                <div class="control-group">
+                                    <div class="label-row"><label>Форма (0 - Плоско, 1 - Рваные края)</label></div>
+                                    <input type="range" id="c-fog-shape" min="0.0" max="1.0" step="0.05" value="0.7">
+                                </div>
+                            </div>
+                        </details>                        
+                    </div>
+                </details>
+
+
+
+                <!-- Дополнительные настройки -->
+                <details class="sub-details">
+                    <summary>Дополнительные настройки</summary>
+                    <div class="group-content" style="padding-top: 12px;">
+                        <div class="control-group">
+                            <div class="label-row"><label>Глубина впадин (Срез)</label></div>
+                            <input type="range" id="terr-offset" min="0" max="150" step="5" value="30">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Заострение пиков</label></div>
+                            <input type="range" id="terr-sharp" min="0.5" max="3.0" step="0.1" value="1.0">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Сглаживание берегов</label></div>
+                            <input type="range" id="terr-smooth" min="0.01" max="1.6" step="0.05" value="0.5">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Затенение рельефа (AO)</label></div>
+                            <input type="range" id="terr-ao" min="0" max="1" step="0.05" value="0.6">
+                        </div>
+
+                        <div class="sub-header" style="margin-top: 12px;">Слоистость скал (Strata)</div>
+                        <div class="control-group" style="display: flex; justify-content: space-between; align-items: center;">
+                            <label style="font-size: 12px; color: #aaddff; font-weight: bold;">Включить каньоны</label>
+                            <input type="checkbox" id="terr-strata-toggle" style="width: auto;">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Частота слоев (Толщина)</label></div>
+                            <input type="range" id="terr-strata-freq" min="0.05" max="2.0" step="0.05" value="0.5">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Контрастность слоев</label></div>
+                            <input type="range" id="terr-strata-str" min="0.0" max="1.0" step="0.05" value="0.3">
+                        </div>
+                    </div>
+                </details>
+                <!-- Дополнительные настройки -->
+
+
+
+            </div>
+        </details>
+
+        <!-- Вставить после блока "Туман" или перед блоком "Трава" -->
+        <details>
+            <summary>Облака и тени</summary>
+            <div class="group-content">
+                <div class="control-group" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <label style="font-size: 13px; font-weight: bold; color: #fff;">Включить облака</label>
+                    <input type="checkbox" id="clouds-toggle" checked style="width: 20px; height: 20px; accent-color: #aaddff;">
+                </div>
+                <div class="sub-header" style="margin-top: 0;">Внешний вид</div>
+                <div class="control-group"><div class="label-row"><label>Цвет в зените</label></div><input type="text" id="col-cloud-zenith" value="#ffffff"></div>
+                <div class="control-group"><div class="label-row"><label>Цвет у горизонта</label></div><input type="text" id="col-cloud-horizon" value="#ffeebb"></div>
+                <div class="control-group"><div class="label-row"><label>Прозрачность</label></div><input type="range" id="clouds-opacity" min="0.0" max="1.0" step="0.05" value="0.8"></div>
+                <div class="sub-header">Форма</div>
+                <div class="control-group"><div class="label-row"><label>Плотность (Количество)</label></div><input type="range" id="clouds-coverage" min="0.0" max="1.0" step="0.05" value="0.45"></div>
+                <div class="control-group"><div class="label-row"><label>Мягкость краев</label></div><input type="range" id="clouds-softness" min="0.05" max="1.0" step="0.05" value="0.6"></div>
+                <div class="control-group"><div class="label-row"><label>Масштаб (Размер)</label></div><input type="range" id="clouds-scale" min="0.0001" max="0.005" step="0.0001" value="0.0005"></div>
+                <div class="control-group"><div class="label-row"><label>Растяжение по ветру</label></div><input type="range" id="clouds-stretch" min="1.0" max="10.0" step="0.5" value="3.0"></div>
+                <div class="control-group"><div class="label-row"><label>Скорость движения</label></div><input type="range" id="clouds-speed" min="0.0" max="10.0" step="0.5" value="2.0"></div>
+
+                <details class="sub-details">
+                    <summary style="color: #44ff44;">Тени от облаков (Земля)</summary>
+                    <div class="group-content" style="padding-top: 12px;">
+                        <div class="control-group">
+                            <div class="label-row"><label>Включить тени</label></div>
+                            <input type="checkbox" id="shadows-toggle" checked style="width: auto;">
+                        </div>
+                        <div class="sub-header" style="margin-top: 0;">Внешний вид</div>
+                        <div class="control-group"><div class="label-row"><label>Цвет теней</label></div><input type="text" id="col-shadow" value="#050a10"></div>
+                        <div class="control-group"><div class="label-row"><label>Интенсивность</label></div><input type="range" id="shadow-opacity" min="0.0" max="1.0" step="0.05" value="0.65"></div>
+                        <div class="sub-header">Форма теней</div>
+                        <div class="control-group"><div class="label-row"><label>Площадь покрытия</label></div><input type="range" id="shadow-coverage" min="0.0" max="1.0" step="0.05" value="0.45"></div>
+                        <div class="control-group"><div class="label-row"><label>Размытие краев</label></div><input type="range" id="shadow-softness" min="0.05" max="1.0" step="0.05" value="0.6"></div>
+                        <div class="control-group"><div class="label-row"><label>Масштаб пятен</label></div><input type="range" id="shadow-scale" min="0.0001" max="0.005" step="0.0001" value="0.0005"></div>
+                        <div class="control-group"><div class="label-row"><label>Растяжение по ветру</label></div><input type="range" id="shadow-stretch" min="1.0" max="10.0" step="0.5" value="3.0"></div>
+                        <div class="control-group"><div class="label-row"><label>Скорость движения</label></div><input type="range" id="shadow-speed" min="0.0" max="10.0" step="0.5" value="2.0"></div>
+                    </div>
+                </details>
+
+
+            </div>
+        </details>
+
+
+
+
+
+        <details>
+            <summary>Трава (Флора)</summary>
+            <div class="group-content">
+                <!-- НОВЫЙ БЛОК: ОБЩИЕ НАСТРОЙКИ КАЧЕСТВА -->
+                <div class="control-group" style="background: rgba(255, 68, 68, 0.1); padding: 12px; border-radius: 8px; border: 1px solid rgba(255, 68, 68, 0.3); margin-bottom: 20px;">
+                    <div style="font-size: 12px; color: #ff6666; font-weight: bold; margin-bottom: 8px;">ОБЩЕЕ КАЧЕСТВО / FPS</div>
+                    <select id="grass-quality-preset" class="f-select" style="border-color: rgba(255, 68, 68, 0.5);">
+                        <option value="ultra" selected>Ультра (По умолчанию)</option>
+                        <option value="high">Высокое (Сбалансировано)</option>
+                        <option value="medium">Среднее (Больше FPS)</option>
+                        <option value="low">Низкое (Сниженное разрешение)</option>
+                        <option value="potato">Минимальное (Максимум FPS)</option>
+                    </select>
+                    <div style="font-size: 10px; color: #aaa; margin-top: 6px; line-height: 1.3;">
+                        Снижает плотность травы, дальность и <b>разрешение рендера</b>. Используйте, если сцена сильно тормозит.
+                    </div>
+                </div>
+                <div class="control-group" style="margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 16px;">
+                    <div class="label-row">
+                        <label>Разрешение рендера (Масштаб)</label>
+                    </div>
+                    <input type="range" id="render-resolution" min="0.1" max="2.0" step="0.1" value="1.0">
+                    <div style="font-size: 10px; color: #aaa; margin-top: 8px; line-height: 1.3;">
+                        Влияет на четкость <b>всей картинки</b>. Снижайте (0.5 - 0.8) для сильного буста FPS на слабых устройствах. 1.0 — стандарт, 2.0 — Retina (очень тяжело).
+                    </div>
+                </div>
+                <!-- КОНЕЦ НОВОГО БЛОКА -->                
+                <!-- Главные переключатели -->
+                <div class="control-group" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <label style="font-size: 13px; font-weight: bold; color: #fff;">Отображать траву</label>
+                    <input type="checkbox" id="grass-toggle" checked style="width: 20px; height: 20px; accent-color: #44ff44;">
+                </div>
+                
+                <div class="control-group">
+                    <div class="label-row"><label>Плотность (Количество)</label></div>
+                    <input type="range" id="grass-count" min="10000" max="600000" step="10000" value="300000">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Дальность отрисовки (Главная)</label></div>
+                    <input type="range" id="grass-distance" min="300" max="2000" step="50" value="1200">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Высота травы (Размер)</label></div>
+                    <input type="range" id="grass-height" min="1.0" max="40.0" step="0.5" value="4.0">
+                </div>
+
+                <!-- Внешний вид и Смешивание -->
+                <details class="sub-details">
+                    <summary>Внешний вид и Виды растений</summary>
+                    <div class="group-content" style="padding-top: 12px;">
+                        
+                    <div class="sub-header" style="margin-top: 0;">Основная форма</div>
+                    <div class="control-group">
+                        <select id="grass-shape-1" class="f-select" style="margin-bottom: 8px;">
+                            <option value="0">Остроконечная</option>
+                            <option value="1" selected>Треугольник</option>
+                            <option value="2">Параллелепипед</option>
+                            <option value="3">Колосок (Высокий)</option>
+                            <option value="4">Одуванчик</option>
+                            <option value="5">Цветы</option>
+                            <option value="6">Узорчатая трава</option>
+                            <option value="7">Куст (Объемный)</option>
+                            <option value="8">Дерево (Массивное)</option>
+                            <option value="9">Ёлка (Ярусы)</option>
+                        </select>
+                        <!-- УНИКАЛЬНЫЕ НАСТРОЙКИ ФОРМЫ 1 -->
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
+                            <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#aaa;">Размер (Высота)</label></div><input type="range" id="s1-size" min="0.1" max="5.0" step="0.1" value="1.0"></div>
+                            <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#66ff66;">Ослабить ветер</label></div><input type="range" id="s1-winddamp" min="0.0" max="1.0" step="0.05" value="0.0"></div>
+                            <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#aaa;">Сплющить (Шир.)</label></div><input type="range" id="s1-width" min="0.1" max="5.0" step="0.1" value="1.0"></div>
+                            <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#aaa;">Вар-ть размера</label></div><input type="range" id="s1-sizevar" min="0.0" max="1.0" step="0.05" value="0.4"></div>
+                            <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#aaa;">Вар-ть цвета</label></div><input type="range" id="s1-colvar" min="0.0" max="1.0" step="0.05" value="0.3"></div>
+                        </div>
+                    </div>
+                    <div class="control-group"><div class="label-row"><label>Цвет у основания</label></div><input type="text" id="col-grass-base" value="#0a1f0a"></div>
+                    <div class="control-group"><div class="label-row"><label>Цвет у кончика</label></div><input type="text" id="col-grass-tip" value="#388e3c"></div>
+                    <div class="control-group"><div class="label-row"><label>Плавность градиента</label></div><input type="range" id="grass-smooth" min="0.1" max="3.0" step="0.1" value="1.0"></div>
+
+                    <div class="sub-header">Мульти-трава (Смешивание)</div>
+                    <div class="control-group">
+                        <select id="grass-mix-mode" class="f-select">
+                            <option value="0" selected>Только основная форма</option>
+                            <option value="1">Смешать две формы</option>
+                            <option value="2">Смешать три формы</option>
+                            <option value="3">Смешать четыре формы</option>
+                        </select>
+                    </div>
+
+                    <div id="grass-mix-extras" style="display: none;">
+
+                        
+                        <!-- ФОРМА 2 -->
+                        <!-- ФОРМА 2 -->
+                        <div id="grass-mix-colors-1" style="display: none; padding: 10px; background: rgba(255,255,255,0.03); border-radius: 8px; margin-top: 12px;">
+                            <div style="font-size: 11px; color: #aaddff; margin-bottom: 8px; font-weight: bold;">Форма 2</div>
+                            <select id="grass-shape-2" class="f-select" style="margin-bottom: 8px;"><option value="0">Остроконечная</option><option value="1" selected>Треугольник</option><option value="2">Параллелепипед</option><option value="3">Колосок (Высокий)</option><option value="4">Одуванчик</option><option value="5">Цветы</option><option value="6">Узорчатая трава</option><option value="7">Куст (Объемный)</option><option value="8">Дерево (Массивное)</option><option value="9">Ёлка (Ярусы)</option></select>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#aaa;">Размер</label></div><input type="range" id="s2-size" min="0.1" max="5.0" step="0.1" value="1.0"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#aaa;">Ширина</label></div><input type="range" id="s2-width" min="0.1" max="5.0" step="0.1" value="1.0"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#66ff66;">Ослабить ветер 2</label></div><input type="range" id="s2-winddamp" min="0.0" max="1.0" step="0.05" value="0.0"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#aaa;">Вар. Размера</label></div><input type="range" id="s2-sizevar" min="0.0" max="1.0" step="0.05" value="0.4"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#aaa;">Вар. Цвета</label></div><input type="range" id="s2-colvar" min="0.0" max="1.0" step="0.05" value="0.3"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#ffaa00;">% в сцене</label></div><input type="range" id="s2-chance" min="0.0" max="1.0" step="0.01" value="0.3"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#ffaa00;">Островки</label></div><input type="range" id="s2-struct" min="0.0" max="1.0" step="0.01" value="0.5"></div>
+                                <div class="control-group" style="margin-bottom:0; grid-column: span 2;"><div class="label-row"><label style="font-size:9px; color:#ff6666;">Проредить</label></div><input type="range" id="s2-thin" min="0.0" max="0.95" step="0.05" value="0.0"></div>
+                            </div>
+                            <div class="control-group"><div class="label-row"><label>База 2</label></div><input type="text" id="col-grass-base-2" value="#3f3a0a"></div>
+                            <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label>Кончик 2</label></div><input type="text" id="col-grass-tip-2" value="#8e893c"></div>
+                        </div>
+
+                        <!-- ФОРМА 3 -->
+                        <div id="grass-mix-colors-2" style="display: none; padding: 10px; background: rgba(255,255,255,0.03); border-radius: 8px; margin-top: 12px;">
+                            <div style="font-size: 11px; color: #aaddff; margin-bottom: 8px; font-weight: bold;">Форма 3</div>
+                            <select id="grass-shape-3" class="f-select" style="margin-bottom: 8px;"><option value="0">Остроконечная</option><option value="1" selected>Треугольник</option><option value="2">Параллелепипед</option><option value="3">Колосок (Высокий)</option><option value="4">Одуванчик</option><option value="5">Цветы</option><option value="6">Узорчатая трава</option><option value="7">Куст (Объемный)</option><option value="8">Дерево (Массивное)</option><option value="9">Ёлка (Ярусы)</option></select>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#aaa;">Размер</label></div><input type="range" id="s3-size" min="0.1" max="5.0" step="0.1" value="1.0"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#aaa;">Ширина</label></div><input type="range" id="s3-width" min="0.1" max="5.0" step="0.1" value="1.0"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#66ff66;">Ослабить ветер 3</label></div><input type="range" id="s3-winddamp" min="0.0" max="1.0" step="0.05" value="0.0"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#aaa;">Вар. Размера</label></div><input type="range" id="s3-sizevar" min="0.0" max="1.0" step="0.05" value="0.4"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#aaa;">Вар. Цвета</label></div><input type="range" id="s3-colvar" min="0.0" max="1.0" step="0.05" value="0.3"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#ffaa00;">% в сцене</label></div><input type="range" id="s3-chance" min="0.0" max="1.0" step="0.01" value="0.3"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#ffaa00;">Островки</label></div><input type="range" id="s3-struct" min="0.0" max="1.0" step="0.01" value="0.5"></div>
+                                <div class="control-group" style="margin-bottom:0; grid-column: span 2;"><div class="label-row"><label style="font-size:9px; color:#ff6666;">Проредить</label></div><input type="range" id="s3-thin" min="0.0" max="0.95" step="0.05" value="0.0"></div>
+                            </div>
+                            <div class="control-group"><div class="label-row"><label>База 3</label></div><input type="text" id="col-grass-base-3" value="#0a1f3f"></div>
+                            <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label>Кончик 3</label></div><input type="text" id="col-grass-tip-3" value="#3c6b8e"></div>
+                        </div>
+
+                        <!-- ФОРМА 4 -->
+                        <div id="grass-mix-colors-3" style="display: none; padding: 10px; background: rgba(255,255,255,0.03); border-radius: 8px; margin-top: 12px;">
+                            <div style="font-size: 11px; color: #aaddff; margin-bottom: 8px; font-weight: bold;">Форма 4</div>
+                            <select id="grass-shape-4" class="f-select" style="margin-bottom: 8px;"><option value="0">Остроконечная</option><option value="1" selected>Треугольник</option><option value="2">Параллелепипед</option><option value="3">Колосок (Высокий)</option><option value="4">Одуванчик</option><option value="5">Цветы</option><option value="6">Узорчатая трава</option><option value="7">Куст (Объемный)</option><option value="8">Дерево (Массивное)</option><option value="9">Ёлка (Ярусы)</option></select>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#aaa;">Размер</label></div><input type="range" id="s4-size" min="0.1" max="5.0" step="0.1" value="1.0"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#aaa;">Ширина</label></div><input type="range" id="s4-width" min="0.1" max="5.0" step="0.1" value="1.0"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#66ff66;">Ослабить ветер 4</label></div><input type="range" id="s4-winddamp" min="0.0" max="1.0" step="0.05" value="0.0"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#aaa;">Вар. Размера</label></div><input type="range" id="s4-sizevar" min="0.0" max="1.0" step="0.05" value="0.4"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#aaa;">Вар. Цвета</label></div><input type="range" id="s4-colvar" min="0.0" max="1.0" step="0.05" value="0.3"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#ffaa00;">% в сцене</label></div><input type="range" id="s4-chance" min="0.0" max="1.0" step="0.01" value="0.3"></div>
+                                <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label style="font-size:9px; color:#ffaa00;">Островки</label></div><input type="range" id="s4-struct" min="0.0" max="1.0" step="0.01" value="0.5"></div>
+                                <div class="control-group" style="margin-bottom:0; grid-column: span 2;"><div class="label-row"><label style="font-size:9px; color:#ff6666;">Проредить</label></div><input type="range" id="s4-thin" min="0.0" max="0.95" step="0.05" value="0.0"></div>
+                            </div>
+                            <div class="control-group"><div class="label-row"><label>База 4</label></div><input type="text" id="col-grass-base-4" value="#1f3f0a"></div>
+                            <div class="control-group" style="margin-bottom:0;"><div class="label-row"><label>Кончик 4</label></div><input type="text" id="col-grass-tip-4" value="#ffffff"></div>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Физика ветра -->
+                <details class="sub-details">
+                    <summary>Анимация ветра и физика</summary>
+                    <div class="group-content" style="padding-top: 12px;">
+                        
+                        <div class="sub-header" style="margin-top: 0;">Базовый ветер</div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Скорость ветра</label></div>
+                            <input type="range" id="grass-wind-speed" min="0.0" max="10.0" step="0.1" value="1.5">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Плавное колыхание (Амплитуда)</label></div>
+                            <input type="range" id="grass-sway" min="0.0" max="1.0" step="0.05" value="0.15">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Статичный изгиб</label></div>
+                            <input type="range" id="grass-bend" min="0.0" max="2.0" step="0.05" value="0.4">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Направление ветра (Угол)</label></div>
+                            <input type="range" id="grass-bend-angle" min="0.0" max="6.28" step="0.1" value="3.14">
+                        </div>
+
+                        <div class="sub-header">Колебания отдельных травинок</div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Сила волн (Высота)</label></div>
+                            <input type="range" id="grass-turb" min="0.0" max="1.5" step="0.05" value="0.2">
+                        </div>
+                        <div id="turb-extras" style="display: none; padding-left: 10px; border-left: 2px solid rgba(255,170,0,0.3);">
+                            <div class="control-group" style="margin-bottom: 8px;">
+                                <div class="label-row"><label>Растяжение волн (Длина)</label></div>
+                                <input type="range" id="grass-turb-amp" min="0.1" max="5.0" step="0.1" value="1.0">
+                            </div>
+                            <div class="control-group" style="margin-bottom: 12px;">
+                                <div class="label-row"><label>Скорость деформации</label></div>
+                                <input type="range" id="grass-turb-speed" min="0.1" max="10.0" step="0.1" value="2.0">
+                            </div>
+                        </div>
+
+                        <div class="sub-header">Порывы ветра</div>
+
+                        <div class="control-group">
+                            <div class="label-row"><label>Скорость бегущей волны (порыва)</label></div>
+                            <input type="range" id="grass-gust-speed" min="0.0" max="15.0" step="0.1" value="2.5">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Сила прижатия к земле</label></div>
+                            <input type="range" id="grass-gust-str" min="0.0" max="3.0" step="0.1" value="0.8">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Плавность входа/выхода</label></div>
+                            <input type="range" id="grass-gust-smooth" min="0.0" max="1.0" step="0.05" value="0.4">
+                        </div>
+
+                        <div class="control-group">
+                            <div class="label-row"><label>Частота порывов</label></div>
+                            <input type="range" id="grass-gust-freq" min="0.0" max="1.0" step="0.05" value="0.4">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Длительность прижатия (Размер порыва)</label></div>
+                            <input type="range" id="grass-gust-size" min="10" max="300" step="5" value="80">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Форма порывов (0=Пятна, 1=Дуги)</label></div>
+                            <input type="range" id="grass-gust-arc" min="0.0" max="1.0" step="0.05" value="0.3">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Хаотичность </label></div>
+                            <input type="range" id="grass-wind-chaos" min="0.0" max="2.0" step="0.05" value="0.5">
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Зоны роста и Вариативность -->
+                <details class="sub-details">
+                    <summary>Зоны роста и Природный хаос</summary>
+                    <div class="group-content" style="padding-top: 12px;">
+                        
+                        <div class="sub-header" style="margin-top: 0;">Где растет трава</div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Пятнистость (Размер полян)</label></div>
+                            <input type="range" id="grass-cluster-thresh" min="0.0" max="0.8" step="0.05" value="0.4">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Мин. высота (Отступ от воды)</label></div>
+                            <input type="range" id="grass-min-h" min="-10" max="20" step="1" value="2">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Макс. высота (Снежные горы)</label></div>
+                            <input type="range" id="grass-max-h" min="10" max="100" step="1" value="40">
+                        </div>
+
+                        <div class="sub-header">Вариативность(общая)</div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Разнообразие цвета</label></div>
+                            <input type="range" id="grass-color-var" min="0.0" max="1.0" step="0.05" value="0.3">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Разнообразие размера</label></div>
+                            <input type="range" id="grass-size-var" min="0.0" max="1.0" step="0.05" value="0.4">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Разнообразие толщины/формы</label></div>
+                            <input type="range" id="grass-shape-var" min="0.0" max="1.0" step="0.05" value="0.5">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Хаотичность изгиба</label></div>
+                            <input type="range" id="grass-bend-chaos" min="0.0" max="1.0" step="0.05" value="0.2">
+                        </div>
+                    </div>
+                </details>
+                <!-- Взаимодействие с мышью -->
+                <details class="sub-details">
+                    <summary>Взаимодействие курсором</summary>
+                    <div class="group-content" style="padding-top: 12px;">
+                        <div class="control-group" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                            <label style="font-size: 12px; color: #ffaa00; font-weight: bold;">Магнитная сфера (расталкивание)</label>
+                            <input type="checkbox" id="grass-mouse-toggle" style="width: auto;">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Радиус взаимодействия</label></div>
+                            <input type="range" id="grass-mouse-radius" min="10" max="200" step="1" value="40">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Сила расталкивания</label></div>
+                            <input type="range" id="grass-mouse-strength" min="0.0" max="3.0" step="0.1" value="1.0">
+                        </div>
+                        <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 12px 0;"></div>
+                        <div class="control-group" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                            <label style="font-size: 12px; color: #44ff44; font-weight: bold;">Разминаться перед камерой</label>
+                            <input type="checkbox" id="grass-cam-toggle" checked style="width: auto;">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Радиус вокруг камеры</label></div>
+                            <input type="range" id="grass-cam-radius" min="10" max="200" step="1" value="50">
+                        </div>
+                    </div>
+                </details>
+                <!-- Оптимизация (LOD) и Туман -->
+                <details class="sub-details">
+                    <summary>Дальний фон (LOD) </summary>
+                    <div class="group-content" style="padding-top: 12px;">
+                        
+
+                        
+                        <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 16px 0;"></div>
+                        
+                        <div class="control-group" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                            <label style="font-size: 12px; color: #ffaa00; font-weight: bold;">Включить LOD (Оптимизация)</label>
+                            <input type="checkbox" id="grass-lod-toggle" checked style="width: auto;">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Дальность фона</label></div>
+                            <input type="range" id="grass-far-dist" min="1500" max="8000" step="100" value="3000">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label style="color:#ffaa00">Нахлест на ближнюю траву (Смещение)</label></div>
+                            <input type="range" id="grass-lod-offset" min="-500" max="1000" step="10" value="200">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Кол-во фоновой травы</label></div>
+                            <input type="range" id="grass-far-count" min="10000" max="300000" step="10000" value="150000">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Толщина мазков (Масштаб)</label></div>
+                            <input type="range" id="grass-far-size" min="1.0" max="5.0" step="0.1" value="2.5">
+                        </div>
+                        
+                        <!-- Скрытый селект для совместимости с JS -->
+                        <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 16px 0;"></div>
+
+                        <div class="sub-header">Форма фоновой травы</div>
+                        <div class="control-group">
+                            <select id="grass-far-mix-mode" class="f-select" style="border-color: rgba(170, 221, 255, 0.5);">
+                                <option value="0" selected>Копия переднего плана </option>
+                                <option value="1">Свой вариант (Смешать 2 формы)</option>
+                                <option value="2">Свой вариант (Смешать 3 формы)</option>
+                            </select>
+                        </div>
+
+                        <div id="grass-far-mix-extras" style="display: none; padding: 12px 10px; background: rgba(0,0,0,0.2); border-left: 2px solid #aaddff; border-radius: 0 8px 8px 0; margin-bottom: 8px;">
+                            
+                            <!-- ФОРМА 1 (Основа) -->
+                            <div class="control-group">
+                                <div class="label-row"><label>Форма 1 (Основа)</label></div>
+                                <select id="grass-far-shape-1" class="f-select" style="margin-bottom: 8px;">
+                                    <option value="0">Остроконечная</option>
+                                    <option value="1" selected>Треугольник</option>
+                                    <option value="2">Параллелепипед</option>
+                                    <option value="3">Колосок (Высокий)</option>
+                                    <option value="4">Одуванчик</option>
+                                    <option value="5">Цветы</option>
+                                    <option value="6">Узорчатая трава</option>
+                                    <option value="7">Куст (Объемный)</option>
+                                    <option value="8">Дерево (Массивное)</option>
+                                    <option value="9">Ёлка (Ярусы)</option>
+                                </select>
+                            </div>
+                            
+                            <!-- ФОРМА 2 (Подмес) -->
+                            <div class="control-group" id="far-shape-2-box">
+                                <div class="label-row" style="margin-bottom: 8px;"><label>Форма 2 (Подмес)</label></div>
+                                <select id="grass-far-shape-2" class="f-select" style="margin-bottom: 12px;">
+                                    <option value="0">Остроконечная</option>
+                                    <option value="1" selected>Треугольник</option>
+                                    <option value="2">Параллелепипед</option>
+                                    <option value="3">Колосок (Высокий)</option>
+                                    <option value="4">Одуванчик</option>
+                                    <option value="5">Цветы</option>
+                                    <option value="6">Узорчатая трава</option>
+                                    <option value="7">Куст (Объемный)</option>
+                                    <option value="8">Дерево (Массивное)</option>
+                                    <option value="9">Ёлка (Ярусы)</option>
+                                </select>
+                                
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                                    <div class="control-group" style="margin-bottom: 0;">
+                                        <div class="label-row"><label style="font-size:10px; color:#aaddff;">% в фоне</label></div>
+                                        <input type="range" id="far-s2-chance" min="0.0" max="1.0" step="0.05" value="0.2">
+                                    </div>
+                                    <div class="control-group" style="margin-bottom: 0;">
+                                        <div class="label-row"><label style="font-size:10px; color:#66ff66;">Ослабить ветер L2</label></div>
+                                        <input type="range" id="far-s2-winddamp" min="0.0" max="1.0" step="0.05" value="0.0">
+                                    </div>
+                                    <div class="control-group" style="margin-bottom: 0;">
+                                        <div class="label-row"><label style="font-size:10px; color:#aaddff;">Островки</label></div>
+                                        <input type="range" id="far-s2-struct" min="0.0" max="1.0" step="0.05" value="0.5">
+                                    </div>
+                                    <!-- НОВЫЕ СЛАЙДЕРЫ ДЛЯ ФОРМЫ 2 ДАЛЬНЕГО ПЛАНА -->
+                                    <div class="control-group" style="margin-bottom: 0;">
+                                        <div class="label-row"><label style="font-size:10px; color:#aaddff;">Размер L2</label></div>
+                                        <input type="range" id="far-s2-size" min="0.1" max="5.0" step="0.1" value="1.0">
+                                    </div>
+                                    <div class="control-group" style="margin-bottom: 0;">
+                                        <div class="label-row"><label style="font-size:10px; color:#aaddff;">Ширина L2</label></div>
+                                        <input type="range" id="far-s2-width" min="0.1" max="5.0" step="0.1" value="1.0">
+                                    </div>
+                                    <div class="control-group" style="margin-bottom: 0; grid-column: span 2;">
+                                        <div class="label-row"><label style="font-size:10px; color:#ff6666;">Проредить</label></div>
+                                        <input type="range" id="far-s2-thin" min="0.0" max="0.95" step="0.05" value="0.0">
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- ФОРМА 3 (Подмес) -->
+                            <div class="control-group" id="far-shape-3-box" style="display: none; margin-top: 12px;">
+                                <div class="label-row" style="margin-bottom: 8px;"><label>Форма 3 (Подмес)</label></div>
+                                <select id="grass-far-shape-3" class="f-select" style="margin-bottom: 12px;">
+                                    <option value="0">Остроконечная</option>
+                                    <option value="1" selected>Треугольник</option>
+                                    <option value="2">Параллелепипед</option>
+                                    <option value="3">Колосок (Высокий)</option>
+                                    <option value="4">Одуванчик</option>
+                                    <option value="5">Цветы</option>
+                                    <option value="6">Узорчатая трава</option>
+                                    <option value="7">Куст (Объемный)</option>
+                                    <option value="8">Дерево (Массивное)</option>
+                                </select>
+                                
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                                    <div class="control-group" style="margin-bottom: 0;">
+                                        <div class="label-row"><label style="font-size:10px; color:#aaddff;">% в фоне</label></div>
+                                        <input type="range" id="far-s3-chance" min="0.0" max="1.0" step="0.05" value="0.2">
+                                    </div>
+
+                                    <div class="control-group" style="margin-bottom: 0;">
+                                        <div class="label-row"><label style="font-size:10px; color:#66ff66;">Ослабить ветер L3</label></div>
+                                        <input type="range" id="far-s3-winddamp" min="0.0" max="1.0" step="0.05" value="0.0">
+                                    </div>
+                                    <div class="control-group" style="margin-bottom: 0;">
+                                        <div class="label-row"><label style="font-size:10px; color:#aaddff;">Островки</label></div>
+                                        <input type="range" id="far-s3-struct" min="0.0" max="1.0" step="0.05" value="0.5">
+                                    </div>
+                                    <!-- НОВЫЕ СЛАЙДЕРЫ ДЛЯ ФОРМЫ 3 ДАЛЬНЕГО ПЛАНА -->
+                                    <div class="control-group" style="margin-bottom: 0;">
+                                        <div class="label-row"><label style="font-size:10px; color:#aaddff;">Размер L3</label></div>
+                                        <input type="range" id="far-s3-size" min="0.1" max="5.0" step="0.1" value="1.0">
+                                    </div>
+                                    <div class="control-group" style="margin-bottom: 0;">
+                                        <div class="label-row"><label style="font-size:10px; color:#aaddff;">Ширина L3</label></div>
+                                        <input type="range" id="far-s3-width" min="0.1" max="5.0" step="0.1" value="1.0">
+                                    </div>
+                                    <div class="control-group" style="margin-bottom: 0; grid-column: span 2;">
+                                        <div class="label-row"><label style="font-size:10px; color:#ff6666;">Проредить</label></div>
+                                        <input type="range" id="far-s3-thin" min="0.0" max="0.95" step="0.05" value="0.0">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                            
+                        
+                    </div>
+                </details>
+
+            </div>
+        </details>
+
+
+        <details>
+            <summary>Камни и Булыжники</summary>
+            <div class="group-content">
+                <!-- ГЛАВНЫЕ НАСТРОЙКИ -->
+                <div class="control-group" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <label style="font-size: 13px; font-weight: bold; color: #fff;">Отображать камни</label>
+                    <input type="checkbox" id="rock-toggle" checked style="width: 20px; height: 20px; accent-color: #88aa88;">
+                </div>
+
+                <div class="control-group">
+                    <div class="label-row"><label>Количество (Плотность)</label></div>
+                    <input type="range" id="rock-count" min="0" max="1000" step="10" value="500">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Дальность прорисовки</label></div>
+                    <input type="range" id="rock-dist" min="500" max="6000" step="100" value="2500">
+                </div>
+
+                <!-- ЗОНЫ И ГРУППИРОВКА -->
+                <details class="sub-details">
+                    <summary>Генерация и Группировка</summary>
+                    <div class="group-content" style="padding-top: 12px;">
+                        <div class="sub-header" style="margin-top: 0;">Островки и Поляны</div>
+                        <div class="control-group">
+                            <div class="label-row"><label style="color:#ffaa00">Размер полян (Островки)</label></div>
+                            <input type="range" id="rock-struct" min="0.0" max="1.5" step="0.01" value="0.5">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label style="color:#ff6666">Проредить поляны</label></div>
+                            <input type="range" id="rock-thin" min="0.0" max="0.95" step="0.05" value="0.0">
+                        </div>
+                        <div class="sub-header">Высотные зоны</div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Мин. высота (Берег)</label></div>
+                            <input type="range" id="rock-min-h" min="-20" max="50" step="1" value="0">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Макс. высота (Горы)</label></div>
+                            <input type="range" id="rock-max-h" min="10" max="250" step="1" value="120">
+                        </div>
+                        <div class="sub-header">Соотношение</div>
+                        <div class="control-group">
+                            <div class="label-row"><label>% Булыжников (Крупных камней)</label></div>
+                            <input type="range" id="rock-boulder-ratio" min="0.0" max="0.3" step="0.01" value="0.05">
+                        </div>
+                    </div>
+                </details>
+
+                <!-- РАЗМЕР И ФОРМА -->
+                <details class="sub-details">
+                    <summary>Форма и Размеры</summary>
+                    <div class="group-content" style="padding-top: 12px;">
+                        <div class="sub-header" style="margin-top: 0;">Габариты</div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Средний размер</label></div>
+                            <input type="range" id="rock-size" min="0.5" max="25.0" step="0.5" value="3.0">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Разброс размеров</label></div>
+                            <input type="range" id="rock-size-var" min="0.0" max="1.0" step="0.05" value="0.6">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label style="color:#aaddff">Пропорции (Плоские <-> Высокие)</label></div>
+                            <input type="range" id="rock-height-bias" min="0.0" max="1.0" step="0.05" value="0.5">
+                        </div>
+                        <div class="sub-header">Архитектура камней</div>
+                        <div class="control-group">
+                            <div class="label-row"><label style="color:#ffaa00">Гладкие <-> Кристаллические</label></div>
+                            <input type="range" id="rock-shape" min="0.0" max="1.0" step="0.05" value="0.5">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label style="color:#aaddff">Форма: Мелкие камни</label></div>
+                            <input type="range" id="rock-shape-small" min="0.0" max="1.0" step="0.05" value="0.5">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label style="color:#ffaa00">Форма: Булыжники</label></div>
+                            <input type="range" id="rock-shape-boulder" min="0.0" max="1.0" step="0.05" value="0.5">
+                        </div>
+                    </div>
+                </details>
+
+                <!-- ЦВЕТА И ОСВЕЩЕНИЕ -->
+                <details class="sub-details">
+                    <summary>Внешний вид и Освещение</summary>
+                    <div class="group-content" style="padding-top: 12px;">
+                        <div class="sub-header" style="margin-top: 0;">Палитра</div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Цвет у земли</label></div>
+                            <input type="text" id="col-rock-base" value="#1a1a24">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Цвет у вершины</label></div>
+                            <input type="text" id="col-rock-tip" value="#4a5568">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Плавность градиента</label></div>
+                            <input type="range" id="rock-smooth" min="0.1" max="3.0" step="0.1" value="1.0">
+                        </div>
+                        <div class="sub-header">Объем и Детализация</div>
+                        <div class="control-group">
+                            <div class="label-row"><label style="color:#aaddff">Резкость граней (Плоскости)</label></div>
+                            <input type="range" id="rock-flat" min="0.0" max="1.0" step="0.05" value="0.0">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Самозатенение (АО)</label></div>
+                            <input type="range" id="rock-ao" min="0.0" max="1.0" step="0.05" value="0.5">
+                        </div>
+                    </div>
+                </details>
+
+                <!-- ПОКРЫТИЕ -->
+                <details class="sub-details">
+                    <summary style="color: #44ff44;">Покрытие (Мох / Снег)</summary>
+                    <div class="group-content" style="padding-top: 12px;">
+                        <div class="control-group">
+                            <div class="label-row"><label>Степень покрытия (0 = выкл)</label></div>
+                            <input type="range" id="rock-moss-spread" min="0.0" max="1.0" step="0.05" value="0.0">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Цвет покрытия</label></div>
+                            <input type="text" id="col-rock-moss" value="#44aa44">
+                        </div>
+                    </div>
+                </details>
+
+                <!-- КРИСТАЛЛЫ -->
+                <details class="sub-details">
+                    <summary style="color: #ffaa00;">Кристаллы и Минералы</summary>
+                    <div class="group-content" style="padding-top: 12px;">
+                        <div class="sub-header" style="margin-top: 0;">Вероятность спавна</div>
+                        <div class="control-group">
+                            <div class="label-row"><label>% среди мелких камней</label></div>
+                            <input type="range" id="rock-crystal-ratio-small" min="0.0" max="1.0" step="0.05" value="0.0">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>% среди булыжников</label></div>
+                            <input type="range" id="rock-crystal-ratio-boulder" min="0.0" max="1.0" step="0.05" value="0.0">
+                        </div>
+                        
+                        <div class="sub-header">Материал кристалла</div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Цвет основания</label></div>
+                            <input type="text" id="col-crystal-base" value="#2a1538">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Цвет свечения (Вершина)</label></div>
+                            <input type="text" id="col-crystal-tip" value="#9b59b6">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label style="color:#aaddff">Прозрачность (Стекло)</label></div>
+                            <input type="range" id="rock-crystal-alpha" min="0.0" max="0.95" step="0.05" value="0.0">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label style="color:#ffaa00">Сила блеска</label></div>
+                            <input type="range" id="rock-crystal-gloss" min="0.0" max="1.0" step="0.05" value="0.0">
+                        </div>
+
+                        <div class="sub-header">Магия и Отблески</div>
+                        <div class="control-group">
+                            <div class="label-row"><label style="color:#ffaa00">Иризация (Яркость граней)</label></div>
+                            <input type="range" id="rock-iris-int" min="0.0" max="2.0" step="0.05" value="0.0">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label style="color:#ffaa00">Цветовой разброс отблесков</label></div>
+                            <input type="range" id="rock-iris-spread" min="0.0" max="2.0" step="0.05" value="0.5">
+                        </div>
+                    </div>
+                </details>
+
+                <!-- ГРАВИТАЦИЯ И ЛЕВИТАЦИЯ -->
+                <details class="sub-details">
+                    <summary style="color: #aaddff;">Гравитация и Левитация</summary>
+                    <div class="group-content" style="padding-top: 12px;">
+                        <div class="sub-header" style="margin-top: 0;">Положение в пространстве</div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Посадка (Утопить / Поднять)</label></div>
+                            <input type="range" id="rock-y-offset" min="-20.0" max="100.0" step="0.5" value="-1.0">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Разброс по высоте (Невесомость)</label></div>
+                            <input type="range" id="rock-y-spread" min="0.0" max="1000.0" step="1.0" value="0.0">
+                        </div>
+                        
+                        <div class="sub-header">Анимация парения</div>
+                        <div class="control-group">
+                            <div class="label-row"><label style="color:#aaddff">Амплитуда полета (0 = выкл)</label></div>
+                            <input type="range" id="rock-float-amp" min="0.0" max="100.0" step="1.0" value="0.0">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label style="color:#aaddff">Скорость левитации</label></div>
+                            <input type="range" id="rock-float-speed" min="0.1" max="5.0" step="0.1" value="1.0">
+                        </div>
+                    </div>
+                </details>
+
+            </div>
+        </details>
+        
+        <!-- НОВЫЙ БЛОК: СВЕТ (ФОНАРИК) -->
+        <details>
+            <summary style="color: #ffcc00;">Освещение</summary>
+            <div class="group-content">
+                
+                <!-- ГЛОБАЛЬНЫЕ НАСТРОЙКИ -->
+                <div class="control-group">
+                    <div class="label-row"><label>Глобальный свет (Яркость мира)</label></div>
+                    <input type="range" id="global-light-intensity" min="0.1" max="3.0" step="0.05" value="1.0">
+                    <div style="font-size: 10px; color: #aaa; margin-top: 4px;">Сместите влево для ночи, вправо для яркого дня.</div>
+                </div>
+                
+                <div class="control-group">
+                    <div class="label-row"><label>Макс. источников света</label></div>
+                    <input type="range" id="global-max-lights" min="0" max="20" step="1" value="15">
+                    <div style="font-size: 10px; color: #aaa; margin-top: 4px;">Ограничение для производительности.</div>
+                </div>
+                
+                <div class="control-group">
+                    <div class="label-row"><label>Дальность видимости света</label></div>
+                    <input type="range" id="global-light-dist" min="500" max="5000" step="100" value="3000">
+                </div>
+
+                <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 16px 0;"></div>
+
+                <!-- ПРОЖЕКТОР (ФОНАРИК) -->
+                <details class="sub-details">
+                    <summary>Прожектор / Фонарик</summary>
+                    <div class="group-content" style="padding-top: 12px;">
+                        <div class="control-group">
+                            <div class="label-row"><label>Включить прожектор</label></div>
+                            <input type="checkbox" id="light-toggle" style="width: auto;">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Светить на траву (-FPS)</label></div>
+                            <input type="checkbox" id="light-grass-toggle" style="width: auto;">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Светить на камни</label></div>
+                            <input type="checkbox" id="light-rock-toggle" style="width: auto;">
+                        </div>
+                        <div class="control-group"><div class="label-row"><label>Цвет света</label></div><input type="text" id="col-light" value="#ffffff"></div>
+                        <div class="control-group"><div class="label-row"><label>Яркость</label></div><input type="range" id="light-intensity" min="0.1" max="10.0" step="0.1" value="2.0"></div>
+                        <div class="control-group"><div class="label-row"><label>Дальность свечения</label></div><input type="range" id="light-range" min="500" max="6000" step="100" value="2000"></div>
+                        <div class="control-group"><div class="label-row"><label>Собрать в пучок (Фокус)</label></div><input type="range" id="light-focus" min="0.0" max="1.0" step="0.01" value="0.5"></div>
+                        <div class="control-group"><div class="label-row"><label>Сместить к камере (Офсет)</label></div><input type="range" id="light-offset" min="-1000" max="2000" step="50" value="0"></div>
+                        <div class="control-group"><div class="label-row"><label>Радиус пятна (Ширина луча)</label></div><input type="range" id="light-radius" min="0.01" max="1.0" step="0.01" value="0.3"></div>
+                        
+                        <div class="sub-header">Анимация (Движение)</div>
+                        <div class="control-group"><div class="label-row"><label>Амплитуда блуждания</label></div><input type="range" id="light-anim-amp" min="0.0" max="0.5" step="0.01" value="0.0"></div>
+                        <div class="control-group"><div class="label-row"><label>Скорость движения</label></div><input type="range" id="light-anim-speed" min="0.1" max="5.0" step="0.1" value="1.0"></div>
+                    </div>
+                </details>
+
+                <!-- СФЕРЫ-ХРАНИТЕЛИ -->
+                <details class="sub-details">
+                    <summary>Свет: Сферы-хранители</summary>
+                    <div class="group-content" style="padding-top: 12px;">
+                        <div class="control-group">
+                            <div class="label-row"><label>Включить освещение</label></div>
+                            <input type="checkbox" id="sphere-light-toggle" style="width: auto;">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Освещать камни</label></div>
+                            <input type="checkbox" id="sphere-light-rock-toggle" style="width: auto;">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Освещать траву</label></div>
+                            <input type="checkbox" id="sphere-light-grass-toggle" style="width: auto;">
+                        </div>
+                        <div class="control-group"><div class="label-row"><label>Сила свечения</label></div><input type="range" id="sphere-light-intensity" min="0.1" max="5.0" step="0.1" value="1.5"></div>
+                        <div class="control-group"><div class="label-row"><label>Радиус свечения</label></div><input type="range" id="sphere-light-range" min="100" max="3000" step="50" value="800"></div>
+                    </div>
+                </details>
+
+                <!-- УПАВШИЕ КОМЕТЫ -->
+                <details class="sub-details">
+                    <summary>Свет: Упавшие кометы</summary>
+                    <div class="group-content" style="padding-top: 12px;">
+                        <div class="control-group">
+                            <div class="label-row"><label>Включить освещение</label></div>
+                            <input type="checkbox" id="comet-light-toggle" checked style="width: auto;">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Освещать траву</label></div>
+                            <input type="checkbox" id="comet-light-grass-toggle" checked style="width: auto;">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Освещать камни</label></div>
+                            <input type="checkbox" id="comet-light-rock-toggle" checked style="width: auto;">
+                        </div>
+                        <div class="control-group"><div class="label-row"><label>Сила свечения</label></div><input type="range" id="comet-light-intensity" min="0.1" max="5.0" step="0.1" value="1.0"></div>
+                        <div class="control-group"><div class="label-row"><label>Радиус свечения</label></div><input type="range" id="comet-light-range" min="100" max="3000" step="50" value="600"></div>
+                    </div>
+                </details>
+
+            </div>
+        </details>
+
+
+
+
+        <!-- НЕБО -->
+        <details>
+            <summary>Небо и космос</summary>
+            <div class="group-content">
+                <div class="control-group">
+                    <div class="label-row"><label>Плотность звёзд</label></div>
+                    <input type="range" id="star-density" min="0" max="60000" step="100" value="15000">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Размер звёзд</label></div>
+                    <input type="range" id="star-size" min="0.5" max="3.0" step="0.1" value="1.0">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Боке-размытие</label></div>
+                    <input type="range" id="sky-blur" min="0" max="1" step="0.01" value="0">
+                </div>
+                <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 12px 0;"></div>
+                <div class="control-group">
+                    <div class="label-row"><label>Падающие звёзды</label></div>
+                    <input type="range" id="comet-freq" min="0" max="0.05" step="0.001" value="0.02">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Фоновые кометы</label></div>
+                    <input type="range" id="slow-comet-freq" min="0" max="0.1" step="0.001" value="0.01">
+                </div>
+                <details>
+                    <summary>Созвездия (Связи)</summary>
+                    <div class="group-content">
+                        <div class="control-group">
+                            <div class="label-row"><label>Цвет линий и точек</label></div>
+                            <!-- value изменен на насыщенно-оранжевый -->
+                            <input type="text" id="col-constellation" value="#ffaa00">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Размер точек</label></div>
+                            <!-- value изменен на 4.0 (близко к макс) -->
+                            <input type="range" id="const-dot-size" min="0.1" max="5.0" step="0.1" value="4.0">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Ширина линий</label></div>
+                            <!-- value изменен на 0.5 (минимум) -->
+                            <input type="range" id="const-line-width" min="0.5" max="5.0" step="0.5" value="0.5">
+                        </div>
+                        <!-- НОВЫЙ СЛАЙДЕР СВЕЧЕНИЯ -->
+                        <div class="control-group">
+                            <div class="label-row"><label>Свечение линий (Ореол)</label></div>
+                            <input type="range" id="const-glow-str" min="0.0" max="2.0" step="0.1" value="0.0">
+                        </div>
+                        <div style="font-size: 10px; color: #aaa; margin-top: 5px;">
+                            Отметьте галочками комментарии в поиске, чтобы соединить их.
+                        </div>
+                    </div>
+                </details>
+
+
+            </div>
+        </details>
+
+        <!-- ЧАСТИЦЫ -->
+        <details>
+            <summary>Частицы</summary>
+            <div class="group-content">
+                <div class="control-group">
+                    <div class="label-row"><label>Плотность пыли</label></div>
+                    <input type="range" id="dust-count" min="0" max="8000" step="100" value="4000">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Размер пыли</label></div>
+                    <input type="range" id="dust-size" min="0.1" max="3.0" step="0.1" value="1.0">
+                </div>
+                <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 12px 0;"></div>
+                <div class="control-group">
+                    <div class="label-row"><label>Светлячки</label></div>
+                    <input type="range" id="firefly-count" min="0" max="1200" step="10" value="600">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Размер светлячков</label></div>
+                    <input type="range" id="firefly-size" min="0.5" max="2.0" step="0.1" value="1.0">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Цвет светлячков</label></div>
+                    <input type="text" id="col-fire" value="#ffaa00">
+                </div>
+                <details>
+                    <summary>Движение частиц</summary>
+                    <div class="group-content">
+                        <div class="control-group">
+                            <div class="label-row"><label>Скорость ветра</label></div>
+                            <input type="range" id="wind-speed" min="0" max="2" step="0.1" value="0.8">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Турбулентность</label></div>
+                            <input type="range" id="wind-force" min="0" max="1" step="0.05" value="0.3">
+                        </div>
+                        <div class="control-group">
+                            <div class="label-row"><label>Скорость дрейфа</label></div>
+                            <input type="range" id="part-speed" min="0" max="2" step="0.1" value="0.5">
+                        </div>
+                    </div>
+                </details>
+
+
+            </div>
+        </details>
+
+        <details>
+            <summary style="color: #ffaa00;">Фотокарточки (Галерея)</summary>
+            <div class="group-content">
+                <div class="control-group" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <label style="font-size: 12px; font-weight: bold; color: #fff;">Высокое качество (изгибы бумаги)</label>
+                    <input type="checkbox" id="physics-toggle" checked style="width: auto;">
+                </div>
+
+                <!-- ДОБАВЬТЕ ЭТОТ БЛОК НИЖЕ -->
+                <div class="control-group" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <label style="font-size: 12px; font-weight: bold; color: #fff;">Отображать карточки</label>
+                    <input type="checkbox" id="cards-toggle" checked style="width: auto;">
+                </div>
+
+                <div class="control-group">
+                    <div class="label-row"><label>Средний размер</label></div>
+                    <input type="range" id="card-size" min="0.5" max="5.0" step="0.1" value="1.5">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Высота над землёй</label></div>
+                    <input type="range" id="card-height" min="0" max="100" step="1" value="15">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Отдаление (Дистанция между ними)</label></div>
+                    <input type="range" id="card-spacing" min="0.1" max="5.0" step="0.1" value="1.0">
+                </div>
+
+                <div class="sub-header">Анимация на ветру</div>
+                <div class="control-group">
+                    <div class="label-row"><label>Амплитуда покачивания</label></div>
+                    <input type="range" id="sway-amp" min="0" max="0.5" step="0.01" value="0.34">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Амплитуда закручивания</label></div>
+                    <input type="range" id="twist-amp" min="0" max="0.5" step="0.01" value="0.31">
+                </div>
+            </div>
+        </details>
+        
+        <details>
+            <summary>Сферы-хранители</summary>
+            <div class="group-content">
+                <div class="control-group">
+                    <div class="label-row"><label>Количество</label></div>
+                    <input type="range" id="sphere-count" min="0" max="20" step="1" value="2">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Скорость перемещения</label></div>
+                    <input type="range" id="sphere-move-speed" min="0.0" max="5.0" step="0.1" value="1.0">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Размер</label></div>
+                    <input type="range" id="sphere-size" min="10" max="150" step="1" value="45">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Цвет 1</label></div>
+                    <input type="text" id="sphere-col-1" value="#ff0055">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Цвет 2</label></div>
+                    <input type="text" id="sphere-col-2" value="#00ccff">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Цвет 3</label></div>
+                    <input type="text" id="sphere-col-3" value="#ffcc00">
+                </div>
+                
+                <!-- НОВЫЙ БЛОК НАСТРОЕК ШЛЕЙФА -->
+                <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 12px 0;"></div>
+                <div class="sub-header" style="margin-top: 0;">Шлейф сфер</div>
+                
+                <div class="control-group">
+                    <div class="label-row"><label>Число частиц (0 — выкл)</label></div>
+                    <input type="range" id="sphere-trail-count" min="0" max="2000" step="50" value="1000">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Размер частиц</label></div>
+                    <input type="range" id="sphere-trail-size" min="5" max="150" step="5" value="40">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Растушевка (Резкие <-> Мягкие)</label></div>
+                    <input type="range" id="sphere-trail-blur" min="0.1" max="4.0" step="0.1" value="1.5">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Яркость / Видимость</label></div>
+                    <input type="range" id="sphere-trail-opacity" min="0.0" max="1.0" step="0.05" value="1.0">
+                </div>
+
+                <div class="control-group">
+                    <div class="label-row"><label>Яркость / Видимость</label></div>
+                    <input type="range" id="sphere-trail-opacity" min="0.0" max="1.0" step="0.05" value="1.0">
+                </div>
+
+                <!-- ВСТАВИТЬ СЮДА: НОВЫЕ ПОЛЗУНКИ -->
+                <div class="control-group">
+                    <div class="label-row"><label>Дальность отлёта (Длина)</label></div>
+                    <input type="range" id="sphere-trail-length" min="0.1" max="5.0" step="0.1" value="1.0">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Скорость</label></div>
+                    <input type="range" id="sphere-trail-speed" min="0.1" max="5.0" step="0.1" value="1.0">
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Траектория (Прямо <-> Волны)</label></div>
+                    <input type="range" id="sphere-trail-turb" min="0.0" max="3.0" step="0.05" value="0.0">
+                </div>
+                
+
+                <!-- Конец нового блока -->
+            </div>
+        </details>
+        <!-- ВЕТЕР -->
         <details>
             <summary>Эффекты камеры</summary>
             <div class="group-content">
@@ -855,6 +2210,33 @@
                         <input type="checkbox" id="ui-dist-toggle" checked style="width: auto; height: auto;">
                     </div>
                 </div>
+
+                <div class="control-group">
+                    <div class="label-row"><label>Отображать сетку на рельефе</label></div>
+                    <input type="checkbox" id="terr-grid" checked style="width: auto;">
+                </div>
+
+                <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 12px 0;"></div>
+                <div class="control-group">
+                    <div class="label-row"><label>Кнопка скриншота</label></div>
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <span style="font-size: 11px; color: #888;">Показывать</span>
+                        <input type="checkbox" id="ui-screenshot-toggle" checked style="width: auto; height: auto;">
+                    </div>
+                </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Разрешение снимка (Scale)</label></div>
+                    <input type="range" id="ui-screenshot-scale" min="1.0" max="4.0" step="0.5" value="2.0">
+                    <div style="font-size: 10px; color: #aaa; margin-top: 4px;">Множитель разрешения (2.0 = 4K на FHD мониторе).</div>
+                </div>
+
+                <div class="control-group">
+                    <div class="label-row"><label>Мониторинг (FPS / Отрисовка)</label></div>
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <span style="font-size: 11px; color: #888;">Показать</span>
+                        <input type="checkbox" id="ui-fps-toggle" style="width: auto; height: auto;">
+                    </div>
+                </div>
                 <div class="control-group">
                     <div class="label-row"><label>Сетка зоны хаоса</label></div>
                     <div style="display: flex; align-items: center; justify-content: space-between;">
@@ -862,6 +2244,21 @@
                         <input type="checkbox" id="ui-chaos-toggle" style="width: auto; height: auto;">
                     </div>
                 </div>
+                <div class="control-group">
+                    <div class="label-row"><label>Автовозврат камеры в центр</label></div>
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <span style="font-size: 11px; color: #888;">Включено</span>
+                        <input type="checkbox" id="ui-auto-level" checked style="width: auto; height: auto;">
+                    </div>
+                </div>
+
+                                <!-- ВСТАВИТЬ СЮДА: -->
+                <div class="control-group">
+                    <div class="label-row"><label>Макс. высота подъема (Режим Земли)</label></div>
+                    <input type="range" id="ui-max-cam-height" min="100" max="600" step="10" value="250">
+                    <div style="font-size: 10px; color: #aaa; margin-top: 4px;">Как высоко можно взлететь.</div>
+                </div>
+                <!-- КОНЕЦ ВСТАВКИ -->
                 <!-- НОВЫЕ НАСТРОЙКИ ДЖОЙСТИКОВ -->
                 <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 12px 0;"></div>
                 <div class="control-group">
@@ -878,147 +2275,34 @@
                 </div>
             </div>
         </details>
+<!-- ЭКСПОРТ / ИМПОРТ НАСТРОЕК -->
+        <details>
+            <summary style="color: #ffaa00;">Экспорт / Импорт настроек</summary>
+            <div class="group-content">
+                <div style="font-size: 10px; color: #aaa; margin-bottom: 10px;">
+                    Сохраняйте и делитесь своими пресетами атмосферы.
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <button id="cfg-save-btn" class="f-btn" style="background: rgba(255,170,0,0.15); border: 1px solid rgba(255,170,0,0.4); color: #ffaa00;">📥 В файл</button>
+                    <button id="cfg-load-btn" class="f-btn" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #fff;">📂 Из файла</button>
+                    <button id="cfg-copy-btn" class="f-btn" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #fff;">📄 Копировать</button>
+                    <button id="cfg-paste-btn" class="f-btn" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #fff;">📋 Вставить</button>
+                </div>
+                <!-- Скрытый инпут для выбора файла -->
+                <input type="file" id="cfg-file-input" accept=".json" style="display: none;">
+            </div>
+        </details>
 
-        <!-- НЕБО -->
-        <details>
-            <summary>Небо и космос</summary>
-            <div class="group-content">
-                <div class="control-group">
-                    <div class="label-row"><label>Плотность звёзд</label></div>
-                    <input type="range" id="star-density" min="0" max="30000" step="100" value="15000">
-                </div>
-                <div class="control-group">
-                    <div class="label-row"><label>Размер звёзд</label></div>
-                    <input type="range" id="star-size" min="0.5" max="3.0" step="0.1" value="1.0">
-                </div>
-                <div class="control-group">
-                    <div class="label-row"><label>Боке-размытие</label></div>
-                    <input type="range" id="sky-blur" min="0" max="1" step="0.01" value="0">
-                </div>
-                <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 12px 0;"></div>
-                <div class="control-group">
-                    <div class="label-row"><label>Падающие звёзды</label></div>
-                    <input type="range" id="comet-freq" min="0" max="0.05" step="0.001" value="0.02">
-                </div>
-                <div class="control-group">
-                    <div class="label-row"><label>Фоновые кометы</label></div>
-                    <input type="range" id="slow-comet-freq" min="0" max="0.1" step="0.001" value="0.01">
-                </div>
-            </div>
-        </details>
-        <details>
-            <summary>Созвездия (Связи)</summary>
-            <div class="group-content">
-                <div class="control-group">
-                    <div class="label-row"><label>Цвет линий и точек</label></div>
-                    <!-- value изменен на насыщенно-оранжевый -->
-                    <input type="text" id="col-constellation" value="#ffaa00">
-                </div>
-                <div class="control-group">
-                    <div class="label-row"><label>Размер точек</label></div>
-                    <!-- value изменен на 4.0 (близко к макс) -->
-                    <input type="range" id="const-dot-size" min="0.1" max="5.0" step="0.1" value="4.0">
-                </div>
-                <div class="control-group">
-                    <div class="label-row"><label>Ширина линий</label></div>
-                    <!-- value изменен на 0.5 (минимум) -->
-                    <input type="range" id="const-line-width" min="0.5" max="5.0" step="0.5" value="0.5">
-                </div>
-                <!-- НОВЫЙ СЛАЙДЕР СВЕЧЕНИЯ -->
-                <div class="control-group">
-                    <div class="label-row"><label>Свечение линий (Ореол)</label></div>
-                    <input type="range" id="const-glow-str" min="0.0" max="2.0" step="0.1" value="0.0">
-                </div>
-                <div style="font-size: 10px; color: #aaa; margin-top: 5px;">
-                    Отметьте галочками комментарии в поиске, чтобы соединить их.
-                </div>
-            </div>
-        </details>
-        <!-- ЧАСТИЦЫ -->
-        <details>
-            <summary>Частицы</summary>
-            <div class="group-content">
-                <div class="control-group">
-                    <div class="label-row"><label>Плотность пыли</label></div>
-                    <input type="range" id="dust-count" min="0" max="8000" step="100" value="4000">
-                </div>
-                <div class="control-group">
-                    <div class="label-row"><label>Размер пыли</label></div>
-                    <input type="range" id="dust-size" min="0.1" max="3.0" step="0.1" value="1.0">
-                </div>
-                <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 12px 0;"></div>
-                <div class="control-group">
-                    <div class="label-row"><label>Светлячки</label></div>
-                    <input type="range" id="firefly-count" min="0" max="1200" step="10" value="600">
-                </div>
-                <div class="control-group">
-                    <div class="label-row"><label>Размер светлячков</label></div>
-                    <input type="range" id="firefly-size" min="0.5" max="2.0" step="0.1" value="1.0">
-                </div>
-                <div class="control-group">
-                    <div class="label-row"><label>Цвет светлячков</label></div>
-                    <input type="text" id="col-fire" value="#ffaa00">
-                </div>
-            </div>
-        </details>
-        <details>
-            <summary>Сферы-хранители</summary>
-            <div class="group-content">
-                <div class="control-group">
-                    <div class="label-row"><label>Количество</label></div>
-                    <input type="range" id="sphere-count" min="0" max="20" step="1" value="2">
-                </div>
-                <div class="control-group">
-                    <div class="label-row"><label>Размер</label></div>
-                    <input type="range" id="sphere-size" min="10" max="150" step="1" value="45">
-                </div>
-                <div class="control-group">
-                    <div class="label-row"><label>Цвет 1</label></div>
-                    <input type="text" id="sphere-col-1" value="#ff0055">
-                </div>
-                <div class="control-group">
-                    <div class="label-row"><label>Цвет 2</label></div>
-                    <input type="text" id="sphere-col-2" value="#00ccff">
-                </div>
-                <div class="control-group">
-                    <div class="label-row"><label>Цвет 3</label></div>
-                    <input type="text" id="sphere-col-3" value="#ffcc00">
-                </div>
-            </div>
-        </details>
-        <!-- ВЕТЕР -->
-        <details>
-            <summary>Движение</summary>
-            <div class="group-content">
-                <div class="control-group">
-                    <div class="label-row"><label>Скорость ветра</label></div>
-                    <input type="range" id="wind-speed" min="0" max="2" step="0.1" value="0.8">
-                </div>
-                <div class="control-group">
-                    <div class="label-row"><label>Турбулентность</label></div>
-                    <input type="range" id="wind-force" min="0" max="1" step="0.05" value="0.3">
-                </div>
-                <div class="control-group">
-                    <div class="label-row"><label>Скорость дрейфа</label></div>
-                    <input type="range" id="part-speed" min="0" max="2" step="0.1" value="0.5">
-                </div>
-                <div class="control-group">
-                    <div class="label-row"><label>Амплитуда покачивания</label></div>
-                    <input type="range" id="sway-amp" min="0" max="0.5" step="0.01" value="0.1">
-                </div>
-                <div class="control-group">
-                    <div class="label-row"><label>Амплитуда закручивания</label></div>
-                    <input type="range" id="twist-amp" min="0" max="0.5" step="0.01" value="0.15">
-                </div>
-            </div>
-        </details>
+
     </div>
 
 
     <div id="gallery-btn" title="Открыть базу данных">
         <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </div>
-
+    <div id="screenshot-btn" title="Сделать снимок экрана">
+        <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="13" r="4" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+    </div>
     <!-- Оверлей галереи -->
     <div id="gallery-overlay">
         <div class="gallery-header">
@@ -1117,17 +2401,6 @@
                         <input type="date" id="f-date-to" class="f-input">
                     </div>
                 </div>
-                <div class="f-group" style="margin-top: 5px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <label class="f-label" style="color: #ffaa00;">Серверная загрузка (Proxy)</label>
-                        <input type="checkbox" id="g-proxy-toggle" style="accent-color: #ffaa00; transform: scale(1.2); cursor: pointer;">
-                    </div>
-                    <div style="font-size: 10px; color: #aaa; margin-top: 6px; line-height: 1.3;">
-                        Включите, если картинки не грузятся.<br>
-                        <i>Примечание: может как ускорить, так и замедлить загрузку.</i>
-                    </div>
-                </div>
-
                 <div class="f-actions">
                     <button class="f-btn f-btn-reset" id="f-reset-btn">Сбросить</button>
                     <button class="f-btn f-btn-apply" id="f-apply-btn">Применить</button>
@@ -1276,8 +2549,77 @@
             </div>
         </div>
     </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // Находим панель настроек
+            const settingsPanel = document.getElementById('settings-panel');
+            // Находим все слайдеры внутри панели
+            const sliders = settingsPanel.querySelectorAll('input[type="range"]');
 
-    
+            sliders.forEach(slider => {
+                const group = slider.closest('.control-group');
+                if (!group) return;
+                
+                const labelRow = group.querySelector('.label-row');
+                if (!labelRow) return;
+
+                // Сохраняем изначальные значения на случай, если захотите добавить кнопку "Сброс"
+                const originalMin = parseFloat(slider.min);
+                const originalMax = parseFloat(slider.max);
+
+                // Создаем поле для ввода
+                const numInput = document.createElement('input');
+                numInput.type = 'number';
+                numInput.className = 'slider-num-input';
+                // Убираем жесткие ограничения из окошка ввода
+                numInput.step = slider.step;
+                numInput.value = slider.value;
+
+                // Добавляем поле в строку к тексту
+                labelRow.appendChild(numInput);
+
+                // 1. При движении слайдера обновляем цифры в окошке
+                slider.addEventListener('input', () => {
+                    numInput.value = slider.value;
+                });
+
+                // 2. При вводе цифр вручную двигаем слайдер и раздвигаем его лимиты
+                numInput.addEventListener('input', () => {
+                    let val = parseFloat(numInput.value);
+                    if (isNaN(val)) return; // Если поле пустое, ничего не делаем
+
+                    let currentMin = parseFloat(slider.min);
+                    let currentMax = parseFloat(slider.max);
+                    
+                    // МАГИЯ: Расширяем границы слайдера "на лету", если значение выходит за рамки
+                    if (val > currentMax) {
+                        slider.max = val;
+                    } else if (val < currentMin) {
+                        slider.min = val;
+                    }
+
+                    // Теперь браузер разрешит установить это значение
+                    slider.value = val;
+                    
+                    // Сигнализируем основной логике (script.js), что значение изменилось
+                    slider.dispatchEvent(new Event('input', { bubbles: true }));
+                });
+
+                // 3. Возвращаем значение, если пользователь стер всё и убрал курсор
+                numInput.addEventListener('change', () => {
+                    if (numInput.value === '' || isNaN(parseFloat(numInput.value))) {
+                        numInput.value = slider.value;
+                    }
+                });
+            });
+        });
+    </script>
+    <div id="stats-panel" style="display:none; position:fixed; top:20px; left:20px; background:rgba(10, 12, 16, 0.85); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:12px; font-family:'Courier New', monospace; font-size:12px; color:#44ff44; z-index:9999; pointer-events:none; backdrop-filter:blur(5px); box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
+        <div style="color:#fff; font-weight:bold; margin-bottom:4px;">PERFORMANCE</div>
+        FPS: <span id="stat-fps" style="color:#ffaa00; font-weight:bold;">0</span><br>
+        Draw Calls: <span id="stat-calls" style="color:#aaddff;">0</span><br>
+        Triangles: <span id="stat-tris" style="color:#aaddff;">0</span>
+    </div>
     <!-- Подключаем внешний файл скрипта -->
     <script type="module" src="/static/script.js"></script>
 </body>
