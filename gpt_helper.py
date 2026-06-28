@@ -39,12 +39,12 @@ from tempfile import NamedTemporaryFile
 
 API_KEYS = os.getenv("API_KEYS", "").split(",")
 # 2. Укажите основную и запасные модели
-PRIMARY_MODEL = 'gemini-3-flash-preview' # Модель, которую пробуем в первую очередь
-FALLBACK_MODELS = ['gemini-2.5-flash, gemini-2.5-flash-preview-05-20', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-exp'] # Модели на случай, если с основной ничего не вышло
+PRIMARY_MODEL = 'gemini-3.5-flash'
+FALLBACK_MODELS = ['gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-3.0-flash', 'gemini-2.5-flash-preview-05-20', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-exp'] # Модели на случай, если с основной ничего не вышло
 PRIMARY_MODEL_FLESHLIGHT = 'gemini-2.5-flash-lite' # Модель, которую пробуем в первую очередь 
 FALLBACK_MODELS_FLESHLIGHT = ['gemini-live-2.5-flash-preview', 'gemini-2.0-flash-lite', 'gemini-2.0-flash-lite-001'] # Модели на случай, если с основной ничего не вышло
 
-GEMMA_MODELS = ['gemma-3-27b-it', 'gemma-3-12b-it', 'gemma-3-4b-it', 'gemma-3n-10b-it']
+GEMMA_MODELS = ['gemma-3-27b-it', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemma-3-12b-it', 'gemma-3-4b-it', 'gemma-3n-10b-it']
 # Инициализация Firebase
 cred = credentials.Certificate('/etc/secrets/firebase-key.json')  # Путь к вашему JSON файлу
 firebase_admin.initialize_app(cred, {
